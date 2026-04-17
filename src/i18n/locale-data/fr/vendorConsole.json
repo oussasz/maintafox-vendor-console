@@ -1,0 +1,360 @@
+{
+  "shell": {
+    "backToApp": "Retour à Maintafox",
+    "product": "Console fournisseur",
+    "tenantSearchPlaceholder": "Tenant / machine / id de corrélation…",
+    "tenantSearchAria": "Contexte de recherche opérationnel",
+    "degradedBanner": "Dégradé : vérifier files et stockage objet.",
+    "hostHint": "console.maintafox.systems"
+  },
+  "nav": {
+    "aria": "Sections console fournisseur",
+    "overview": "Vue d'ensemble",
+    "customers": "Clients",
+    "entitlements": "Licences",
+    "machines": "Machines",
+    "sync": "Synchronisation",
+    "rollouts": "Déploiements",
+    "health": "Santé plateforme",
+    "audit": "Audit et preuves"
+  },
+  "home": {
+    "title": "Vue d'ensemble du plan de contrôle",
+    "subtitle": "Résumés orientés preuves ; chaque carte relie aux enregistrements sous-jacents.",
+    "cardsAria": "Résumés opérationnels",
+    "card": {
+      "license": "Licence et machines",
+      "licenseHint": "Aller aux enveloppes et aux activations.",
+      "sync": "Sync et déploiements",
+      "syncHint": "Retard de file, rejouer et intégrité des manifestes.",
+      "ops": "Hub opérations",
+      "opsHint": "Alertes sync, déploiement et plateforme unifiées. Perçage tenant-safe."
+    },
+    "ops": {
+      "openAlerts": "Alertes ouvertes",
+      "worst": "Pire : {{s}}",
+      "dlq": "DLQ (agrégé)"
+    },
+    "drill": {
+      "customers": "Ouvrir clients",
+      "entitlements": "Preuve : dernier tenant",
+      "machines": "Machines et heartbeats",
+      "syncQueue": "Preuve file",
+      "rollout": "Manifeste de déploiement",
+      "audit": "Audit et support",
+      "opsHealth": "Santé plateforme et alertes",
+      "opsSync": "Diagnostics sync",
+      "opsRollouts": "Contrôle déploiements"
+    },
+    "stepUpLab": {
+      "title": "Rehaussement (labo opérateur)",
+      "body": "Les actions sensibles exigent une re-authentification récente. Le serveur doit re-valider.",
+      "trigger": "Déclencher rehaussement",
+      "fresh": "Fenêtre de rehaussement active",
+      "stale": "Pas de fenêtre active"
+    }
+  },
+  "section": {
+    "evidenceAria": "Contexte de preuve actif",
+    "evidenceLabel": "Contexte de preuve"
+  },
+  "preview": {
+    "title": "Aperçu de la revendication signée",
+    "hint": "Vérifier palier, créneaux, canal et validité avant engagement. Le serveur valide la signature.",
+    "schema": "v{{v}}",
+    "tenant": "Tenant",
+    "tier": "Palier",
+    "slots": "Créneaux machines",
+    "channel": "Canal de mise à jour",
+    "grace": "Grâce hors ligne (h)",
+    "valid": "Fenêtre de validité",
+    "payload": "SHA-256 du contenu",
+    "issuer": "Émetteur / clé",
+    "sig": "Signature"
+  },
+  "destructive": {
+    "title": "Changement destructif — contexte d'approbation",
+    "reasonCode": "Code motif",
+    "pickReason": "Choisir…",
+    "secondActor": "Second approbateur (optionnel)",
+    "rationale": "Justification (obligatoire)",
+    "rationalePh": "Justifier pour les auditeurs."
+  },
+  "entitlement": {
+    "fromState": "État actuel",
+    "action": "Action de cycle de vie",
+    "transitionOk": "Transition autorisée par la matrice (re-validation serveur).",
+    "transitionBlocked": "Transition non autorisée depuis cet état.",
+    "previewAudit": "Prévisualiser charge utile d'audit",
+    "submit": "Soumettre (VPS)",
+    "pageTitle": "Licences",
+    "pageBody": "Cycle de vie gouverné, aperçu signé et approbation pour actions destructives."
+  },
+  "customers": {
+    "title": "Clients",
+    "body": "Opérations par tenant. Le serveur impose customer.manage sur chaque mutation.",
+    "workspaceIntro": "Identité tenant, métadonnées, cohorte et drapeaux. Mutations avec customer.manage.",
+    "metadata": "Métadonnées d'espace",
+    "metadataHint": "Les métadonnées tenant proviennent de l'API control-plane et restent la source d'autorité.",
+    "tenantSlug": "Identifiant tenant",
+    "cohort": "Cohorte de déploiement",
+    "bulk": {
+      "title": "Réaffectation de canal en masse (simulation)",
+      "hint": "Simulation d'abord, version de lignée pour concurrence optimiste, alignement canal.",
+      "tenantIds": "Tenants (séparés par des virgules)",
+      "licenseChannel": "Canal licence / habilitation",
+      "rolloutChannel": "Canal déploiement (doit correspondre)",
+      "channelMismatch": "Les canaux diffèrent — corriger avant application.",
+      "dryRun": "Simulation (sans mutation)",
+      "buildPreview": "Construire la charge utile"
+    }
+  },
+  "machines": {
+    "title": "Machines et activation",
+    "intro": "Heartbeats, confiance et politique hors ligne. Actions avec rehaussement et contrôle serveur.",
+    "offlinePolicy": "Politique hors ligne (lecture)",
+    "graceHours": "Heures de grâce",
+    "trustRevoke": "Révocation confiance déconnecte",
+    "reconnectFreshHb": "Reconnexion nécessite heartbeat frais",
+    "no": "Non",
+    "yes": "Oui",
+    "col": {
+      "machine": "Machine",
+      "heartbeat": "Heartbeat",
+      "version": "App",
+      "trust": "Fiable",
+      "fresh": "Fraîcheur",
+      "actions": "Actions"
+    },
+    "action": {
+      "slotRelease": "Libérer créneau",
+      "rebind": "Réattacher",
+      "softSuspend": "Suspension légère",
+      "policyRefresh": "Rafraîchir politique"
+    },
+    "fingerprintHint": "Empreinte et seuils de réattachement côté serveur pour limiter le churn."
+  },
+  "sync": {
+    "title": "Synchronisation",
+    "body": "Files, rejouer et fenêtres de réparation. Nécessite sync.operate.",
+    "pageTitle": "Santé de la synchronisation",
+    "pageBody": "Retard, points de contrôle, nouvelles tentatives et files de réparation. Actions avec sync.operate.",
+    "metrics": {
+      "maxLag": "Retard max par tenant",
+      "checkpointP95": "Âge point de contrôle p95",
+      "retryPressure": "Pression de retry",
+      "deadLetter": "Éléments en lettre morte"
+    },
+    "tenants": {
+      "title": "Posture sync par tenant",
+      "col": {
+        "tenant": "Tenant",
+        "lag": "Retard",
+        "checkpoint": "Âge point de contrôle",
+        "reject": "Rejet (bps)",
+        "retry": "Retry",
+        "dlq": "DLQ",
+        "sev": "Gravité",
+        "drill": "Diagnostics"
+      },
+      "openDrill": "Ouvrir le détail"
+    },
+    "repair": {
+      "title": "File de réparation",
+      "hint": "Actions explicites ; validation RBAC côté serveur.",
+      "col": {
+        "id": "Élément",
+        "tenant": "Tenant",
+        "queue": "File",
+        "sev": "Gravité",
+        "summary": "Résumé",
+        "actions": "Actions"
+      }
+    },
+    "anomalies": {
+      "title": "Anomalies politique heartbeat impactant la sync",
+      "col": {
+        "tenant": "Tenant",
+        "machine": "Machine",
+        "code": "Code",
+        "detected": "Détecté"
+      }
+    },
+    "drill": {
+      "title": "Détail des échecs",
+      "empty": "Aucune ligne d'échec pour ce tenant.",
+      "attempts": "Tentatives"
+    }
+  },
+  "rollouts": {
+    "title": "Déploiements",
+    "body": "Publier et annuler les artefacts du plan de contrôle.",
+    "pageTitle": "Contrôle des déploiements",
+    "pageBody": "Cohortes, pause/rappel et diagnostics intégrés. Rappel avec rehaussement et approbation serveur.",
+    "impact": {
+      "title": "Aperçu d'impact (prochaine activation)",
+      "tenants": "Tenants affectés",
+      "machines": "Machines affectées",
+      "channelOk": "Canal habilitation OK",
+      "blockers": "Blocages connus"
+    },
+    "cohorts": {
+      "title": "Canaux et cohortes",
+      "tenants": "tenants",
+      "machines": "machines",
+      "pausedAt": "En pause depuis",
+      "pause": "Mettre en pause",
+      "recall": "Rappel"
+    },
+    "diagnostics": {
+      "title": "Diagnostics release (24h)",
+      "hint": "Signature, migration et heartbeats post-déploiement dans une même vue.",
+      "count": "{{n}} événements",
+      "last": "Dernier"
+    }
+  },
+  "health": {
+    "title": "Santé plateforme",
+    "body": "SLO et intégrations (lecture seule).",
+    "pageTitle": "Santé plateforme et incidents",
+    "pageBody": "Télémétrie unifiée, pression infra et propriété des alertes. Perçage tenant-safe.",
+    "services": {
+      "title": "État des services"
+    },
+    "pressure": {
+      "title": "Pression infrastructure",
+      "hint": "Tendance et seuils indicatifs ; seuils autoritatifs côté serveur.",
+      "col": {
+        "metric": "Métrique",
+        "value": "Valeur",
+        "threshold": "Indication seuil",
+        "trend": "Tendance"
+      }
+    },
+    "drill": {
+      "title": "Vues opérationnelles liées",
+      "body": "Liens d'incident tenant-safe vers sync et déploiements sans données client hors périmètre.",
+      "sync": "Ouvrir santé sync",
+      "rollouts": "Ouvrir déploiements"
+    }
+  },
+  "ops": {
+    "alerts": {
+      "title": "Alertes et propriété",
+      "hint": "Les alertes proviennent de la télémétrie control-plane avec des références de perçage sûres par tenant.",
+      "drill": "Perçage",
+      "unsafe": "(bloqué : charge utile de perçage non sûre)",
+      "owner": "Propriétaire (id acteur)",
+      "ack": "Accuser réception",
+      "note": "Ajouter une note",
+      "readOnly": "Géré par le workflow d'alerte amont ; ce panneau est en lecture seule."
+    }
+  },
+  "audit": {
+    "title": "Audit et preuves",
+    "body": "Consultation structurée avec corrélation.",
+    "pageTitle": "Audit, support et durcissement",
+    "pageBody": "Journal immuable, support et garde-fous. Nécessite audit.view ; mutations côté serveur.",
+    "tabs": {
+      "ledger": "Journal d'audit",
+      "support": "Support",
+      "harden": "Durcissement et drills"
+    },
+    "ledger": {
+      "intro": "Journal append-only avec hachage d'intégrité et chaînage. Persistance et vérification serveur.",
+      "search": "Recherche",
+      "searchPh": "enregistrement, acteur, corrélation, tenant…",
+      "category": "Catégorie",
+      "verifyChain": "Vérifier la chaîne (échantillon)",
+      "checking": "Vérification…",
+      "chainOk": "Chaîne OK",
+      "chainFail": "Problème chaîne ou intégrité",
+      "open": "Ouvrir",
+      "filter": {
+        "all": "Toutes les catégories",
+        "auth": "Auth / session",
+        "entitlement": "Habilitation",
+        "machine": "Machine",
+        "sync": "Réparation sync",
+        "rollout": "Déploiement",
+        "platform": "Plateforme",
+        "support": "Support"
+      },
+      "col": {
+        "seq": "Seq",
+        "when": "Quand",
+        "actor": "Acteur",
+        "action": "Action",
+        "category": "Catégorie",
+        "integrity": "Intégrité",
+        "drill": "Forensics"
+      },
+      "detail": {
+        "title": "Enregistrement d'audit",
+        "correlation": "Corrélation",
+        "reason": "Motif / approbation",
+        "snapshots": "SHA-256 avant / après",
+        "chainPrev": "Hachage chaîne précédente",
+        "refs": "Références entités (perçage)",
+        "severityHint": "Gravité opérationnelle (alertes liées)"
+      }
+    },
+    "support": {
+      "intro": "Tickets structurés, paquets diagnostics avec rédaction, réconciliation hors ligne, liens audit.",
+      "tickets": {
+        "title": "Tickets",
+        "col": {
+          "id": "Ticket",
+          "tenant": "Tenant",
+          "state": "État",
+          "sev": "Gravité",
+          "module": "Module",
+          "sync": "Indic. sync",
+          "audit": "IDs audit liés"
+        }
+      },
+      "bundle": {
+        "title": "Paquet diagnostic (export)",
+        "export": "Demander export signé (VPS)"
+      },
+      "offline": {
+        "title": "Réconciliation origine hors ligne",
+        "col": {
+          "desktop": "File desktop",
+          "vendor": "Ticket fournisseur",
+          "sync": "État sync",
+          "dup": "Doublon de"
+        }
+      },
+      "exports": {
+        "title": "Types d'export conformité",
+        "syncLink": "Ouvrir preuves sync"
+      }
+    },
+    "harden": {
+      "intro": "Actions privilégiées : codes motif et rehaussement ; double approbation possible côté serveur.",
+      "guards": {
+        "title": "Garde-fous actions privilégiées",
+        "body": "Indications client — VPS impose RBAC, rehaussement et audit append-only.",
+        "stepUpExport": "Rehaussement : export conformité",
+        "stepUpRecall": "Rehaussement : rappel déploiement"
+      },
+      "runbooks": {
+        "title": "Guides d'incident"
+      },
+      "readiness": {
+        "title": "Matrice de readiness (drills)",
+        "pass": "OK",
+        "gap": "Écart"
+      }
+    }
+  },
+  "stepUp": {
+    "title": "Confirmer l'action sensible",
+    "description": "Rehaussement requis pour : {{action}}. Saisir MFA ou mot de passe élevé (validé côté serveur).",
+    "codeLabel": "Code de confirmation",
+    "placeholder": "TOTP à 6 chiffres",
+    "cancel": "Annuler",
+    "confirm": "Confirmer"
+  }
+}

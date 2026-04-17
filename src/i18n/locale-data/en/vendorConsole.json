@@ -1,0 +1,360 @@
+{
+  "shell": {
+    "backToApp": "Back to Maintafox",
+    "product": "Vendor control plane",
+    "tenantSearchPlaceholder": "Tenant / machine / correlation id…",
+    "tenantSearchAria": "Operational search context",
+    "degradedBanner": "Degraded: verify queue health and object storage.",
+    "hostHint": "console.maintafox.systems"
+  },
+  "nav": {
+    "aria": "Vendor console sections",
+    "overview": "Overview",
+    "customers": "Customers",
+    "entitlements": "Entitlements",
+    "machines": "Machines",
+    "sync": "Sync operations",
+    "rollouts": "Rollouts",
+    "health": "Platform health",
+    "audit": "Audit & evidence"
+  },
+  "home": {
+    "title": "Control plane overview",
+    "subtitle": "Evidence-first summaries; each card links to underlying records (tenant, machine, batch, audit).",
+    "cardsAria": "Operational summaries",
+    "card": {
+      "license": "License & machines",
+      "licenseHint": "Drill to entitlement envelopes and activation rows.",
+      "sync": "Sync & rollouts",
+      "syncHint": "Queue lag, replay, and rollout manifest integrity.",
+      "ops": "Operations hub",
+      "opsHint": "Unified sync, rollout, and platform alerts with ownership. Drill-through is tenant-safe."
+    },
+    "ops": {
+      "openAlerts": "Open alerts",
+      "worst": "Worst: {{s}}",
+      "dlq": "DLQ (aggregate)"
+    },
+    "drill": {
+      "customers": "Open customers",
+      "entitlements": "Evidence: last tenant",
+      "machines": "Machines & heartbeats",
+      "syncQueue": "Queue evidence",
+      "rollout": "Rollout manifest",
+      "audit": "Audit & support",
+      "opsHealth": "Platform health & alerts",
+      "opsSync": "Sync diagnostics",
+      "opsRollouts": "Rollout control"
+    },
+    "stepUpLab": {
+      "title": "Step-up (operator lab)",
+      "body": "Dangerous actions require fresh step-up. Server endpoints must re-validate; this is UX only.",
+      "trigger": "Trigger step-up",
+      "fresh": "Step-up window active",
+      "stale": "No active step-up window"
+    }
+  },
+  "section": {
+    "evidenceAria": "Active evidence context",
+    "evidenceLabel": "Evidence context"
+  },
+  "preview": {
+    "title": "Signed claim preview",
+    "hint": "Verify tier, slots, channel, and validity before committing. Server validates signature.",
+    "schema": "v{{v}}",
+    "tenant": "Tenant",
+    "tier": "Tier",
+    "slots": "Machine slots",
+    "channel": "Update channel",
+    "grace": "Offline grace (h)",
+    "valid": "Validity window",
+    "payload": "Payload SHA-256",
+    "issuer": "Issuer / key",
+    "sig": "Signature"
+  },
+  "destructive": {
+    "title": "Destructive change — approval context",
+    "reasonCode": "Reason code",
+    "pickReason": "Select…",
+    "secondActor": "Second approver (optional)",
+    "rationale": "Rationale (required)",
+    "rationalePh": "Explain business justification for auditors."
+  },
+  "entitlement": {
+    "fromState": "Current state",
+    "action": "Lifecycle action",
+    "transitionOk": "Transition is allowed by policy matrix (server re-validates).",
+    "transitionBlocked": "Transition is not allowed from this state.",
+    "previewAudit": "Preview audit payload",
+    "submit": "Submit (VPS)",
+    "pageTitle": "Entitlements",
+    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
+  },
+  "customers": {
+    "title": "Customers",
+    "body": "Tenant-scoped customer operations. Server enforces customer.manage on every mutation.",
+    "workspaceIntro": "Tenant identity, deployment metadata, cohort, and environment flags. Mutations require customer.manage and server-side checks.",
+    "metadata": "Workspace metadata",
+    "metadataHint": "Tenant metadata comes from the control-plane API and remains authoritative for operations.",
+    "tenantSlug": "Tenant slug",
+    "cohort": "Rollout cohort",
+    "bulk": {
+      "title": "Bulk channel reassignment (dry-run)",
+      "hint": "Safe bulk: dry-run first, per-tenant lineage version for optimistic concurrency, channel alignment with rollout.",
+      "tenantIds": "Tenant IDs (comma-separated)",
+      "licenseChannel": "License / entitlement channel",
+      "rolloutChannel": "Rollout channel (must match)",
+      "channelMismatch": "License channel and rollout channel differ — resolve before apply.",
+      "dryRun": "Dry run (no mutations)",
+      "buildPreview": "Build request payload"
+    }
+  },
+  "machines": {
+    "title": "Machines & activation",
+    "intro": "Heartbeat visibility, trusted-device lifecycle, and offline-policy controls. Actions require step-up and server enforcement.",
+    "offlinePolicy": "Offline policy (read model)",
+    "graceHours": "Grace hours",
+    "trustRevoke": "Trust revoke disconnects",
+    "reconnectFreshHb": "Reconnect needs fresh heartbeat",
+    "no": "No",
+    "yes": "Yes",
+    "col": {
+      "machine": "Machine",
+      "heartbeat": "Heartbeat",
+      "version": "App",
+      "trust": "Trusted",
+      "fresh": "Freshness",
+      "actions": "Actions"
+    },
+    "action": {
+      "slotRelease": "Slot release",
+      "rebind": "Rebind",
+      "softSuspend": "Soft suspend",
+      "policyRefresh": "Policy refresh"
+    },
+    "fingerprintHint": "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn."
+  },
+  "sync": {
+    "title": "Sync operations",
+    "body": "Queues, replay, and repair windows. Requires sync.operate.",
+    "pageTitle": "Sync health",
+    "pageBody": "Lag, checkpoints, retries, and repair queues. Actions require sync.operate and server enforcement.",
+    "metrics": {
+      "maxLag": "Max tenant lag",
+      "checkpointP95": "Checkpoint age p95",
+      "retryPressure": "Retry pressure",
+      "deadLetter": "Dead-letter items"
+    },
+    "tenants": {
+      "title": "Tenant sync posture",
+      "col": {
+        "tenant": "Tenant",
+        "lag": "Lag",
+        "checkpoint": "Checkpoint age",
+        "reject": "Reject bps",
+        "retry": "Retry",
+        "dlq": "DLQ",
+        "sev": "Severity",
+        "drill": "Diagnostics"
+      },
+      "openDrill": "Open drill-down"
+    },
+    "repair": {
+      "title": "Repair queue",
+      "hint": "Explicit actions; server validates RBAC.",
+      "col": {
+        "id": "Item",
+        "tenant": "Tenant",
+        "queue": "Queue",
+        "sev": "Severity",
+        "summary": "Summary",
+        "actions": "Actions"
+      }
+    },
+    "anomalies": {
+      "title": "Heartbeat policy anomalies affecting sync",
+      "col": {
+        "tenant": "Tenant",
+        "machine": "Machine",
+        "code": "Code",
+        "detected": "Detected"
+      }
+    },
+    "drill": {
+      "title": "Failure drill-down",
+      "empty": "No failure rows for this tenant.",
+      "attempts": "Attempts"
+    }
+  },
+  "rollouts": {
+    "title": "Rollouts",
+    "body": "Publish and rollback control-plane artifacts. Requires rollout.manage and step-up.",
+    "pageTitle": "Rollout control",
+    "pageBody": "Cohort staging, pause/recall, and integrated failure diagnostics. Recall requires step-up and server approval.",
+    "impact": {
+      "title": "Impact preview (next activation)",
+      "tenants": "Affected tenants",
+      "machines": "Affected machines",
+      "channelOk": "Entitlement channel OK",
+      "blockers": "Known blockers"
+    },
+    "cohorts": {
+      "title": "Channels & cohorts",
+      "tenants": "tenants",
+      "machines": "machines",
+      "pausedAt": "Paused at",
+      "pause": "Pause stage",
+      "recall": "Recall"
+    },
+    "diagnostics": {
+      "title": "Release diagnostics (24h)",
+      "hint": "Signature, migration, and post-deploy heartbeat failures in one view for containment decisions.",
+      "count": "{{n}} events",
+      "last": "Last"
+    }
+  },
+  "health": {
+    "title": "Platform health",
+    "body": "SLOs, integration status, and worker reliability (read-only observe surface).",
+    "pageTitle": "Platform health & incidents",
+    "pageBody": "Unified telemetry across services, infrastructure pressure, and alert ownership. Drill-through stays tenant-safe.",
+    "services": {
+      "title": "Service status"
+    },
+    "pressure": {
+      "title": "Infrastructure pressure",
+      "hint": "Trend and threshold hints for operators; authoritative thresholds live server-side.",
+      "col": {
+        "metric": "Metric",
+        "value": "Value",
+        "threshold": "Threshold hint",
+        "trend": "Trend"
+      }
+    },
+    "drill": {
+      "title": "Related operational views",
+      "body": "Tenant-safe incident drill-through links curated views in sync and rollout workspaces without exposing unrelated customer data.",
+      "sync": "Open sync health",
+      "rollouts": "Open rollouts"
+    }
+  },
+  "ops": {
+    "alerts": {
+      "title": "Alerts & ownership",
+      "hint": "Alerts are read from control-plane telemetry with tenant-safe drill-through references.",
+      "drill": "Drill",
+      "unsafe": "(blocked: unsafe drill payload)",
+      "owner": "Owner (actor id)",
+      "ack": "Acknowledge",
+      "note": "Add note",
+      "readOnly": "Handled by upstream alerting workflow; this panel is read-only."
+    }
+  },
+  "audit": {
+    "title": "Audit & evidence",
+    "body": "Structured audit retrieval with correlation id drill-through.",
+    "pageTitle": "Audit, support & hardening",
+    "pageBody": "Immutable audit trail, support workflows, and operational safeguards. Requires audit.view; mutations are enforced server-side.",
+    "tabs": {
+      "ledger": "Audit ledger",
+      "support": "Support",
+      "harden": "Hardening & drills"
+    },
+    "ledger": {
+      "intro": "Append-only ledger with per-record integrity hash and hash-chain linkage. Server persists and verifies.",
+      "search": "Search",
+      "searchPh": "record, actor, correlation, tenant…",
+      "category": "Category",
+      "verifyChain": "Verify sample chain",
+      "checking": "Checking…",
+      "chainOk": "Chain OK",
+      "chainFail": "Chain / integrity issue",
+      "open": "Open",
+      "filter": {
+        "all": "All categories",
+        "auth": "Auth / session",
+        "entitlement": "Entitlement",
+        "machine": "Machine",
+        "sync": "Sync repair",
+        "rollout": "Rollout",
+        "platform": "Platform override",
+        "support": "Support"
+      },
+      "col": {
+        "seq": "Seq",
+        "when": "When",
+        "actor": "Actor",
+        "action": "Action",
+        "category": "Category",
+        "integrity": "Integrity",
+        "drill": "Forensics"
+      },
+      "detail": {
+        "title": "Audit record",
+        "correlation": "Correlation",
+        "reason": "Reason / approval",
+        "snapshots": "Before / after snapshot SHA-256",
+        "chainPrev": "Chain previous hash",
+        "refs": "Entity refs (forensic drill-through)",
+        "severityHint": "Operational severity (linked alerts)"
+      }
+    },
+    "support": {
+      "intro": "Structured tickets, diagnostic bundles with redaction, offline reconciliation, and explicit links to audit records.",
+      "tickets": {
+        "title": "Tickets",
+        "col": {
+          "id": "Ticket",
+          "tenant": "Tenant",
+          "state": "State",
+          "sev": "Severity",
+          "module": "Module",
+          "sync": "Sync hint",
+          "audit": "Linked audit IDs"
+        }
+      },
+      "bundle": {
+        "title": "Diagnostic bundle (export)",
+        "export": "Request signed export (VPS)"
+      },
+      "offline": {
+        "title": "Offline-origin reconciliation",
+        "col": {
+          "desktop": "Desktop queue",
+          "vendor": "Vendor ticket",
+          "sync": "Sync state",
+          "dup": "Duplicate of"
+        }
+      },
+      "exports": {
+        "title": "Compliance export kinds",
+        "syncLink": "Open sync evidence"
+      }
+    },
+    "harden": {
+      "intro": "Privileged actions require reason codes and step-up; high-blast-radius may require dual approval on the server.",
+      "guards": {
+        "title": "Privileged-action safeguards",
+        "body": "Client hints only — VPS enforces RBAC, step-up window, and audit append.",
+        "stepUpExport": "Step-up: compliance export",
+        "stepUpRecall": "Step-up: rollout recall"
+      },
+      "runbooks": {
+        "title": "Incident runbooks"
+      },
+      "readiness": {
+        "title": "Drill-based readiness matrix",
+        "pass": "Pass",
+        "gap": "Gap"
+      }
+    }
+  },
+  "stepUp": {
+    "title": "Confirm sensitive action",
+    "description": "Step-up required for: {{action}}. Enter MFA or elevated password (server validates).",
+    "codeLabel": "Confirmation code",
+    "placeholder": "6-digit TOTP",
+    "cancel": "Cancel",
+    "confirm": "Confirm"
+  }
+}

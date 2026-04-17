@@ -1,0 +1,52 @@
+# Full stack: edge (nginx) + vendor console SPA + control API (JWT).
+#
+# DNS: console.maintafox.systems and api.maintafox.systems → this server's public IP.
+# First deploy: copy .env.example to .env and set JWT_SECRET + SEED_ADMIN_PASSWORD.
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: maintafox-control-api
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://console.maintafox.systems}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@maintafox.systems}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
+      DATA_DIR: /data
+      PORT: "3000"
+    volumes:
+      - control_api_data:/data
+    expose:
+      - "3000"
+
+  vendor-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_ADMIN_API_BASE_URL: ${VITE_ADMIN_API_BASE_URL:-http://api.maintafox.systems}
+        VITE_DEV_MOCK_AUTH: "false"
+        VITE_BASE_PATH: /
+    image: maintafox-vendor-console:local
+    container_name: maintafox-vendor-console
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  edge:
+    image: nginx:1.27-alpine
+    container_name: maintafox-edge
+    restart: unless-stopped
+    ports:
+      - "${EDGE_HTTP_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - vendor-console
+
+volumes:
+  control_api_data:

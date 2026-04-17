@@ -1,0 +1,306 @@
+/* Self-hosted Inter variable font — no CDN; offline-safe */
+@import "./org-print.css";
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: local("Inter Variable"), local("Inter");
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Custom Properties (design tokens, referenced by JS where Tailwind is
+       insufficient, e.g. D3 chart rendering) ───────────────────────────── */
+:root {
+  /* Brand — invariant across themes */
+  --color-primary: #003d8f;
+  --color-primary-dark: #002b6a;
+  --color-primary-light: #4d7bc5;
+  --color-primary-bg: #e8eef8;
+  --color-accent: #f0a500;
+
+  /* Status — invariant across themes */
+  --color-success: #198754;
+  --color-danger: #dc3545;
+  --color-warning: #ffc107;
+  --color-info: #0dcaf0;
+
+  /* Layout — invariant across themes */
+  --sidebar-width: 240px;
+  --sidebar-width-sm: 64px;
+  --topbar-height: 52px;
+  --statusbar-height: 24px;
+
+  /* Transitions — invariant across themes */
+  --transition-fast: 100ms;
+  --transition-base: 150ms;
+  --transition-normal: 200ms;
+  --transition-slow: 300ms;
+}
+
+/* ── Dark theme (default fallback) ──────────────────────────────────────── */
+:root,
+.dark {
+  --surface-0: #0f172a;
+  --surface-1: #1e293b;
+  --surface-2: #263244;
+  --surface-3: #334155;
+  --surface-border: #2d3f55;
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-danger: #f87171;
+  --text-success: #4ade80;
+  --text-warning: #fbbf24;
+
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 4px 16px 0 rgba(0, 0, 0, 0.5);
+  --shadow-focus: 0 0 0 2px #4d7bc5;
+
+  /* ── Shadcn/ui semantic bridge — maps to Maintafox tokens above ─────── */
+  --background: var(--surface-0);
+  --foreground: var(--text-primary);
+  --card: var(--surface-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--text-primary);
+  --primary-foreground: #f1f5f9;
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: #0d1b2e;
+  --destructive: #dc3545;
+  --destructive-foreground: #f1f5f9;
+  --border: var(--surface-border);
+  --input: var(--surface-border);
+  --ring: #4d7bc5;
+  --radius: 0.375rem;
+}
+
+/* ── Light theme — professional, clean ──────────────────────────────────── */
+.light {
+  --surface-0: #f4f6f9;
+  --surface-1: #ffffff;
+  --surface-2: #f0f3f7;
+  --surface-3: #e5eaf1;
+  --surface-border: #dde2eb;
+
+  --text-primary: #0d1b2e;
+  --text-secondary: #455778;
+  --text-muted: #8898aa;
+  --text-danger: #b91c1c;
+  --text-success: #15803d;
+  --text-warning: #b45309;
+
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+  --shadow-panel: 0 4px 20px 0 rgba(0, 0, 0, 0.09), 0 2px 6px -1px rgba(0, 0, 0, 0.05);
+
+  /* ── Shadcn/ui semantic bridge — maps to Maintafox tokens above ─────── */
+  --background: var(--surface-0);
+  --foreground: var(--text-primary);
+  --card: var(--surface-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--text-primary);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: #0d1b2e;
+  --destructive: #dc3545;
+  --destructive-foreground: #ffffff;
+  --border: var(--surface-border);
+  --input: var(--surface-border);
+  --ring: #4d7bc5;
+  --radius: 0.375rem;
+  --shadow-focus: 0 0 0 3px rgba(77, 123, 197, 0.28);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    background-color: var(--surface-0);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+  }
+
+  /* Re-enable selection inside text content areas */
+  p,
+  span,
+  td,
+  th,
+  li,
+  .selectable {
+    user-select: text;
+  }
+
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-primary-light);
+    outline-offset: 2px;
+  }
+
+  /* Scrollbar styling — adapts to active theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--surface-2);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+  /* Tauri drag region for title-bar-less windows */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+    cursor: default;
+  }
+  [data-tauri-drag-region] * {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  /* ── Status badge base ───────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium;
+  }
+  .badge-success {
+    @apply bg-status-success/20 text-status-success;
+  }
+  .badge-danger {
+    @apply bg-status-danger/20 text-status-danger;
+  }
+  .badge-warning {
+    @apply bg-status-warning/20 text-text-warning;
+  }
+  .badge-info {
+    @apply bg-status-info/20 text-status-info;
+  }
+  .badge-neutral {
+    @apply bg-surface-3 text-text-secondary;
+  }
+
+  /* ── Button primitives ───────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5
+           text-sm font-medium text-white transition-colors duration-fast
+           hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary-light
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm
+           font-medium text-text-secondary transition-colors duration-fast
+           hover:bg-surface-3 hover:text-text-primary disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-status-danger px-3 py-1.5
+           text-sm font-medium text-white transition-colors duration-fast
+           hover:brightness-90 disabled:opacity-50;
+  }
+
+  /* ── Form field primitives ───────────────────────────────────────── */
+  .field-label {
+    @apply block text-xs font-medium text-text-secondary uppercase tracking-wide mb-1;
+  }
+  .field-input {
+    @apply w-full rounded-md border border-surface-border bg-surface-2 px-3 py-1.5
+           text-sm text-text-primary placeholder-text-muted
+           focus-visible:border-primary-light focus-visible:ring-1
+           focus-visible:ring-primary-light transition-colors duration-fast;
+  }
+  .field-error {
+    @apply mt-1 text-xs text-text-danger;
+  }
+
+  /* ── Login page animations ───────────────────────────────────────── */
+  .login-panel {
+    @apply relative hidden md:flex md:w-[45%] flex-col overflow-hidden;
+    background-color: #002a63;
+  }
+}
+
+/* ── Login page keyframes ─────────────────────────────────────────────────── */
+@keyframes login-spin {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+@keyframes login-float {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes login-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer components {
+  /* ── Table primitives ───────────────────────────────────────────── */
+  .tbl-header {
+    @apply bg-surface-2 text-xs font-semibold uppercase tracking-wide text-text-secondary;
+  }
+  .tbl-row {
+    @apply border-b border-surface-border transition-colors duration-fast hover:bg-surface-3;
+  }
+  .tbl-cell {
+    @apply px-3 py-2 text-sm text-text-primary;
+  }
+}

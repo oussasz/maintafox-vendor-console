@@ -1,0 +1,26 @@
+/* org-print.css — Print-specific styles for Organization Designer (GAP ORG-03) */
+
+@media print {
+  /* Hide navigation, sidebar, toolbar, inspector */
+  nav,
+  header,
+  [data-print-hide],
+  aside {
+    display: none !important;
+  }
+
+  /* The tree pane fills the page */
+  #org-tree-container {
+    width: 100% !important;
+    border: none !important;
+    overflow: visible !important;
+  }
+
+  /* Remove max-widths and flex constraints */
+  body,
+  #root {
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+}

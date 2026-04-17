@@ -1,0 +1,11 @@
+node_modules
+dist
+api/node_modules
+api/dist
+.git
+.gitignore
+.env
+.env.*
+*.log
+README.md
+deploy/*.md
