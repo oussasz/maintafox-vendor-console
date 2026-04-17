@@ -720,6 +720,26 @@ const CreateTenantBody = z.object({
   reconnect_requires_fresh_heartbeat: z.boolean().optional(),
 }).strict();
 
+const UpdateTenantBody = z
+  .object({
+    slug: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/).optional(),
+    display_name: z.string().min(2).max(128).optional(),
+    rollout_cohort: z.string().trim().min(2).max(64).optional(),
+    update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
+  })
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, { message: "empty_patch" });
+
+const UpdateLicenseBody = z
+  .object({
+    max_machines: z.number().int().min(1).max(1000).optional(),
+    expires_at: z.string().datetime().nullable().optional(),
+    update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
+    operator_rationale: z.string().trim().min(8).max(512).optional(),
+  })
+  .strict()
+  .refine((b) => Object.keys(b).length > 0, { message: "empty_patch" });
+
 const CreateLicenseBody = z.object({
   tenant_id: z.string().min(3),
   max_machines: z.number().int().min(1).max(1000).default(1),
@@ -1340,6 +1360,73 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
   });
 });
 
+app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
+  const tenantId = req.params.tenantId;
+  const parsed = UpdateTenantBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const row = db
+    .prepare(
+      `SELECT id, slug, display_name, rollout_cohort, update_channel FROM tenants WHERE id = ?`,
+    )
+    .get(tenantId) as { id: string; slug: string; display_name: string; rollout_cohort: string; update_channel: string } | undefined;
+  if (!row) {
+    res.status(404).json({ error: "tenant_not_found" });
+    return;
+  }
+  const input = parsed.data;
+  const nextSlug = input.slug ?? row.slug;
+  const nextDisplay = input.display_name ?? row.display_name;
+  const nextCohort = input.rollout_cohort ?? row.rollout_cohort;
+  const nextChannel = input.update_channel ?? row.update_channel;
+  try {
+    db.prepare(
+      `UPDATE tenants SET slug = ?, display_name = ?, rollout_cohort = ?, update_channel = ? WHERE id = ?`,
+    ).run(nextSlug, nextDisplay, nextCohort, nextChannel, tenantId);
+  } catch (err) {
+    res.status(409).json({ error: "tenant_conflict", message: String(err) });
+    return;
+  }
+  const out = db
+    .prepare(
+      `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+              offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat, is_active, created_at
+       FROM tenants WHERE id = ?`,
+    )
+    .get(tenantId) as Record<string, unknown>;
+  res.json(out);
+});
+
+app.delete("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
+  const tenantId = req.params.tenantId;
+  const exists = db.prepare(`SELECT id FROM tenants WHERE id = ?`).get(tenantId) as { id: string } | undefined;
+  if (!exists) {
+    res.status(404).json({ error: "tenant_not_found" });
+    return;
+  }
+  const del = db.transaction(() => {
+    db.prepare(
+      `DELETE FROM support_ticket_interventions WHERE ticket_id IN (SELECT ticket_id FROM support_tickets WHERE tenant_id = ?)`,
+    ).run(tenantId);
+    db.prepare(`DELETE FROM support_tickets WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM machine_activations WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM license_keys WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM tenant_sync_state WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM sync_mirror_ingress WHERE tenant_id = ?`).run(tenantId);
+    db.prepare(`DELETE FROM tenants WHERE id = ?`).run(tenantId);
+  });
+  try {
+    del();
+  } catch (err) {
+    res.status(500).json({ error: "tenant_delete_failed", message: String(err) });
+    return;
+  }
+  res.status(204).send();
+});
+
 app.get("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) => {
   const row = db
     .prepare(
@@ -1836,6 +1923,54 @@ app.get("/api/v1/tenants/:tenantId/licenses", authMiddleware, (req, res) => {
     return;
   }
   res.json(items);
+});
+
+app.patch("/api/v1/licenses/:licenseId", authMiddleware, (req, res) => {
+  const licenseId = req.params.licenseId;
+  const parsed = UpdateLicenseBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const row = db
+    .prepare(
+      `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`,
+    )
+    .get(licenseId) as
+    | {
+        id: string;
+        tenant_id: string;
+        license_key: string;
+        max_machines: number;
+        expires_at: string | null;
+        revoked_at: string | null;
+        revoked_reason: string | null;
+        created_at: string;
+        update_channel: string;
+      }
+    | undefined;
+  if (!row) {
+    res.status(404).json({ error: "license_not_found" });
+    return;
+  }
+  if (row.revoked_at) {
+    res.status(409).json({ error: "license_revoked", message: "Cannot update a revoked license key." });
+    return;
+  }
+  const input = parsed.data;
+  const nextMax = input.max_machines ?? row.max_machines;
+  const nextExpires =
+    input.expires_at === undefined ? row.expires_at : input.expires_at === null ? null : input.expires_at;
+  const nextChannel = input.update_channel ?? row.update_channel;
+  db.prepare(
+    `UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`,
+  ).run(nextMax, nextExpires, nextChannel, licenseId);
+  const out = db
+    .prepare(
+      `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`,
+    )
+    .get(licenseId) as Record<string, unknown>;
+  res.json(out);
 });
 
 app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, (req, res) => {

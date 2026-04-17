@@ -103,6 +103,93 @@ function apiBase(): string {
   return raw.replace(/\/$/, "");
 }
 
+type ControlPlaneErrorBody = {
+  error?: string;
+  message?: string;
+  detail?: string | unknown;
+  details?: unknown;
+  max_machines?: number;
+};
+
+/** True when the message indicates a duplicate tenant slug (409 from POST /tenants). */
+export function isDuplicateTenantSlugMessage(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("already taken") ||
+    m.includes("tenant_conflict") ||
+    /\b(unique|duplicate)\b.*\bslug\b|\bslug\b.*\b(unique|duplicate)\b/.test(m) ||
+    (m.includes("sqlite") && m.includes("unique")) ||
+    (m.includes("constraint") && m.includes("slug"))
+  );
+}
+
+/**
+ * Maps control-plane JSON error bodies to operator-readable messages (incl. 409 conflicts).
+ */
+export async function parseControlPlaneErrorResponse(res: Response): Promise<string> {
+  let body: ControlPlaneErrorBody = {};
+  try {
+    body = (await res.json()) as ControlPlaneErrorBody;
+  } catch {
+    return `Request failed (${res.status})`;
+  }
+  const code = typeof body.error === "string" ? body.error.trim() : "";
+  const msg = typeof body.message === "string" ? body.message.trim() : "";
+  const detailStr =
+    typeof body.detail === "string"
+      ? body.detail.trim()
+      : Array.isArray(body.detail)
+        ? body.detail
+            .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
+            .join(" ")
+        : "";
+
+  if (res.status === 409) {
+    if (code === "tenant_conflict") {
+      return "This tenant slug is already taken. Choose a different slug.";
+    }
+    // Production APIs sometimes surface SQLite/unique errors only in `message`.
+    if (msg && isDuplicateTenantSlugMessage(msg)) {
+      return "This tenant slug is already taken. Choose a different slug.";
+    }
+    if (detailStr && isDuplicateTenantSlugMessage(detailStr)) {
+      return "This tenant slug is already taken. Choose a different slug.";
+    }
+    if (code === "idempotency_key_conflict") {
+      return "This request was already processed with different inputs. Retry with a fresh idempotency key.";
+    }
+    if (code === "slot_limit_reached") {
+      const max = body.max_machines;
+      return max != null
+        ? `Activation slot limit reached for this license (max ${max} machines).`
+        : "Activation slot limit reached for this license.";
+    }
+    if (code === "no_policy_history") {
+      return msg || "No policy history available to roll back.";
+    }
+    if (code === "license_revoked") {
+      return msg || "This license key is revoked and cannot be updated.";
+    }
+    if (msg || detailStr) {
+      return msg || detailStr;
+    }
+  }
+
+  if (res.status === 404 && (code === "tenant_not_found" || code === "license_not_found")) {
+    return msg || (code === "license_not_found" ? "License key not found." : "Tenant not found.");
+  }
+
+  if (msg) return msg;
+  if (detailStr) return detailStr;
+  if (code) return `${code.replace(/_/g, " ")} (${res.status})`;
+  return `Request failed (${res.status})`;
+}
+
+async function throwIfNotOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  throw new Error(await parseControlPlaneErrorResponse(res));
+}
+
 async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = getAccessToken();
   if (!token) throw new Error("Not authenticated.");
@@ -135,8 +222,32 @@ function idempotencyKey(prefix: string): string {
 
 export async function listTenants(): Promise<ControlTenant[]> {
   const res = await authFetch("/api/v1/tenants");
-  if (!res.ok) throw new Error(`Tenant fetch failed (${res.status})`);
+  await throwIfNotOk(res);
   return z.array(TenantSchema).parse(await res.json());
+}
+
+export async function updateTenant(
+  tenantId: string,
+  input: {
+    slug?: string;
+    display_name?: string;
+    rollout_cohort?: string;
+    update_channel?: "stable" | "pilot" | "internal";
+  },
+): Promise<ControlTenant> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  await throwIfNotOk(res);
+  return TenantSchema.parse(await res.json());
+}
+
+export async function deleteTenant(tenantId: string): Promise<void> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
+    method: "DELETE",
+  });
+  await throwIfNotOk(res);
 }
 
 export async function createTenant(input: {
@@ -155,7 +266,7 @@ export async function createTenant(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(`Tenant create failed (${res.status})`);
+  await throwIfNotOk(res);
   return TenantSchema.parse(await res.json());
 }
 
@@ -174,14 +285,31 @@ export async function issueLicense(input: {
       "Idempotency-Key": idempotencyKey("issue-license"),
     },
   });
-  if (!res.ok) throw new Error(`Issue license failed (${res.status})`);
+  await throwIfNotOk(res);
   return LicenseSchema.parse(await res.json());
 }
 
 export async function listTenantLicenses(tenantId: string): Promise<ControlLicense[]> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/licenses`);
-  if (!res.ok) throw new Error(`License list failed (${res.status})`);
+  await throwIfNotOk(res);
   return z.array(LicenseSchema).parse(await res.json());
+}
+
+export async function updateLicense(
+  licenseId: string,
+  input: {
+    max_machines?: number;
+    expires_at?: string | null;
+    update_channel?: "stable" | "pilot" | "internal";
+    operator_rationale?: string | null;
+  },
+): Promise<ControlLicense> {
+  const res = await authFetch(`/api/v1/licenses/${encodeURIComponent(licenseId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+  await throwIfNotOk(res);
+  return LicenseSchema.parse(await res.json());
 }
 
 export async function revokeLicense(licenseId: string, reason?: string): Promise<void> {
@@ -192,7 +320,7 @@ export async function revokeLicense(licenseId: string, reason?: string): Promise
       "Idempotency-Key": idempotencyKey("revoke-license"),
     },
   });
-  if (!res.ok) throw new Error(`License revoke failed (${res.status})`);
+  await throwIfNotOk(res);
 }
 
 export async function claimActivation(input: {
@@ -209,19 +337,19 @@ export async function claimActivation(input: {
     },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(`Activation claim failed (${res.status})`);
+  await throwIfNotOk(res);
   return ActivationClaimResultSchema.parse(await res.json());
 }
 
 export async function listTenantActivations(tenantId: string): Promise<ActivationRow[]> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/activations`);
-  if (!res.ok) throw new Error(`Activation list failed (${res.status})`);
+  await throwIfNotOk(res);
   return z.array(ActivationRowSchema).parse(await res.json());
 }
 
 export async function getTenantOfflinePolicy(tenantId: string): Promise<OfflinePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/offline-policy`);
-  if (!res.ok) throw new Error(`Offline policy fetch failed (${res.status})`);
+  await throwIfNotOk(res);
   return OfflinePolicySchema.parse(await res.json());
 }
 
@@ -237,13 +365,13 @@ export async function updateTenantOfflinePolicy(
     method: "PUT",
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(`Offline policy update failed (${res.status})`);
+  await throwIfNotOk(res);
   return OfflinePolicySchema.parse(await res.json());
 }
 
 export async function getTenantUpdatePolicy(tenantId: string): Promise<TenantUpdatePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy`);
-  if (!res.ok) throw new Error(`Tenant update policy fetch failed (${res.status})`);
+  await throwIfNotOk(res);
   return TenantUpdatePolicySchema.parse(await res.json());
 }
 
@@ -261,7 +389,7 @@ export async function updateTenantUpdatePolicy(
     body: JSON.stringify(input),
     headers: privilegedHeaders(privileged),
   });
-  if (!res.ok) throw new Error(`Tenant update policy update failed (${res.status})`);
+  await throwIfNotOk(res);
   return TenantUpdatePolicySchema.parse(await res.json());
 }
 
@@ -274,7 +402,7 @@ export async function rollbackTenantUpdatePolicy(
     body: JSON.stringify({}),
     headers: privilegedHeaders(privileged),
   });
-  if (!res.ok) throw new Error(`Tenant update policy rollback failed (${res.status})`);
+  await throwIfNotOk(res);
   return TenantUpdatePolicySchema.parse(await res.json());
 }
 
@@ -285,7 +413,7 @@ export async function getCohortUpdatePolicy(
   const res = await authFetch(
     `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy`,
   );
-  if (!res.ok) throw new Error(`Cohort update policy fetch failed (${res.status})`);
+  await throwIfNotOk(res);
   return CohortUpdatePolicySchema.parse(await res.json());
 }
 
@@ -307,7 +435,7 @@ export async function updateCohortUpdatePolicy(
       headers: privilegedHeaders(privileged),
     },
   );
-  if (!res.ok) throw new Error(`Cohort update policy update failed (${res.status})`);
+  await throwIfNotOk(res);
   return CohortUpdatePolicySchema.parse(await res.json());
 }
 
@@ -324,6 +452,6 @@ export async function rollbackCohortUpdatePolicy(
       headers: privilegedHeaders(privileged),
     },
   );
-  if (!res.ok) throw new Error(`Cohort update policy rollback failed (${res.status})`);
+  await throwIfNotOk(res);
   return CohortUpdatePolicySchema.parse(await res.json());
 }

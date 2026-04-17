@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,7 @@ import {
   listTenantLicenses,
   listTenants,
   revokeLicense,
+  updateLicense,
   type ControlLicense,
   type ControlTenant,
 } from "@/services/license-control-service";
@@ -42,6 +44,25 @@ type IssueFormErrors = {
   operator_reason_code?: string;
   operator_rationale?: string;
 };
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** `datetime-local` value ~30 days ahead (local) to avoid immediate expiry validation failures. */
+function defaultExpiryDatetimeLocal(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 30);
+  d.setSeconds(0, 0);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
 
 const DEFAULT_ISSUE_FORM: IssueForm = {
   max_machines: "1",
@@ -80,6 +101,8 @@ function validateIssueForm(form: IssueForm): IssueFormErrors {
     const parsed = Date.parse(form.expires_at);
     if (Number.isNaN(parsed)) {
       errors.expires_at = "Expiry must be a valid date/time.";
+    } else if (parsed < Date.now()) {
+      errors.expires_at = "Expiry date cannot be in the past.";
     }
   }
 
@@ -93,7 +116,24 @@ function validateIssueForm(form: IssueForm): IssueFormErrors {
   return errors;
 }
 
-export function EntitlementLifecyclePanel() {
+export type EntitlementLifecyclePanelHandle = {
+  openIssueDialog: () => void;
+  refreshLicenses: () => Promise<void>;
+};
+
+export type EntitlementLifecyclePanelCapabilities = {
+  canIssueKey: boolean;
+  loadingLicenses: boolean;
+};
+
+type EntitlementLifecyclePanelProps = {
+  /** When true, the Add/Refresh buttons are not rendered in the panel (e.g. shown in the page header). */
+  hideSectionToolbar?: boolean;
+  onCapabilitiesChange?: (capabilities: EntitlementLifecyclePanelCapabilities) => void;
+};
+
+export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHandle, EntitlementLifecyclePanelProps>(
+  function EntitlementLifecyclePanel({ hideSectionToolbar = false, onCapabilitiesChange }, ref) {
   const { t } = useTranslation("vendorConsole");
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
@@ -110,10 +150,14 @@ export function EntitlementLifecyclePanel() {
   const [mutationSuccess, setMutationSuccess] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingLicense, setEditingLicense] = useState<ControlLicense | null>(null);
+  const [deleteConfirmLicense, setDeleteConfirmLicense] = useState<ControlLicense | null>(null);
   const [revoking, setRevoking] = useState(false);
   const [issuing, setIssuing] = useState(false);
+  const [updatingLicense, setUpdatingLicense] = useState(false);
+  const [deletingLicense, setDeletingLicense] = useState(false);
   const [issueForm, setIssueForm] = useState<IssueForm>(DEFAULT_ISSUE_FORM);
-  const [issueFormErrors, setIssueFormErrors] = useState<IssueFormErrors>({});
   const [revokeReason, setRevokeReason] = useState("");
   const [clipboardBusy, setClipboardBusy] = useState(false);
 
@@ -194,6 +238,13 @@ export function EntitlementLifecyclePanel() {
     void loadLicenses(selectedTenantId);
   }, [selectedTenantId, loadLicenses]);
 
+  useEffect(() => {
+    onCapabilitiesChange?.({
+      canIssueKey: Boolean(selectedTenant),
+      loadingLicenses,
+    });
+  }, [onCapabilitiesChange, selectedTenant, loadingLicenses]);
+
   const filteredAndSortedLicenses = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     const rows = licenses.filter((license) => {
@@ -227,9 +278,11 @@ export function EntitlementLifecyclePanel() {
     return sorted;
   }, [licenses, searchQuery, stateFilter, sortKey, sortDirection]);
 
-  const issueFormIsValid = useMemo(
-    () => Object.keys(validateIssueForm(issueForm)).length === 0,
-    [issueForm],
+  const issueValidationErrors = useMemo(() => validateIssueForm(issueForm), [issueForm]);
+  const issueFormIsValid = Object.keys(issueValidationErrors).length === 0;
+  const issueBlockingSummaries = useMemo(
+    () => Object.values(issueValidationErrors).filter(Boolean),
+    [issueValidationErrors],
   );
 
   const openDetail = (licenseId: string) => {
@@ -239,15 +292,40 @@ export function EntitlementLifecyclePanel() {
     setDetailOpen(true);
   };
 
-  const openIssueDialog = () => {
+  const openIssueDialog = useCallback(() => {
     setIssueForm({
       ...DEFAULT_ISSUE_FORM,
       update_channel: selectedTenant?.update_channel ?? "stable",
+      expires_at: defaultExpiryDatetimeLocal(),
     });
-    setIssueFormErrors({});
     setMutationError(null);
     setIssueOpen(true);
+  }, [selectedTenant?.update_channel]);
+
+  const openEditDialog = (license: ControlLicense) => {
+    if (license.revoked_at) return;
+    setEditingLicense(license);
+    setIssueForm({
+      max_machines: String(license.max_machines),
+      update_channel: (license.update_channel ?? selectedTenant?.update_channel ?? "stable") as IssueForm["update_channel"],
+      expires_at: license.expires_at ? isoToDatetimeLocal(license.expires_at) : "",
+      operator_reason_code: "",
+      operator_rationale: "Update entitlement key metadata per operator request.",
+    });
+    setMutationError(null);
+    setEditOpen(true);
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openIssueDialog,
+      refreshLicenses: async () => {
+        await loadLicenses(selectedTenantId);
+      },
+    }),
+    [openIssueDialog, selectedTenantId, loadLicenses],
+  );
 
   const exportOnboardingPacket = (license: ControlLicense) => {
     const packet = {
@@ -274,11 +352,7 @@ export function EntitlementLifecyclePanel() {
     setMutationSuccess(`Onboarding packet exported for ${license.id}.`);
   };
 
-  const issueDisabledReason = !selectedTenant
-    ? "Select a tenant first."
-    : issueFormIsValid
-      ? null
-      : "Fix validation errors before issuing a key.";
+  const issueDisabledReason = !selectedTenant ? "Select a tenant first." : null;
 
   const canRevokeSelected = Boolean(selectedLicense) && selectedLicenseState !== "revoked";
   const revokeDisabledReason = !selectedLicense
@@ -286,9 +360,6 @@ export function EntitlementLifecyclePanel() {
     : selectedLicenseState === "revoked"
       ? "This key is already revoked."
       : null;
-
-  const updateDisabledReason = "Update key metadata is unavailable: no API endpoint exists for license update.";
-  const deleteDisabledReason = "Delete is unavailable: policy requires revocation for auditability.";
 
   const noRows = !loadingLicenses && !loadError && licenses.length === 0;
   const noFilterMatches = !loadingLicenses && !loadError && licenses.length > 0 && filteredAndSortedLicenses.length === 0;
@@ -306,21 +377,21 @@ export function EntitlementLifecyclePanel() {
               )}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" onClick={openIssueDialog} disabled={!selectedTenant}>
-              {t("entitlement.addKey", "Add/Issue key")}
-            </Button>
-            <Button type="button" variant="outline" disabled={loadingLicenses} onClick={() => void loadLicenses(selectedTenantId)}>
-              {loadingLicenses ? t("entitlement.refreshing", "Refreshing…") : t("entitlement.refresh", "Refresh")}
-            </Button>
-          </div>
+          {!hideSectionToolbar ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" onClick={openIssueDialog} disabled={!selectedTenant}>
+                {t("entitlement.addKey", "Add/Issue key")}
+              </Button>
+              <Button type="button" variant="outline" disabled={loadingLicenses} onClick={() => void loadLicenses(selectedTenantId)}>
+                {loadingLicenses ? t("entitlement.refreshing", "Refreshing…") : t("entitlement.refresh", "Refresh")}
+              </Button>
+            </div>
+          ) : null}
         </div>
         {!selectedTenant ? (
           <p className="mt-2 text-xs text-amber-300">Select a tenant to issue or manage entitlement keys.</p>
         ) : null}
-        {!selectedTenant && issueDisabledReason ? (
-          <p className="mt-2 text-xs text-text-muted">{issueDisabledReason}</p>
-        ) : null}
+        {issueDisabledReason ? <p className="mt-2 text-xs text-text-muted">{issueDisabledReason}</p> : null}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-5">
           <div>
@@ -414,14 +485,12 @@ export function EntitlementLifecyclePanel() {
         {noRows ? (
           <div className="mt-4 rounded-md border border-dashed border-surface-border bg-surface-2 p-4 text-sm text-text-secondary">
             <p>{t("entitlement.noLicenses", "No keys have been issued for this tenant.")}</p>
-            <div className="mt-3 flex gap-2">
-              <Button type="button" onClick={openIssueDialog} disabled={!selectedTenant}>
-                {t("entitlement.addKey", "Add/Issue key")}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => void loadLicenses(selectedTenantId)}>
-                {t("entitlement.refresh", "Refresh")}
-              </Button>
-            </div>
+            <p className="mt-2 text-xs text-text-muted">
+              {t(
+                "entitlement.noLicensesHint",
+                "Use Add/Issue key in the toolbar above to create the first key for this tenant.",
+              )}
+            </p>
           </div>
         ) : null}
 
@@ -453,11 +522,13 @@ export function EntitlementLifecyclePanel() {
                   <TableHead>Expiry</TableHead>
                   <TableHead>State</TableHead>
                   <TableHead>Slots</TableHead>
+                  <TableHead className="w-[1%] whitespace-nowrap text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredAndSortedLicenses.map((license) => {
                   const state = deriveLicenseState(license);
+                  const canMutate = !license.revoked_at;
                   return (
                     <TableRow
                       key={license.id}
@@ -472,6 +543,34 @@ export function EntitlementLifecyclePanel() {
                       <TableCell>{formatDateTime(license.expires_at)}</TableCell>
                       <TableCell>{state}</TableCell>
                       <TableCell>{license.max_machines}</TableCell>
+                      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 px-2"
+                            disabled={!canMutate}
+                            title={canMutate ? "Edit key" : "Revoked keys cannot be edited"}
+                            onClick={() => openEditDialog(license)}
+                          >
+                            <Pencil className="h-4 w-4" aria-hidden />
+                            <span className="sr-only">Edit</span>
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 border-red-500/40 px-2 text-red-200 hover:bg-red-500/10"
+                            disabled={!canMutate}
+                            title={canMutate ? "Revoke key" : "Already revoked"}
+                            onClick={() => setDeleteConfirmLicense(license)}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
+                            <span className="sr-only">Delete</span>
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -486,11 +585,229 @@ export function EntitlementLifecyclePanel() {
           {mutationSuccess}
         </div>
       ) : null}
-      {mutationError ? (
+      {mutationError && !issueOpen && !editOpen ? (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert">
           {mutationError}
         </div>
       ) : null}
+
+      <Dialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open);
+          if (!open) {
+            setEditingLicense(null);
+            setMutationError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("entitlement.editKey", "Update entitlement key")}</DialogTitle>
+            <DialogDescription>
+              {t(
+                "entitlement.editHint",
+                "Change slot limit, channel, or expiry. Operator rationale is required for audit.",
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="edit-key-id">Key ID</Label>
+              <Input id="edit-key-id" value={editingLicense?.id ?? ""} readOnly className="font-mono text-xs" />
+            </div>
+            <div>
+              <Label htmlFor="edit-slots">Slot limit</Label>
+              <Input
+                id="edit-slots"
+                value={issueForm.max_machines}
+                onChange={(event) => {
+                  setIssueForm((previous) => ({ ...previous, max_machines: event.target.value }));
+                }}
+                aria-invalid={Boolean(issueValidationErrors.max_machines)}
+              />
+              {issueValidationErrors.max_machines ? (
+                <p className="mt-1 text-xs text-red-300" role="alert">
+                  {issueValidationErrors.max_machines}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <Label htmlFor="edit-channel">Channel</Label>
+              <select
+                id="edit-channel"
+                className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+                value={issueForm.update_channel}
+                onChange={(event) =>
+                  setIssueForm((previous) => ({
+                    ...previous,
+                    update_channel: event.target.value as "stable" | "pilot" | "internal",
+                  }))
+                }
+              >
+                <option value="stable">stable</option>
+                <option value="pilot">pilot</option>
+                <option value="internal">internal</option>
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="edit-expiry">Expiry (optional)</Label>
+              <Input
+                id="edit-expiry"
+                type="datetime-local"
+                value={issueForm.expires_at}
+                onChange={(event) => {
+                  setIssueForm((previous) => ({ ...previous, expires_at: event.target.value }));
+                }}
+                aria-invalid={Boolean(issueValidationErrors.expires_at)}
+              />
+              {issueValidationErrors.expires_at ? (
+                <p className="mt-1 text-xs text-red-300" role="alert">
+                  {issueValidationErrors.expires_at}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <Label htmlFor="edit-rationale">Operator rationale</Label>
+              <Textarea
+                id="edit-rationale"
+                value={issueForm.operator_rationale}
+                onChange={(event) => {
+                  setIssueForm((previous) => ({ ...previous, operator_rationale: event.target.value }));
+                }}
+                aria-invalid={Boolean(issueValidationErrors.operator_rationale)}
+              />
+              {issueValidationErrors.operator_rationale ? (
+                <p className="mt-1 text-xs text-red-300" role="alert">
+                  {issueValidationErrors.operator_rationale}
+                </p>
+              ) : null}
+            </div>
+            {mutationError && editOpen ? (
+              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">
+                {mutationError}
+              </p>
+            ) : null}
+            {!issueFormIsValid && issueBlockingSummaries.length > 0 ? (
+              <div className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
+                <p className="font-medium text-text-primary">Complete the following before saving:</p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {issueBlockingSummaries.map((line, index) => (
+                    <li key={`${index}-${line}`}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEditOpen(false);
+                setEditingLicense(null);
+              }}
+              disabled={updatingLicense}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={updatingLicense || !editingLicense || !issueFormIsValid}
+              onClick={async () => {
+                const errors = validateIssueForm(issueForm);
+                if (Object.keys(errors).length > 0 || !editingLicense) return;
+                setUpdatingLicense(true);
+                setMutationError(null);
+                setMutationSuccess(null);
+                try {
+                  const lic = editingLicense;
+                  await updateLicense(lic.id, {
+                    max_machines: Number.parseInt(issueForm.max_machines, 10),
+                    update_channel: issueForm.update_channel,
+                    expires_at: issueForm.expires_at ? new Date(issueForm.expires_at).toISOString() : null,
+                    operator_rationale: issueForm.operator_rationale.trim(),
+                  });
+                  await loadLicenses(lic.tenant_id, lic.id);
+                  setMutationSuccess(`Key ${lic.id} was updated.`);
+                  setEditOpen(false);
+                  setEditingLicense(null);
+                  setSelectedLicenseId(lic.id);
+                  setDetailOpen(true);
+                } catch (err) {
+                  setMutationError(err instanceof Error ? err.message : "Update key failed");
+                } finally {
+                  setUpdatingLicense(false);
+                }
+              }}
+            >
+              {updatingLicense ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteConfirmLicense !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirmLicense(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("entitlement.confirmRevokeTitle", "Revoke entitlement key?")}</DialogTitle>
+            <DialogDescription>
+              {deleteConfirmLicense
+                ? t("entitlement.confirmRevokeBody", {
+                    defaultValue:
+                      "This revokes key {{id}} and blocks new activations. Existing activations are invalidated per policy. This action is retained for audit.",
+                    id: deleteConfirmLicense.id,
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="confirm-revoke-reason">Revoke reason (optional)</Label>
+            <Input
+              id="confirm-revoke-reason"
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              placeholder="e.g. rotation, security review"
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setDeleteConfirmLicense(null)} disabled={deletingLicense}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingLicense}
+              onClick={async () => {
+                if (!deleteConfirmLicense) return;
+                const target = deleteConfirmLicense;
+                setDeletingLicense(true);
+                setMutationError(null);
+                setMutationSuccess(null);
+                try {
+                  await revokeLicense(target.id, revokeReason.trim() || "Revoked by operator from list");
+                  await loadLicenses(target.tenant_id, target.id);
+                  setMutationSuccess(`Key ${target.id} was revoked.`);
+                  setDeleteConfirmLicense(null);
+                  setSelectedLicenseId(target.id);
+                  setDetailOpen(true);
+                } catch (err) {
+                  setMutationError(err instanceof Error ? err.message : "Revoke key failed");
+                } finally {
+                  setDeletingLicense(false);
+                }
+              }}
+            >
+              {deletingLicense ? "Revoking…" : "Revoke key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={issueOpen} onOpenChange={setIssueOpen}>
         <DialogContent>
@@ -519,13 +836,12 @@ export function EntitlementLifecyclePanel() {
                 value={issueForm.max_machines}
                 onChange={(event) => {
                   setIssueForm((previous) => ({ ...previous, max_machines: event.target.value }));
-                  setIssueFormErrors((previous) => ({ ...previous, max_machines: undefined }));
                 }}
-                aria-invalid={Boolean(issueFormErrors.max_machines)}
+                aria-invalid={Boolean(issueValidationErrors.max_machines)}
               />
-              {issueFormErrors.max_machines ? (
+              {issueValidationErrors.max_machines ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {issueFormErrors.max_machines}
+                  {issueValidationErrors.max_machines}
                 </p>
               ) : null}
             </div>
@@ -549,19 +865,19 @@ export function EntitlementLifecyclePanel() {
             </div>
             <div>
               <Label htmlFor="issue-expiry">Expiry (optional)</Label>
+              <p className="mt-0.5 text-xs text-text-muted">Defaults to ~30 days from now. Clear the field for no expiry.</p>
               <Input
                 id="issue-expiry"
                 type="datetime-local"
                 value={issueForm.expires_at}
                 onChange={(event) => {
                   setIssueForm((previous) => ({ ...previous, expires_at: event.target.value }));
-                  setIssueFormErrors((previous) => ({ ...previous, expires_at: undefined }));
                 }}
-                aria-invalid={Boolean(issueFormErrors.expires_at)}
+                aria-invalid={Boolean(issueValidationErrors.expires_at)}
               />
-              {issueFormErrors.expires_at ? (
+              {issueValidationErrors.expires_at ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {issueFormErrors.expires_at}
+                  {issueValidationErrors.expires_at}
                 </p>
               ) : null}
             </div>
@@ -573,13 +889,12 @@ export function EntitlementLifecyclePanel() {
                 value={issueForm.operator_reason_code}
                 onChange={(event) => {
                   setIssueForm((previous) => ({ ...previous, operator_reason_code: event.target.value }));
-                  setIssueFormErrors((previous) => ({ ...previous, operator_reason_code: undefined }));
                 }}
-                aria-invalid={Boolean(issueFormErrors.operator_reason_code)}
+                aria-invalid={Boolean(issueValidationErrors.operator_reason_code)}
               />
-              {issueFormErrors.operator_reason_code ? (
+              {issueValidationErrors.operator_reason_code ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {issueFormErrors.operator_reason_code}
+                  {issueValidationErrors.operator_reason_code}
                 </p>
               ) : null}
             </div>
@@ -591,18 +906,29 @@ export function EntitlementLifecyclePanel() {
                 value={issueForm.operator_rationale}
                 onChange={(event) => {
                   setIssueForm((previous) => ({ ...previous, operator_rationale: event.target.value }));
-                  setIssueFormErrors((previous) => ({ ...previous, operator_rationale: undefined }));
                 }}
-                aria-invalid={Boolean(issueFormErrors.operator_rationale)}
+                aria-invalid={Boolean(issueValidationErrors.operator_rationale)}
               />
-              {issueFormErrors.operator_rationale ? (
+              {issueValidationErrors.operator_rationale ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {issueFormErrors.operator_rationale}
+                  {issueValidationErrors.operator_rationale}
                 </p>
               ) : null}
             </div>
-            {!issueFormIsValid && issueDisabledReason ? (
-              <p className="text-xs text-text-muted">{issueDisabledReason}</p>
+            {mutationError && issueOpen ? (
+              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">
+                {mutationError}
+              </p>
+            ) : null}
+            {!issueFormIsValid && issueBlockingSummaries.length > 0 ? (
+              <div className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
+                <p className="font-medium text-text-primary">Complete the following before issuing:</p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {issueBlockingSummaries.map((line, index) => (
+                    <li key={`${index}-${line}`}>{line}</li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
           </div>
           <DialogFooter>
@@ -614,7 +940,6 @@ export function EntitlementLifecyclePanel() {
               disabled={issuing || !selectedTenant || !issueFormIsValid}
               onClick={async () => {
                 const errors = validateIssueForm(issueForm);
-                setIssueFormErrors(errors);
                 if (Object.keys(errors).length > 0) return;
                 if (!selectedTenant) return;
 
@@ -655,7 +980,7 @@ export function EntitlementLifecyclePanel() {
           <DialogHeader>
             <DialogTitle>Entitlement key detail</DialogTitle>
             <DialogDescription>
-              Review key metadata and run available lifecycle actions. Unsupported actions are disabled with explicit policy/API reasons.
+              Review key metadata, export onboarding material, or revoke. Use the list Actions column to edit metadata or revoke from the grid.
             </DialogDescription>
           </DialogHeader>
 
@@ -781,27 +1106,9 @@ export function EntitlementLifecyclePanel() {
                 >
                   {revoking ? "Revoking…" : "Revoke key"}
                 </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled
-                  title={updateDisabledReason}
-                >
-                  Update key (unavailable)
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled
-                  title={deleteDisabledReason}
-                >
-                  Delete key (unavailable)
-                </Button>
-              </div>
-              <div className="space-y-1 text-xs text-text-muted">
-                <p>{updateDisabledReason}</p>
-                <p>{deleteDisabledReason}</p>
+                <p className="w-full text-xs text-text-muted">
+                  Edit or delete keys from the Actions column in the list. Delete revokes the key for auditability.
+                </p>
               </div>
             </div>
           )}
@@ -809,4 +1116,5 @@ export function EntitlementLifecyclePanel() {
       </Dialog>
     </div>
   );
-}
+  },
+);

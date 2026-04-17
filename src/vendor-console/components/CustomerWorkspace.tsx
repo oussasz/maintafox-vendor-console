@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,12 +20,15 @@ import type { BulkEntitlementOperationRequestV1 } from "@shared/ipc-types";
 import { channelPolicyConsistent } from "@/services/customer-entitlement-machine-contracts";
 import {
   createTenant,
+  deleteTenant,
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
+  isDuplicateTenantSlugMessage,
   listTenants,
   rollbackCohortUpdatePolicy,
   rollbackTenantUpdatePolicy,
   updateCohortUpdatePolicy,
+  updateTenant,
   updateTenantUpdatePolicy,
   type ControlTenant,
 } from "@/services/license-control-service";
@@ -88,11 +92,16 @@ export function CustomerWorkspace() {
   const [loadingTenants, setLoadingTenants] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
   const [tenantSuccess, setTenantSuccess] = useState<string | null>(null);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  /** `add` | `edit` — unified create/update dialog */
+  const [tenantDialogMode, setTenantDialogMode] = useState<"add" | "edit" | null>(null);
+  const [editingTenantId, setEditingTenantId] = useState<string | null>(null);
   const [creatingTenant, setCreatingTenant] = useState(false);
+  const [deleteConfirmTenant, setDeleteConfirmTenant] = useState<ControlTenant | null>(null);
+  const [deletingTenant, setDeletingTenant] = useState(false);
   const [createTenantError, setCreateTenantError] = useState<string | null>(null);
+  /** Set when POST /tenants returns 409 for duplicate slug (shown on slug field). */
+  const [slugConflictError, setSlugConflictError] = useState<string | null>(null);
   const [addTenantForm, setAddTenantForm] = useState<AddTenantForm>(DEFAULT_ADD_FORM);
-  const [addTenantErrors, setAddTenantErrors] = useState<AddTenantErrors>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [channelFilter, setChannelFilter] = useState<TenantChannelFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("slug");
@@ -221,9 +230,11 @@ export function CustomerWorkspace() {
     void loadPolicies(selected);
   }, [selectedTenantId, tenants, loadPolicies]);
 
-  const createFormIsValid = useMemo(
-    () => Object.keys(validateAddTenantForm(addTenantForm)).length === 0,
-    [addTenantForm],
+  const addTenantValidation = useMemo(() => validateAddTenantForm(addTenantForm), [addTenantForm]);
+  const createFormIsValid = Object.keys(addTenantValidation).length === 0;
+  const addFormBlockingSummaries = useMemo(
+    () => Object.values(addTenantValidation).filter(Boolean),
+    [addTenantValidation],
   );
 
   const buildRequest = (): BulkEntitlementOperationRequestV1 => ({
@@ -242,40 +253,94 @@ export function CustomerWorkspace() {
 
   const resetAddDialog = () => {
     setAddTenantForm(DEFAULT_ADD_FORM);
-    setAddTenantErrors({});
     setCreateTenantError(null);
+    setSlugConflictError(null);
+    setEditingTenantId(null);
+    setTenantDialogMode(null);
   };
 
   const handleOpenAddDialog = () => {
     resetAddDialog();
-    setIsAddDialogOpen(true);
+    setTenantDialogMode("add");
   };
 
-  const handleCreateTenant = async () => {
+  const handleOpenEditDialog = (tenant: ControlTenant) => {
+    setCreateTenantError(null);
+    setSlugConflictError(null);
+    setEditingTenantId(tenant.id);
+    setAddTenantForm({
+      slug: tenant.slug,
+      display_name: tenant.display_name,
+      rollout_cohort: tenant.rollout_cohort ?? "stable-main",
+      update_channel: (tenant.update_channel ?? "stable") as AddTenantForm["update_channel"],
+    });
+    setTenantDialogMode("edit");
+  };
+
+  const handleSaveTenant = async () => {
     const nextErrors = validateAddTenantForm(addTenantForm);
-    setAddTenantErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       return;
     }
     setCreatingTenant(true);
     setCreateTenantError(null);
+    setSlugConflictError(null);
     try {
-      const created = await createTenant({
-        slug: addTenantForm.slug.trim(),
-        display_name: addTenantForm.display_name.trim(),
-        rollout_cohort: addTenantForm.rollout_cohort.trim(),
-        update_channel: addTenantForm.update_channel,
-      });
-      setTenantSuccess(`Customer "${created.display_name}" was added successfully.`);
-      setSearchQuery("");
-      setChannelFilter("all");
-      await loadTenants(created.id);
-      setIsAddDialogOpen(false);
-      resetAddDialog();
+      if (tenantDialogMode === "edit" && editingTenantId) {
+        const updated = await updateTenant(editingTenantId, {
+          slug: addTenantForm.slug.trim(),
+          display_name: addTenantForm.display_name.trim(),
+          rollout_cohort: addTenantForm.rollout_cohort.trim(),
+          update_channel: addTenantForm.update_channel,
+        });
+        setTenantSuccess(`Customer "${updated.display_name}" was updated successfully.`);
+        await loadTenants(updated.id);
+        setTenantDialogMode(null);
+        resetAddDialog();
+      } else {
+        const created = await createTenant({
+          slug: addTenantForm.slug.trim(),
+          display_name: addTenantForm.display_name.trim(),
+          rollout_cohort: addTenantForm.rollout_cohort.trim(),
+          update_channel: addTenantForm.update_channel,
+        });
+        setTenantSuccess(`Customer "${created.display_name}" was added successfully.`);
+        setSearchQuery("");
+        setChannelFilter("all");
+        await loadTenants(created.id);
+        setTenantDialogMode(null);
+        resetAddDialog();
+      }
     } catch (err) {
-      setCreateTenantError(err instanceof Error ? err.message : "Create tenant failed");
+      const message = err instanceof Error ? err.message : "Save tenant failed";
+      if (isDuplicateTenantSlugMessage(message)) {
+        setSlugConflictError(message);
+        setCreateTenantError(null);
+      } else {
+        setSlugConflictError(null);
+        setCreateTenantError(message);
+      }
     } finally {
       setCreatingTenant(false);
+    }
+  };
+
+  const handleConfirmDeleteTenant = async () => {
+    if (!deleteConfirmTenant) return;
+    setDeletingTenant(true);
+    setTenantError(null);
+    try {
+      await deleteTenant(deleteConfirmTenant.id);
+      setTenantSuccess(`Customer "${deleteConfirmTenant.display_name}" was deleted.`);
+      setDeleteConfirmTenant(null);
+      if (selectedTenantId === deleteConfirmTenant.id) {
+        setSelectedTenantId("");
+      }
+      await loadTenants();
+    } catch (err) {
+      setTenantError(err instanceof Error ? err.message : "Delete tenant failed");
+    } finally {
+      setDeletingTenant(false);
     }
   };
 
@@ -433,6 +498,9 @@ export function CustomerWorkspace() {
                   <TableHead>{t("customers.columns.id", "Tenant ID")}</TableHead>
                   <TableHead>{t("customers.columns.cohort", "Cohort")}</TableHead>
                   <TableHead>{t("customers.columns.channel", "Channel")}</TableHead>
+                  <TableHead className="w-[1%] whitespace-nowrap text-right">
+                    {t("customers.columns.actions", "Actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -452,6 +520,32 @@ export function CustomerWorkspace() {
                     <TableCell className="font-mono text-xs">{tenant.id}</TableCell>
                     <TableCell>{tenant.rollout_cohort ?? "—"}</TableCell>
                     <TableCell>{tenant.update_channel ?? "stable"}</TableCell>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2"
+                          title={t("customers.editTenant", "Edit tenant")}
+                          onClick={() => handleOpenEditDialog(tenant)}
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden />
+                          <span className="sr-only">{t("customers.editTenant", "Edit")}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-red-500/40 px-2 text-red-200 hover:bg-red-500/10"
+                          title={t("customers.deleteTenant", "Delete tenant")}
+                          onClick={() => setDeleteConfirmTenant(tenant)}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden />
+                          <span className="sr-only">{t("customers.deleteTenant", "Delete")}</span>
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -578,6 +672,11 @@ export function CustomerWorkspace() {
                       placeholder="Incident INC-2026-042"
                     />
                   </div>
+                  {!canRunPrivilegedPolicyAction ? (
+                    <p className="text-xs text-text-muted">
+                      Enter an audit reason code and step-up token in the header fields above to enable tenant policy actions.
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
@@ -679,6 +778,11 @@ export function CustomerWorkspace() {
                       placeholder="Release rollback after canary failure"
                     />
                   </div>
+                  {!canRunPrivilegedPolicyAction ? (
+                    <p className="text-xs text-text-muted">
+                      Enter an audit reason code and step-up token in the header fields above to enable cohort policy actions.
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
@@ -830,9 +934,8 @@ export function CustomerWorkspace() {
       </section>
 
       <Dialog
-        open={isAddDialogOpen}
+        open={tenantDialogMode !== null}
         onOpenChange={(open) => {
-          setIsAddDialogOpen(open);
           if (!open) {
             resetAddDialog();
           }
@@ -840,12 +943,21 @@ export function CustomerWorkspace() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t("customers.addCompany", "Add customer/company")}</DialogTitle>
+            <DialogTitle>
+              {tenantDialogMode === "edit"
+                ? t("customers.editCompany", "Edit customer/company")
+                : t("customers.addCompany", "Add customer/company")}
+            </DialogTitle>
             <DialogDescription>
-              {t(
-                "customers.addDescription",
-                "Create a new customer company. Fields are validated before sending to the control-plane API.",
-              )}
+              {tenantDialogMode === "edit"
+                ? t(
+                    "customers.editDescription",
+                    "Update tenant metadata. Slug changes must stay unique across all customers.",
+                  )
+                : t(
+                    "customers.addDescription",
+                    "Create a new customer company. Fields are validated before sending to the control-plane API.",
+                  )}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -856,13 +968,12 @@ export function CustomerWorkspace() {
                 value={addTenantForm.display_name}
                 onChange={(event) => {
                   setAddTenantForm((previous) => ({ ...previous, display_name: event.target.value }));
-                  setAddTenantErrors((previous) => ({ ...previous, display_name: undefined }));
                 }}
-                aria-invalid={Boolean(addTenantErrors.display_name)}
+                aria-invalid={Boolean(addTenantValidation.display_name)}
               />
-              {addTenantErrors.display_name ? (
+              {addTenantValidation.display_name ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {addTenantErrors.display_name}
+                  {addTenantValidation.display_name}
                 </p>
               ) : null}
             </div>
@@ -872,15 +983,16 @@ export function CustomerWorkspace() {
                 id="add-company-slug"
                 value={addTenantForm.slug}
                 onChange={(event) => {
-                  setAddTenantForm((previous) => ({ ...previous, slug: event.target.value }));
-                  setAddTenantErrors((previous) => ({ ...previous, slug: undefined }));
+                  const next = event.target.value.replace(/\s+/g, "-");
+                  setSlugConflictError(null);
+                  setAddTenantForm((previous) => ({ ...previous, slug: next }));
                 }}
-                aria-invalid={Boolean(addTenantErrors.slug)}
+                aria-invalid={Boolean(addTenantValidation.slug ?? slugConflictError)}
                 placeholder="acme-industries"
               />
-              {addTenantErrors.slug ? (
+              {addTenantValidation.slug || slugConflictError ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {addTenantErrors.slug}
+                  {addTenantValidation.slug ?? slugConflictError}
                 </p>
               ) : null}
             </div>
@@ -910,13 +1022,12 @@ export function CustomerWorkspace() {
                   value={addTenantForm.rollout_cohort}
                   onChange={(event) => {
                     setAddTenantForm((previous) => ({ ...previous, rollout_cohort: event.target.value }));
-                    setAddTenantErrors((previous) => ({ ...previous, rollout_cohort: undefined }));
                   }}
-                  aria-invalid={Boolean(addTenantErrors.rollout_cohort)}
+                  aria-invalid={Boolean(addTenantValidation.rollout_cohort)}
                 />
-                {addTenantErrors.rollout_cohort ? (
+                {addTenantValidation.rollout_cohort ? (
                   <p className="mt-1 text-xs text-red-300" role="alert">
-                    {addTenantErrors.rollout_cohort}
+                    {addTenantValidation.rollout_cohort}
                   </p>
                 ) : null}
               </div>
@@ -926,13 +1037,69 @@ export function CustomerWorkspace() {
                 {createTenantError}
               </p>
             ) : null}
+            {!createFormIsValid && addFormBlockingSummaries.length > 0 ? (
+              <div className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
+                <p className="font-medium text-text-primary">
+                  {tenantDialogMode === "edit"
+                    ? "Complete the following before saving:"
+                    : "Complete the following before adding this customer:"}
+                </p>
+                <ul className="mt-1 list-inside list-disc space-y-0.5">
+                  {addFormBlockingSummaries.map((line, index) => (
+                    <li key={`${index}-${line}`}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)} disabled={creatingTenant}>
+            <Button type="button" variant="outline" onClick={() => resetAddDialog()} disabled={creatingTenant}>
               {t("stepUp.cancel", "Cancel")}
             </Button>
-            <Button type="button" onClick={() => void handleCreateTenant()} disabled={creatingTenant || !createFormIsValid}>
-              {creatingTenant ? t("customers.creatingTenant", "Creating…") : t("customers.addCompany", "Add customer/company")}
+            <Button type="button" onClick={() => void handleSaveTenant()} disabled={creatingTenant || !createFormIsValid}>
+              {creatingTenant
+                ? tenantDialogMode === "edit"
+                  ? t("customers.savingTenant", "Saving…")
+                  : t("customers.creatingTenant", "Creating…")
+                : tenantDialogMode === "edit"
+                  ? t("customers.saveChanges", "Save changes")
+                  : t("customers.addCompany", "Add customer/company")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteConfirmTenant !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirmTenant(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("customers.confirmDeleteTitle", "Delete customer?")}</DialogTitle>
+            <DialogDescription>
+              {deleteConfirmTenant
+                ? t("customers.confirmDeleteBody", {
+                    defaultValue:
+                      'This permanently deletes "{{name}}" ({{slug}}) and all associated license keys and activations. This cannot be undone.',
+                    name: deleteConfirmTenant.display_name,
+                    slug: deleteConfirmTenant.slug,
+                  })
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setDeleteConfirmTenant(null)} disabled={deletingTenant}>
+              {t("stepUp.cancel", "Cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingTenant}
+              onClick={() => void handleConfirmDeleteTenant()}
+            >
+              {deletingTenant ? t("customers.deletingTenant", "Deleting…") : t("customers.confirmDelete", "Delete permanently")}
             </Button>
           </DialogFooter>
         </DialogContent>

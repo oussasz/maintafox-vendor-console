@@ -13,6 +13,7 @@ vi.mock("@/services/license-control-service", () => ({
   listTenantLicenses: vi.fn(),
   issueLicense: vi.fn(),
   revokeLicense: vi.fn(),
+  updateLicense: vi.fn(),
 }));
 
 import {
@@ -95,15 +96,19 @@ describe("EntitlementLifecyclePanel", () => {
     await userEvent.click(issueButton);
 
     await waitFor(() => {
-      expect(issueLicense).toHaveBeenCalledWith({
-        tenant_id: "ten-acme",
-        max_machines: 1,
-        update_channel: "stable",
-        expires_at: null,
-        operator_reason_code: null,
-        operator_rationale: "Initial onboarding key issuance for new tenant go-live.",
-      });
+      expect(issueLicense).toHaveBeenCalled();
     });
+    const issueArgs = vi.mocked(issueLicense).mock.calls[0]?.[0];
+    expect(issueArgs).toMatchObject({
+      tenant_id: "ten-acme",
+      max_machines: 1,
+      update_channel: "stable",
+      operator_reason_code: null,
+      operator_rationale: "Initial onboarding key issuance for new tenant go-live.",
+    });
+    expect(typeof issueArgs?.expires_at).toBe("string");
+    expect(Number.isNaN(Date.parse(String(issueArgs?.expires_at)))).toBe(false);
+    expect(Date.parse(String(issueArgs?.expires_at))).toBeGreaterThan(Date.now() - 60_000);
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Issue key" })).not.toBeInTheDocument();
@@ -130,7 +135,7 @@ describe("EntitlementLifecyclePanel", () => {
     expect(await screen.findByText("MFX-KEY-001")).toBeInTheDocument();
   });
 
-  it("revoke action works and unavailable actions show explicit reasons", async () => {
+  it("revoke action works and detail dialog points operators to list Actions", async () => {
     render(<EntitlementLifecyclePanel />);
     await screen.findByText("MFX-KEY-001");
 
@@ -145,16 +150,8 @@ describe("EntitlementLifecyclePanel", () => {
     });
 
     expect(
-      within(dialog).getByText(
-        "Update key metadata is unavailable: no API endpoint exists for license update.",
-      ),
+      within(dialog).getByText(/Use the list Actions column to edit metadata or revoke from the grid/i),
     ).toBeInTheDocument();
-    expect(
-      within(dialog).getByText("Delete is unavailable: policy requires revocation for auditability."),
-    ).toBeInTheDocument();
-
-    expect(within(dialog).getByRole("button", { name: "Update key (unavailable)" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Delete key (unavailable)" })).toBeDisabled();
   });
 
   it("handles newly provisioned tenant issue/list/revoke lifecycle", async () => {
@@ -202,7 +199,9 @@ describe("EntitlementLifecyclePanel", () => {
     await userEvent.clear(within(issueDialog).getByLabelText("Slot limit"));
     await userEvent.type(within(issueDialog).getByLabelText("Slot limit"), "12");
     await userEvent.selectOptions(within(issueDialog).getByLabelText("Channel"), "pilot");
-    await userEvent.type(within(issueDialog).getByLabelText("Expiry (optional)"), "2027-01-01T00:00");
+    const expiryInput = within(issueDialog).getByLabelText("Expiry (optional)");
+    await userEvent.clear(expiryInput);
+    await userEvent.type(expiryInput, "2027-01-01T00:00");
     await userEvent.type(
       within(issueDialog).getByLabelText("Operator reason code (optional)"),
       "ONBOARD-NEWCO",
