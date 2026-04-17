@@ -227,6 +227,12 @@ ensureColumn("tenants", "rollout_cohort", "ALTER TABLE tenants ADD COLUMN rollou
 ensureColumn("tenants", "update_channel", "ALTER TABLE tenants ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
 ensureColumn("tenants", "force_update_mode", "ALTER TABLE tenants ADD COLUMN force_update_mode TEXT NOT NULL DEFAULT 'inherit'");
 ensureColumn("tenants", "force_update_reason", "ALTER TABLE tenants ADD COLUMN force_update_reason TEXT NULL");
+ensureColumn("tenants", "is_active", "ALTER TABLE tenants ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
+ensureColumn(
+  "tenants",
+  "created_at",
+  "ALTER TABLE tenants ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
+);
 ensureColumn("tenants", "offline_grace_hours", "ALTER TABLE tenants ADD COLUMN offline_grace_hours INTEGER NOT NULL DEFAULT 72");
 ensureColumn(
   "tenants",
