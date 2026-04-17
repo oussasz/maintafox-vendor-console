@@ -6,8 +6,8 @@
 services:
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     container_name: maintafox-control-api
     restart: unless-stopped
     environment:

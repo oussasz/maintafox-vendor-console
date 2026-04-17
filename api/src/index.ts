@@ -7,6 +7,7 @@ import cors from "cors";
 import Database from "better-sqlite3";
 import "dotenv/config";
 import express from "express";
+import helmet from "helmet";
 import jwt from "jsonwebtoken";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -22,6 +23,15 @@ const JWT_SECRET: string = JWT_SECRET_RAW;
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://console.maintafox.systems";
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
+
+/** Comma-separated `CORS_ORIGIN` (e.g. console + Tauri dev); empty segments ignored. */
+function parseCorsOrigins(raw: string): string[] {
+  const list = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return list.length > 0 ? list : ["http://console.maintafox.systems"];
+}
 const DB_PATH = join(DATA_DIR, "control-plane.db");
 const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? "admin@maintafox.systems";
 const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
@@ -215,6 +225,37 @@ db.exec(`
     created_at_rfc3339 TEXT NOT NULL
   );
 `);
+
+// Sync exchange schema — dedicated bootstrap so upgraded SQLite files always get these tables.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tenant_sync_state (
+    tenant_id TEXT PRIMARY KEY,
+    checkpoint_seq INTEGER NOT NULL DEFAULT 0,
+    checkpoint_token TEXT NOT NULL,
+    updated_at_rfc3339 TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sync_mirror_ingress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_sync_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    row_version INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    machine_fingerprint TEXT NOT NULL,
+    received_at_rfc3339 TEXT NOT NULL,
+    UNIQUE(tenant_id, idempotency_key)
+  );
+`);
+console.log(
+  JSON.stringify({
+    at: new Date().toISOString(),
+    event: "sync_exchange_schema_ensured",
+    tables: ["tenant_sync_state", "sync_mirror_ingress"],
+  }),
+);
 
 function ensureColumn(table: string, column: string, alterSql: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -699,6 +740,28 @@ const ActivationClaimBody = z.object({
   app_version: z.string().max(32).optional(),
 }).strict();
 
+/** Desktop sync push — fields required to acknowledge rows on the control plane. */
+const SyncExchangeOutboxItem = z
+  .object({
+    idempotency_key: z.string().min(1).max(256),
+    entity_type: z.string().min(1).max(256),
+    entity_sync_id: z.string().min(1).max(256),
+    operation: z.enum(["create", "update", "delete", "upsert", "archive"]),
+    row_version: z.number().int().nonnegative(),
+    payload_json: z.string().min(1),
+    payload_hash: z.string().min(1).max(128),
+  })
+  .strict();
+
+const SyncExchangeBody = z
+  .object({
+    protocol_version: z.literal("v1"),
+    checkpoint_token: z.string().nullable().optional(),
+    idempotency_key: z.string().min(8).max(128),
+    outbox_batch: z.array(SyncExchangeOutboxItem),
+  })
+  .strict();
+
 const OfflinePolicyUpdateBody = z.object({
   offline_grace_hours: z.number().int().min(1).max(720),
   trust_revocation_disconnects_immediately: z.boolean(),
@@ -748,10 +811,11 @@ const SupportInterventionBody = z.object({
 }).strict();
 
 const app = express();
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(
   cors({
-    origin: CORS_ORIGIN.split(",").map((s) => s.trim()),
+    origin: parseCorsOrigins(CORS_ORIGIN),
     credentials: true,
   }),
 );
@@ -957,6 +1021,80 @@ function authMiddleware(req: express.Request, res: express.Response, next: expre
   } catch {
     res.status(401).json({ error: "invalid_token" });
   }
+}
+
+type ActivationAuthContext = {
+  tenantId: string;
+  licenseId: string;
+  machineFingerprint: string;
+};
+
+function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  const h = req.headers.authorization;
+  if (!h?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "missing_token" });
+    return;
+  }
+  const token = h.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload & {
+      kind?: string;
+      tenant_id?: string;
+      license_id?: string;
+      machine_fingerprint?: string;
+    };
+    if (
+      payload.kind !== "activation" ||
+      !payload.tenant_id ||
+      !payload.license_id ||
+      !payload.machine_fingerprint
+    ) {
+      res.status(403).json({ error: "invalid_token" });
+      return;
+    }
+    const row = db
+      .prepare(
+        `SELECT revoked_at FROM machine_activations
+         WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
+      )
+      .get(payload.tenant_id, payload.license_id, payload.machine_fingerprint) as { revoked_at: string | null } | undefined;
+    if (!row || row.revoked_at) {
+      res.status(403).json({ error: "activation_revoked" });
+      return;
+    }
+    (req as express.Request & { activation?: ActivationAuthContext }).activation = {
+      tenantId: payload.tenant_id,
+      licenseId: payload.license_id,
+      machineFingerprint: payload.machine_fingerprint,
+    };
+    next();
+  } catch {
+    res.status(401).json({ error: "invalid_token" });
+  }
+}
+
+type SyncInboundFanOutItem = {
+  entity_type: string;
+  entity_sync_id: string;
+  operation: "create" | "update" | "delete" | "upsert" | "archive";
+  row_version: number;
+  payload_json: string;
+};
+
+/**
+ * TODO(Fan-out): Populate `inbound_items` from the tenant mirror / multi-writer queue so this device
+ * receives commits from other machines and vendor-originated updates. Planned behavior: select rows
+ * not yet delivered to `machineFingerprint`, ordered by checkpoint/sequence, cap batch size, respect
+ * idempotency with desktop `sync_inbox`. May read from `sync_mirror_ingress` (cross-machine) and
+ * future `tenant_mirror_*` tables; must return shapes compatible with desktop `ApplySyncBatchInput.inbound_items`.
+ */
+function stubInboundItemsForSyncExchange(_ctx: {
+  tenantId: string;
+  machineFingerprint: string;
+  serverBatchId: string;
+  nextCheckpoint: string;
+}): SyncInboundFanOutItem[] {
+  return [];
 }
 
 function sendValidationError(
@@ -2677,6 +2815,92 @@ app.get("/api/v1/audit/hardening/readiness", authMiddleware, (_req, res) => {
       passed: bundleCount > 0,
     },
   ]);
+});
+
+/**
+ * Tenant-runtime sync: push local outbox rows using activation JWT (same secret as `/activation/claim`).
+ * Returns a batch matching desktop `ApplySyncBatchInput` for `apply_sync_batch`.
+ */
+app.post("/api/v1/sync/exchange", activationAuthMiddleware, (req, res) => {
+  const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!act) {
+    res.status(500).json({ error: "internal_error" });
+    return;
+  }
+  const parsed = SyncExchangeBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+    return;
+  }
+  const body = parsed.data;
+  const nowIso = new Date().toISOString();
+  let stateRow = db
+    .prepare("SELECT checkpoint_seq, checkpoint_token FROM tenant_sync_state WHERE tenant_id = ?")
+    .get(act.tenantId) as { checkpoint_seq: number; checkpoint_token: string } | undefined;
+  if (!stateRow) {
+    const initialToken = `cp-${act.tenantId}-0`;
+    db.prepare(
+      `INSERT INTO tenant_sync_state (tenant_id, checkpoint_seq, checkpoint_token, updated_at_rfc3339) VALUES (?, 0, ?, ?)`,
+    ).run(act.tenantId, initialToken, nowIso);
+    stateRow = { checkpoint_seq: 0, checkpoint_token: initialToken };
+  }
+  const serverBatchId = newId("batch");
+  const acknowledged_items: Array<{
+    idempotency_key: string;
+    entity_sync_id: string;
+    operation: "create" | "update" | "delete" | "upsert" | "archive";
+  }> = [];
+  const insertIngress = db.prepare(
+    `INSERT OR IGNORE INTO sync_mirror_ingress (
+      tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
+      payload_json, payload_hash, machine_fingerprint, received_at_rfc3339
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const item of body.outbox_batch) {
+    insertIngress.run(
+      act.tenantId,
+      item.idempotency_key,
+      item.entity_type,
+      item.entity_sync_id,
+      item.operation,
+      item.row_version,
+      item.payload_json,
+      item.payload_hash,
+      act.machineFingerprint,
+      nowIso,
+    );
+    acknowledged_items.push({
+      idempotency_key: item.idempotency_key,
+      entity_sync_id: item.entity_sync_id,
+      operation: item.operation,
+    });
+  }
+  const nextSeq = stateRow.checkpoint_seq + 1;
+  const nextCheckpoint = `cp-${act.tenantId}-${nextSeq}`;
+  db.prepare(
+    `UPDATE tenant_sync_state SET checkpoint_seq = ?, checkpoint_token = ?, updated_at_rfc3339 = ? WHERE tenant_id = ?`,
+  ).run(nextSeq, nextCheckpoint, nowIso, act.tenantId);
+  structuredLog("sync_exchange", {
+    tenant_id: act.tenantId,
+    outbox_count: body.outbox_batch.length,
+    server_batch_id: serverBatchId,
+    checkpoint: nextCheckpoint,
+  });
+  const inbound_items = stubInboundItemsForSyncExchange({
+    tenantId: act.tenantId,
+    machineFingerprint: act.machineFingerprint,
+    serverBatchId,
+    nextCheckpoint,
+  });
+  res.json({
+    protocol_version: "v1",
+    server_batch_id: serverBatchId,
+    checkpoint_token: nextCheckpoint,
+    acknowledged_items,
+    rejected_items: [],
+    inbound_items,
+    policy_metadata_json: null,
+  });
 });
 
 app.post("/api/v1/activation/claim", (req, res) => {

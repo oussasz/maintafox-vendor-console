@@ -21,6 +21,18 @@ pnpm build
 
 Output: `dist/`. Deploy those files behind HTTPS.
 
+## Control API (`api/`)
+
+The control-plane API is a **pnpm workspace** package (`pnpm-workspace.yaml` links `api/`). From the repo root:
+
+| Command | Purpose |
+|--------|---------|
+| `pnpm api:build` | `tsc` compile `api/` → `api/dist` |
+| `pnpm api:start` | Run `node api/dist/index.js` |
+| `pnpm api:dev` | Watch `api/dist` after build |
+
+Equivalent: `pnpm --filter maintafox-control-api <script>`.
+
 ## Docker Compose (console + API on the VPS)
 
 The repo includes a **control API** (`api/`: email/password → JWT, `GET /api/v1/me/permissions`) and an **edge** nginx that routes:

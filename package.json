@@ -13,7 +13,10 @@
     "preview": "vite preview --port 5174",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "api:build": "pnpm --filter maintafox-control-api build",
+    "api:dev": "pnpm --filter maintafox-control-api dev",
+    "api:start": "pnpm --filter maintafox-control-api start"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",

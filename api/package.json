@@ -3,14 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "node --watch dist/index.js",
-    "test:license-lifecycle": "npm run build && node scripts/license-issuance-lifecycle.integration.mjs",
-    "test:force-update": "npm run build && node scripts/force-update-governance.integration.mjs",
+    "test:license-lifecycle": "pnpm run build && node scripts/license-issuance-lifecycle.integration.mjs",
+    "test:force-update": "pnpm run build && node scripts/force-update-governance.integration.mjs",
     "baseline:sprint9": "node scripts/sprint9-slo-baseline.mjs",
-    "test:observability": "npm run build && node scripts/sprint9-observability.integration.mjs",
+    "test:observability": "pnpm run build && node scripts/sprint9-observability.integration.mjs",
     "uat:sprint10": "node scripts/sprint10-uat-real-infra.mjs"
   },
   "dependencies": {
@@ -19,6 +23,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
     "zod": "^3.24.0"
   },

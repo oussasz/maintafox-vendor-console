@@ -1,24 +1,35 @@
 # syntax=docker/dockerfile:1
+# Build from repository root: `docker compose build api` (see docker-compose.yml `context: .`).
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY api/package.json ./api/
+RUN pnpm install --frozen-lockfile --filter maintafox-control-api
 
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json tsconfig.json ./
-COPY src ./src
-RUN npm run build
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+COPY --from=deps /app /app
+COPY api/tsconfig.json ./api/
+COPY api/src ./api/src
+RUN pnpm --filter maintafox-control-api run build
+
+FROM node:20-alpine AS prod-deps
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY api/package.json ./api/
+RUN pnpm install --frozen-lockfile --filter maintafox-control-api --prod
 
 FROM node:20-alpine
-WORKDIR /app
+WORKDIR /app/api
 RUN apk add --no-cache wget
 ENV NODE_ENV=production
-COPY package.json ./
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+COPY --from=prod-deps /app /app
+COPY --from=build /app/api/dist ./dist
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health || exit 1
