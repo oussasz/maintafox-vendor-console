@@ -82,6 +82,8 @@ db.exec(`
     offline_grace_hours INTEGER NOT NULL DEFAULT 72,
     trust_revocation_disconnects_immediately INTEGER NOT NULL DEFAULT 0,
     reconnect_requires_fresh_heartbeat INTEGER NOT NULL DEFAULT 1,
+    is_initialized INTEGER NOT NULL DEFAULT 0,
+    has_demo_data INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -285,7 +287,139 @@ ensureColumn(
   "reconnect_requires_fresh_heartbeat",
   "ALTER TABLE tenants ADD COLUMN reconnect_requires_fresh_heartbeat INTEGER NOT NULL DEFAULT 1",
 );
+ensureColumn("tenants", "is_initialized", "ALTER TABLE tenants ADD COLUMN is_initialized INTEGER NOT NULL DEFAULT 0");
+ensureColumn("tenants", "has_demo_data", "ALTER TABLE tenants ADD COLUMN has_demo_data INTEGER NOT NULL DEFAULT 0");
+ensureColumn(
+  "tenants",
+  "bootstrap_completed_at",
+  "ALTER TABLE tenants ADD COLUMN bootstrap_completed_at TEXT NULL",
+);
+ensureColumn(
+  "tenants",
+  "bootstrap_method",
+  "ALTER TABLE tenants ADD COLUMN bootstrap_method TEXT NULL",
+);
 ensureColumn("license_keys", "update_channel", "ALTER TABLE license_keys ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
+
+type TenantInsertInput = {
+  id: string;
+  slug: string;
+  display_name: string;
+  force_min_app_version?: string | null;
+  force_update_mode?: string;
+  force_update_reason?: string | null;
+  rollout_cohort?: string;
+  update_channel?: string;
+  offline_grace_hours?: number;
+  trust_revocation_disconnects_immediately?: boolean;
+  reconnect_requires_fresh_heartbeat?: boolean;
+};
+
+let tenantColumnsCache: Set<string> | null = null;
+
+function tenantTableColumns(): Set<string> {
+  if (!tenantColumnsCache) {
+    const cols = db.prepare("PRAGMA table_info(tenants)").all() as Array<{ name: string }>;
+    tenantColumnsCache = new Set(cols.map((c) => c.name));
+  }
+  return tenantColumnsCache;
+}
+
+/** Backfill legacy VPS columns that predate the current control-plane schema. */
+function migrateLegacyTenantColumns(): void {
+  const cols = tenantTableColumns();
+  if (cols.has("rollout_channel") && cols.has("update_channel")) {
+    db.prepare(
+      `UPDATE tenants SET rollout_channel = update_channel WHERE rollout_channel IS NULL OR rollout_channel = ''`,
+    ).run();
+  }
+  if (cols.has("policy_defaults_json")) {
+    db.prepare(
+      `UPDATE tenants SET policy_defaults_json = '{}' WHERE policy_defaults_json IS NULL OR policy_defaults_json = ''`,
+    ).run();
+  }
+  if (cols.has("status")) {
+    db.prepare(`UPDATE tenants SET status = 'active' WHERE status IS NULL OR status = ''`).run();
+  }
+  if (cols.has("updated_at") && cols.has("created_at")) {
+    db.prepare(`UPDATE tenants SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''`).run();
+  }
+}
+
+function isTenantSlugUniqueViolation(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes("unique") && msg.includes("slug");
+}
+
+function tenantWriteFailure(err: unknown): { status: number; body: { error: string; message: string } } {
+  if (isTenantSlugUniqueViolation(err)) {
+    return { status: 409, body: { error: "tenant_conflict", message: "This tenant slug is already taken." } };
+  }
+  structuredLog("tenant_write_failed", { message: String(err) });
+  return { status: 500, body: { error: "tenant_write_failed", message: String(err) } };
+}
+
+function insertTenantRow(input: TenantInsertInput): void {
+  const cols = tenantTableColumns();
+  const now = new Date().toISOString();
+  const updateChannel = input.update_channel ?? "stable";
+  const values: Record<string, unknown> = {
+    id: input.id,
+    slug: input.slug,
+    display_name: input.display_name,
+    force_min_app_version: input.force_min_app_version ?? null,
+    force_update_mode: input.force_update_mode ?? "inherit",
+    force_update_reason: input.force_update_reason ?? null,
+    rollout_cohort: input.rollout_cohort ?? "stable-main",
+    update_channel: updateChannel,
+    offline_grace_hours: input.offline_grace_hours ?? 72,
+    trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ? 1 : 0,
+    reconnect_requires_fresh_heartbeat: (input.reconnect_requires_fresh_heartbeat ?? true) ? 1 : 0,
+    is_initialized: 0,
+    has_demo_data: 0,
+    is_active: 1,
+    created_at: now,
+  };
+  if (cols.has("rollout_channel")) {
+    values.rollout_channel = updateChannel;
+  }
+  if (cols.has("policy_defaults_json")) {
+    values.policy_defaults_json = "{}";
+  }
+  if (cols.has("status")) {
+    values.status = "active";
+  }
+  if (cols.has("updated_at")) {
+    values.updated_at = now;
+  }
+
+  const insertCols = Object.keys(values).filter((k) => cols.has(k));
+  const placeholders = insertCols.map(() => "?").join(", ");
+  db.prepare(`INSERT INTO tenants (${insertCols.join(", ")}) VALUES (${placeholders})`).run(
+    ...insertCols.map((k) => values[k]),
+  );
+}
+
+function updateTenantRow(
+  tenantId: string,
+  input: { slug: string; display_name: string; rollout_cohort: string; update_channel: string },
+): void {
+  const cols = tenantTableColumns();
+  const assignments = ["slug = ?", "display_name = ?", "rollout_cohort = ?", "update_channel = ?"];
+  const params: unknown[] = [input.slug, input.display_name, input.rollout_cohort, input.update_channel];
+  if (cols.has("rollout_channel")) {
+    assignments.push("rollout_channel = ?");
+    params.push(input.update_channel);
+  }
+  if (cols.has("updated_at")) {
+    assignments.push("updated_at = ?");
+    params.push(new Date().toISOString());
+  }
+  params.push(tenantId);
+  db.prepare(`UPDATE tenants SET ${assignments.join(", ")} WHERE id = ?`).run(...params);
+}
+
+migrateLegacyTenantColumns();
 
 function seedAdminIfEmpty(): void {
   if (SEED_BEHAVIOR === "disabled") return;
@@ -1279,7 +1413,7 @@ app.get("/api/v1/tenants", authMiddleware, (req, res) => {
       .prepare(
         `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
-                reconnect_requires_fresh_heartbeat, is_active, created_at
+                reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
          WHERE (created_at < ?) OR (created_at = ? AND id < ?)
          ORDER BY created_at DESC, id DESC
@@ -1291,7 +1425,7 @@ app.get("/api/v1/tenants", authMiddleware, (req, res) => {
       .prepare(
         `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
-                reconnect_requires_fresh_heartbeat, is_active, created_at
+                reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
          ORDER BY created_at DESC, id DESC
          LIMIT ?`,
@@ -1320,26 +1454,21 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
     const input = parsed.data;
     const id = newId("tenant");
     try {
-      db.prepare(
-        `INSERT INTO tenants
-         (id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
-          offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
+      insertTenantRow({
         id,
-        input.slug,
-        input.display_name,
-        input.force_min_app_version ?? null,
-        input.force_update_mode ?? "inherit",
-        input.force_update_reason ?? null,
-        input.rollout_cohort ?? "stable-main",
-        input.update_channel ?? "stable",
-        input.offline_grace_hours ?? 72,
-        input.trust_revocation_disconnects_immediately ? 1 : 0,
-        input.reconnect_requires_fresh_heartbeat ?? true ? 1 : 0,
-      );
+        slug: input.slug,
+        display_name: input.display_name,
+        force_min_app_version: input.force_min_app_version ?? null,
+        force_update_mode: input.force_update_mode ?? "inherit",
+        force_update_reason: input.force_update_reason ?? null,
+        rollout_cohort: input.rollout_cohort ?? "stable-main",
+        update_channel: input.update_channel ?? "stable",
+        offline_grace_hours: input.offline_grace_hours ?? 72,
+        trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ?? false,
+        reconnect_requires_fresh_heartbeat: input.reconnect_requires_fresh_heartbeat ?? true,
+      });
     } catch (err) {
-      return { status: 409, body: { error: "tenant_conflict", message: String(err) } };
+      return tenantWriteFailure(err);
     }
     return {
       status: 201,
@@ -1355,6 +1484,8 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
         offline_grace_hours: input.offline_grace_hours ?? 72,
         trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ?? false,
         reconnect_requires_fresh_heartbeat: input.reconnect_requires_fresh_heartbeat ?? true,
+        is_initialized: false,
+        has_demo_data: false,
       },
     };
   });
@@ -1382,11 +1513,15 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   const nextCohort = input.rollout_cohort ?? row.rollout_cohort;
   const nextChannel = input.update_channel ?? row.update_channel;
   try {
-    db.prepare(
-      `UPDATE tenants SET slug = ?, display_name = ?, rollout_cohort = ?, update_channel = ? WHERE id = ?`,
-    ).run(nextSlug, nextDisplay, nextCohort, nextChannel, tenantId);
+    updateTenantRow(tenantId, {
+      slug: nextSlug,
+      display_name: nextDisplay,
+      rollout_cohort: nextCohort,
+      update_channel: nextChannel,
+    });
   } catch (err) {
-    res.status(409).json({ error: "tenant_conflict", message: String(err) });
+    const failure = tenantWriteFailure(err);
+    res.status(failure.status).json(failure.body);
     return;
   }
   const out = db
@@ -3038,6 +3173,199 @@ app.post("/api/v1/sync/exchange", activationAuthMiddleware, (req, res) => {
   });
 });
 
+type ActivationLicenseRow = {
+  id: string;
+  tenant_id: string;
+  license_key: string;
+  max_machines: number;
+  update_channel: string;
+  rollout_cohort: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  force_min_app_version: string | null;
+  force_update_mode: ForceUpdateMode;
+  force_update_reason: string | null;
+  offline_grace_hours: number;
+  trust_revocation_disconnects_immediately: number;
+  reconnect_requires_fresh_heartbeat: number;
+  is_active: number;
+  tenant_display_name: string;
+  tenant_slug: string;
+  is_initialized: number;
+  has_demo_data: number;
+};
+
+function loadLicenseForActivation(licenseKey: string): ActivationLicenseRow | undefined {
+  return db
+    .prepare(
+      `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+              l.update_channel, t.rollout_cohort, t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
+              t.offline_grace_hours, t.trust_revocation_disconnects_immediately,
+              t.reconnect_requires_fresh_heartbeat,
+              t.display_name AS tenant_display_name, t.slug AS tenant_slug,
+              COALESCE(t.is_initialized, 0) AS is_initialized,
+              COALESCE(t.has_demo_data, 0) AS has_demo_data
+       FROM license_keys l
+       JOIN tenants t ON t.id = l.tenant_id
+       WHERE l.license_key = ?`,
+    )
+    .get(licenseKey) as ActivationLicenseRow | undefined;
+}
+
+function countActiveActivations(licenseId: string): number {
+  const row = db
+    .prepare(
+      "SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND revoked_at IS NULL",
+    )
+    .get(licenseId) as { count: number };
+  return row.count;
+}
+
+function buildActivationSummary(
+  lic: ActivationLicenseRow,
+  input: z.infer<typeof ActivationClaimBody>,
+  resolvedPolicy: ReturnType<typeof resolveForceUpdatePolicy>,
+): Record<string, unknown> {
+  return {
+    tenant_id: lic.tenant_id,
+    license_id: lic.id,
+    machine_fingerprint: input.machine_fingerprint,
+    tenant_display_name: lic.tenant_display_name,
+    tenant_slug: lic.tenant_slug,
+    license_status: "active",
+    license_plan: lic.rollout_cohort,
+    update_channel: lic.update_channel,
+    expires_at: lic.expires_at,
+    device_limit: lic.max_machines,
+    activated_device_count: countActiveActivations(lic.id),
+    machine_label: input.machine_label ?? null,
+    is_initialized: lic.is_initialized === 1,
+    has_demo_data: lic.has_demo_data === 1,
+    offline_grace_hours: lic.offline_grace_hours,
+    trust_revocation_disconnects_immediately: lic.trust_revocation_disconnects_immediately === 1,
+    reconnect_requires_fresh_heartbeat: lic.reconnect_requires_fresh_heartbeat === 1,
+    force_min_app_version: resolvedPolicy.force_min_app_version,
+    force_update_mode: resolvedPolicy.force_update_mode,
+    force_update_reason: resolvedPolicy.force_update_reason,
+    force_update_policy_source: resolvedPolicy.policy_source,
+    force_update_required: resolvedPolicy.force_update_required,
+  };
+}
+
+function resolveActivationPolicy(lic: ActivationLicenseRow, appVersion: string | undefined) {
+  const cohortPolicy = db
+    .prepare(
+      `SELECT force_min_app_version, force_update_mode, force_update_reason
+       FROM cohort_update_policies
+       WHERE channel = ? AND cohort_label = ?`,
+    )
+    .get(lic.update_channel, lic.rollout_cohort) as
+    | {
+        force_min_app_version: string | null;
+        force_update_mode: Exclude<ForceUpdateMode, "inherit">;
+        force_update_reason: string | null;
+      }
+    | undefined;
+  return resolveForceUpdatePolicy({
+    appVersion,
+    tenantMinVersion: lic.force_min_app_version,
+    tenantMode: lic.force_update_mode,
+    tenantReason: lic.force_update_reason,
+    cohortMinVersion: cohortPolicy?.force_min_app_version ?? null,
+    cohortMode: cohortPolicy?.force_update_mode ?? "off",
+    cohortReason: cohortPolicy?.force_update_reason ?? null,
+  });
+}
+
+type ActivationValidateFailure = { status: number; body: Record<string, unknown>; reason: string };
+
+function validateLicenseForActivation(
+  lic: ActivationLicenseRow | undefined,
+  input: z.infer<typeof ActivationClaimBody>,
+  opts: { reserveSlot: boolean },
+): { ok: true; lic: ActivationLicenseRow } | { ok: false; failure: ActivationValidateFailure } {
+  if (!lic || lic.is_active !== 1) {
+    return {
+      ok: false,
+      failure: { status: 404, body: { error: "license_not_found" }, reason: "license_not_found" },
+    };
+  }
+  if (lic.revoked_at) {
+    return {
+      ok: false,
+      failure: { status: 403, body: { error: "license_revoked" }, reason: "license_revoked" },
+    };
+  }
+  if (lic.expires_at && new Date(lic.expires_at) <= new Date()) {
+    return {
+      ok: false,
+      failure: { status: 403, body: { error: "license_expired" }, reason: "license_expired" },
+    };
+  }
+
+  const existing = db
+    .prepare(
+      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
+    )
+    .get(lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
+
+  if (!existing) {
+    const activeCount = countActiveActivations(lic.id);
+    if (activeCount >= lic.max_machines) {
+      return {
+        ok: false,
+        failure: {
+          status: 409,
+          body: { error: "slot_limit_reached", max_machines: lic.max_machines },
+          reason: "slot_limit_reached",
+        },
+      };
+    }
+  } else if (!opts.reserveSlot) {
+    // Preview: existing fingerprint is fine; slot already held.
+  }
+
+  return { ok: true, lic };
+}
+
+app.post("/api/v1/activation/preview", (req, res) => {
+  const startedAt = Date.now();
+  const parsed = ActivationClaimBody.safeParse(req.body);
+  if (!parsed.success) {
+    observeActivationOutcome("invalid_body");
+    structuredLog("activation_preview_failed", {
+      reason: "invalid_body",
+      status: 400,
+      duration_ms: Date.now() - startedAt,
+    });
+    res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+    return;
+  }
+  const input = parsed.data;
+  const lic = loadLicenseForActivation(input.license_key.trim());
+  const validated = validateLicenseForActivation(lic, input, { reserveSlot: false });
+  if (!validated.ok) {
+    observeActivationOutcome(validated.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
+    structuredLog("activation_preview_failed", {
+      reason: validated.failure.reason,
+      status: validated.failure.status,
+      duration_ms: Date.now() - startedAt,
+      machine_fingerprint: input.machine_fingerprint,
+    });
+    res.status(validated.failure.status).json(validated.failure.body);
+    return;
+  }
+  const resolvedPolicy = resolveActivationPolicy(validated.lic, input.app_version);
+  structuredLog("activation_preview_success", {
+    status: 200,
+    tenant_id: validated.lic.tenant_id,
+    license_id: validated.lic.id,
+    machine_fingerprint: input.machine_fingerprint,
+    duration_ms: Date.now() - startedAt,
+  });
+  res.json(buildActivationSummary(validated.lic, input, resolvedPolicy));
+});
+
 app.post("/api/v1/activation/claim", (req, res) => {
   const startedAt = Date.now();
   const parsed = ActivationClaimBody.safeParse(req.body);
@@ -3053,132 +3381,40 @@ app.post("/api/v1/activation/claim", (req, res) => {
   }
   const input = parsed.data;
   const nowIso = new Date().toISOString();
-  const lic = db
-    .prepare(
-      `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
-              l.update_channel, t.rollout_cohort, t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
-              t.offline_grace_hours, t.trust_revocation_disconnects_immediately,
-              t.reconnect_requires_fresh_heartbeat
-       FROM license_keys l
-       JOIN tenants t ON t.id = l.tenant_id
-       WHERE l.license_key = ?`,
-    )
-    .get(input.license_key.trim()) as
-    | {
-        id: string;
-        tenant_id: string;
-        license_key: string;
-        max_machines: number;
-        update_channel: string;
-        rollout_cohort: string;
-        expires_at: string | null;
-        revoked_at: string | null;
-        force_min_app_version: string | null;
-        force_update_mode: ForceUpdateMode;
-        force_update_reason: string | null;
-        offline_grace_hours: number;
-        trust_revocation_disconnects_immediately: number;
-        reconnect_requires_fresh_heartbeat: number;
-        is_active: number;
-      }
-    | undefined;
-
-  if (!lic || lic.is_active !== 1) {
-    observeActivationOutcome("license_not_found");
+  const lic = loadLicenseForActivation(input.license_key.trim());
+  const validated = validateLicenseForActivation(lic, input, { reserveSlot: true });
+  if (!validated.ok) {
+    observeActivationOutcome(validated.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
     structuredLog("activation_claim_failed", {
-      reason: "license_not_found",
-      status: 404,
+      reason: validated.failure.reason,
+      status: validated.failure.status,
       duration_ms: Date.now() - startedAt,
       machine_fingerprint: input.machine_fingerprint,
+      ...(validated.failure.reason !== "license_not_found"
+        ? { tenant_id: lic?.tenant_id, license_id: lic?.id }
+        : {}),
     });
-    res.status(404).json({ error: "license_not_found" });
-    return;
-  }
-  if (lic.revoked_at) {
-    observeActivationOutcome("license_revoked");
-    structuredLog("activation_claim_failed", {
-      reason: "license_revoked",
-      status: 403,
-      tenant_id: lic.tenant_id,
-      license_id: lic.id,
-      duration_ms: Date.now() - startedAt,
-    });
-    res.status(403).json({ error: "license_revoked" });
-    return;
-  }
-  if (lic.expires_at && new Date(lic.expires_at) <= new Date()) {
-    observeActivationOutcome("license_expired");
-    structuredLog("activation_claim_failed", {
-      reason: "license_expired",
-      status: 403,
-      tenant_id: lic.tenant_id,
-      license_id: lic.id,
-      duration_ms: Date.now() - startedAt,
-    });
-    res.status(403).json({ error: "license_expired" });
+    res.status(validated.failure.status).json(validated.failure.body);
     return;
   }
 
-  const existing = db
-    .prepare(
-      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
-    )
-    .get(lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
-
-  if (!existing) {
-    const activeCountRow = db
-      .prepare(
-        "SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND revoked_at IS NULL",
-      )
-      .get(lic.id) as { count: number };
-    if (activeCountRow.count >= lic.max_machines) {
-      observeActivationOutcome("slot_limit_reached");
-      structuredLog("activation_claim_failed", {
-        reason: "slot_limit_reached",
-        status: 409,
-        tenant_id: lic.tenant_id,
-        license_id: lic.id,
-        max_machines: lic.max_machines,
-        duration_ms: Date.now() - startedAt,
-      });
-      res.status(409).json({ error: "slot_limit_reached", max_machines: lic.max_machines });
-      return;
-    }
-  }
-
-  const cohortPolicy = db
-    .prepare(
-      `SELECT force_min_app_version, force_update_mode, force_update_reason
-       FROM cohort_update_policies
-       WHERE channel = ? AND cohort_label = ?`,
-    )
-    .get(lic.update_channel, lic.rollout_cohort) as
-    | {
-        force_min_app_version: string | null;
-        force_update_mode: Exclude<ForceUpdateMode, "inherit">;
-        force_update_reason: string | null;
-      }
-    | undefined;
-  const resolvedPolicy = resolveForceUpdatePolicy({
-    appVersion: input.app_version,
-    tenantMinVersion: lic.force_min_app_version,
-    tenantMode: lic.force_update_mode,
-    tenantReason: lic.force_update_reason,
-    cohortMinVersion: cohortPolicy?.force_min_app_version ?? null,
-    cohortMode: cohortPolicy?.force_update_mode ?? "off",
-    cohortReason: cohortPolicy?.force_update_reason ?? null,
-  });
-
+  const resolvedPolicy = resolveActivationPolicy(validated.lic, input.app_version);
   const tokenPayload = {
     kind: "activation",
-    tenant_id: lic.tenant_id,
-    license_id: lic.id,
+    tenant_id: validated.lic.tenant_id,
+    license_id: validated.lic.id,
     machine_fingerprint: input.machine_fingerprint,
   };
   const activationToken = jwt.sign(tokenPayload, JWT_SECRET, {
     expiresIn: "30d",
     algorithm: "HS256",
   });
+
+  const existing = db
+    .prepare(
+      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
+    )
+    .get(validated.lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
 
   if (existing) {
     db.prepare(
@@ -3193,8 +3429,8 @@ app.post("/api/v1/activation/claim", (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       newId("act"),
-      lic.tenant_id,
-      lic.id,
+      validated.lic.tenant_id,
+      validated.lic.id,
       input.machine_fingerprint,
       input.machine_label ?? null,
       input.app_version ?? null,
@@ -3207,28 +3443,84 @@ app.post("/api/v1/activation/claim", (req, res) => {
   observeActivationOutcome("ok");
   structuredLog("activation_claim_success", {
     status: 200,
-    tenant_id: lic.tenant_id,
-    license_id: lic.id,
+    tenant_id: validated.lic.tenant_id,
+    license_id: validated.lic.id,
     machine_fingerprint: input.machine_fingerprint,
     policy_source: resolvedPolicy.policy_source,
     force_update_required: resolvedPolicy.force_update_required,
     duration_ms: Date.now() - startedAt,
   });
   res.json({
-    tenant_id: lic.tenant_id,
-    license_id: lic.id,
-    machine_fingerprint: input.machine_fingerprint,
+    ...buildActivationSummary(validated.lic, input, resolvedPolicy),
+    // Count after write so activated_device_count includes this device.
+    activated_device_count: countActiveActivations(validated.lic.id),
     activation_token: activationToken,
-    expires_at: lic.expires_at,
-    update_channel: lic.update_channel,
-    offline_grace_hours: lic.offline_grace_hours,
-    trust_revocation_disconnects_immediately: lic.trust_revocation_disconnects_immediately === 1,
-    reconnect_requires_fresh_heartbeat: lic.reconnect_requires_fresh_heartbeat === 1,
-    force_min_app_version: resolvedPolicy.force_min_app_version,
-    force_update_mode: resolvedPolicy.force_update_mode,
-    force_update_reason: resolvedPolicy.force_update_reason,
-    force_update_policy_source: resolvedPolicy.policy_source,
-    force_update_required: resolvedPolicy.force_update_required,
+  });
+});
+
+app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, (req, res) => {
+  const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!activation) {
+    res.status(401).json({ error: "missing_token" });
+    return;
+  }
+  const row = db
+    .prepare(
+      `SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`,
+    )
+    .get(activation.tenantId) as { id: string; is_initialized: number } | undefined;
+  if (!row) {
+    res.status(404).json({ error: "tenant_not_found" });
+    return;
+  }
+  res.json({
+    tenant_id: row.id,
+    is_initialized: row.is_initialized === 1,
+  });
+});
+
+app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware, (req, res) => {
+  const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!activation) {
+    res.status(401).json({ error: "missing_token" });
+    return;
+  }
+  const cols = tenantTableColumns();
+  const nowIso = new Date().toISOString();
+  const assignments = ["is_initialized = 1"];
+  const params: unknown[] = [];
+  if (cols.has("bootstrap_completed_at")) {
+    assignments.push("bootstrap_completed_at = COALESCE(bootstrap_completed_at, ?)");
+    params.push(nowIso);
+  }
+  if (cols.has("bootstrap_method")) {
+    assignments.push("bootstrap_method = COALESCE(bootstrap_method, ?)");
+    params.push("desktop_activation");
+  }
+  if (cols.has("updated_at")) {
+    assignments.push("updated_at = ?");
+    params.push(nowIso);
+  }
+  params.push(activation.tenantId);
+  const result = db
+    .prepare(`UPDATE tenants SET ${assignments.join(", ")} WHERE id = ?`)
+    .run(...params);
+  if (result.changes === 0) {
+    res.status(404).json({ error: "tenant_not_found" });
+    return;
+  }
+  const row = db
+    .prepare(
+      `SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`,
+    )
+    .get(activation.tenantId) as { id: string; is_initialized: number };
+  structuredLog("activation_tenant_initialized", {
+    tenant_id: row.id,
+    machine_fingerprint: activation.machineFingerprint,
+  });
+  res.json({
+    tenant_id: row.id,
+    is_initialized: row.is_initialized === 1,
   });
 });
 

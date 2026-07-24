@@ -14,6 +14,8 @@ const TenantSchema = z.object({
   offline_grace_hours: z.number().optional(),
   trust_revocation_disconnects_immediately: z.union([z.boolean(), z.number()]).optional(),
   reconnect_requires_fresh_heartbeat: z.union([z.boolean(), z.number()]).optional(),
+  is_initialized: z.union([z.boolean(), z.number()]).optional(),
+  has_demo_data: z.union([z.boolean(), z.number()]).optional(),
   is_active: z.number().optional(),
   created_at: z.string().optional(),
 });
@@ -45,6 +47,20 @@ const ActivationClaimResultSchema = z.object({
   force_update_reason: z.string().nullable().optional(),
   force_update_policy_source: z.enum(["tenant", "cohort"]).optional(),
   force_update_required: z.boolean().optional(),
+  tenant_display_name: z.string().optional(),
+  tenant_slug: z.string().optional(),
+  license_status: z.string().optional(),
+  license_plan: z.string().optional(),
+  device_limit: z.number().optional(),
+  activated_device_count: z.number().optional(),
+  machine_label: z.string().nullable().optional(),
+  is_initialized: z.boolean().optional(),
+  has_demo_data: z.boolean().optional(),
+});
+
+const ActivationTenantStatusSchema = z.object({
+  tenant_id: z.string(),
+  is_initialized: z.boolean(),
 });
 
 const ActivationRowSchema = z.object({
@@ -88,6 +104,7 @@ const CohortUpdatePolicySchema = z.object({
 export type ControlTenant = z.infer<typeof TenantSchema>;
 export type ControlLicense = z.infer<typeof LicenseSchema>;
 export type ActivationClaimResult = z.infer<typeof ActivationClaimResultSchema>;
+export type ActivationTenantStatus = z.infer<typeof ActivationTenantStatusSchema>;
 export type ActivationRow = z.infer<typeof ActivationRowSchema>;
 export type OfflinePolicy = z.infer<typeof OfflinePolicySchema>;
 export type TenantUpdatePolicy = z.infer<typeof TenantUpdatePolicySchema>;
@@ -116,9 +133,8 @@ export function isDuplicateTenantSlugMessage(message: string): boolean {
   const m = message.toLowerCase();
   return (
     m.includes("already taken") ||
-    m.includes("tenant_conflict") ||
     /\b(unique|duplicate)\b.*\bslug\b|\bslug\b.*\b(unique|duplicate)\b/.test(m) ||
-    (m.includes("sqlite") && m.includes("unique")) ||
+    (m.includes("sqlite") && m.includes("unique") && m.includes("slug")) ||
     (m.includes("constraint") && m.includes("slug"))
   );
 }
@@ -146,13 +162,12 @@ export async function parseControlPlaneErrorResponse(res: Response): Promise<str
 
   if (res.status === 409) {
     if (code === "tenant_conflict") {
-      return "This tenant slug is already taken. Choose a different slug.";
-    }
-    // Production APIs sometimes surface SQLite/unique errors only in `message`.
-    if (msg && isDuplicateTenantSlugMessage(msg)) {
-      return "This tenant slug is already taken. Choose a different slug.";
-    }
-    if (detailStr && isDuplicateTenantSlugMessage(detailStr)) {
+      if (isDuplicateTenantSlugMessage(msg) || isDuplicateTenantSlugMessage(detailStr)) {
+        return "This tenant slug is already taken. Choose a different slug.";
+      }
+      if (msg || detailStr) {
+        return msg || detailStr;
+      }
       return "This tenant slug is already taken. Choose a different slug.";
     }
     if (code === "idempotency_key_conflict") {
@@ -339,6 +354,34 @@ export async function claimActivation(input: {
   });
   await throwIfNotOk(res);
   return ActivationClaimResultSchema.parse(await res.json());
+}
+
+export async function getActivationTenantStatus(activationToken: string): Promise<ActivationTenantStatus> {
+  const res = await fetch(`${apiBase()}/api/v1/activation/tenant-status`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${activationToken}`,
+    },
+  });
+  await throwIfNotOk(res);
+  return ActivationTenantStatusSchema.parse(await res.json());
+}
+
+export async function markActivationTenantInitialized(
+  activationToken: string,
+): Promise<ActivationTenantStatus> {
+  const res = await fetch(`${apiBase()}/api/v1/activation/tenant-status/initialize`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${activationToken}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  await throwIfNotOk(res);
+  return ActivationTenantStatusSchema.parse(await res.json());
 }
 
 export async function listTenantActivations(tenantId: string): Promise<ActivationRow[]> {
