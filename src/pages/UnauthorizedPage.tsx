@@ -2,6 +2,10 @@ import { Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
+/**
+ * Shown only when the user is authenticated but lacks a required permission.
+ * Authentication failures must redirect to /login instead.
+ */
 export function UnauthorizedPage() {
   const { t } = useTranslation("auth");
 
@@ -19,7 +23,7 @@ export function UnauthorizedPage() {
         <p className="mt-2 text-sm text-text-secondary">
           {t(
             "unauthorized.message",
-            "You do not have permission to access this section. Ask an administrator to update your role.",
+            "You do not have the necessary permissions to access this page. Ask an administrator to update your role.",
           )}
         </p>
 
