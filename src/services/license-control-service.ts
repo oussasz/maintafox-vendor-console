@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { getAccessToken } from "@/lib/auth-token";
 
+const EditionIdSchema = z.enum(["core", "professional", "enterprise", "development"]);
+
 const TenantSchema = z.object({
   id: z.string(),
   slug: z.string(),
@@ -11,6 +13,8 @@ const TenantSchema = z.object({
   force_update_reason: z.string().nullable().optional(),
   rollout_cohort: z.string().optional(),
   update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
+  edition: EditionIdSchema.optional(),
+  entitlement_lineage: z.number().optional(),
   offline_grace_hours: z.number().optional(),
   trust_revocation_disconnects_immediately: z.union([z.boolean(), z.number()]).optional(),
   reconnect_requires_fresh_heartbeat: z.union([z.boolean(), z.number()]).optional(),
@@ -18,6 +22,16 @@ const TenantSchema = z.object({
   has_demo_data: z.union([z.boolean(), z.number()]).optional(),
   is_active: z.number().optional(),
   created_at: z.string().optional(),
+});
+
+const EditionCatalogEntrySchema = z.object({
+  id: EditionIdSchema,
+  label: z.string(),
+  capabilities: z.record(z.boolean()),
+});
+
+const EditionsResponseSchema = z.object({
+  items: z.array(EditionCatalogEntrySchema),
 });
 
 const LicenseSchema = z.object({
@@ -51,11 +65,16 @@ const ActivationClaimResultSchema = z.object({
   tenant_slug: z.string().optional(),
   license_status: z.string().optional(),
   license_plan: z.string().optional(),
+  edition: EditionIdSchema.optional(),
+  license_tier: z.string().optional(),
   device_limit: z.number().optional(),
   activated_device_count: z.number().optional(),
   machine_label: z.string().nullable().optional(),
   is_initialized: z.boolean().optional(),
   has_demo_data: z.boolean().optional(),
+  capabilities_digest: z.string().nullable().optional(),
+  feature_flags_digest: z.string().nullable().optional(),
+  entitlement_envelope: z.record(z.unknown()).optional(),
 });
 
 const ActivationTenantStatusSchema = z.object({
@@ -109,6 +128,8 @@ export type ActivationRow = z.infer<typeof ActivationRowSchema>;
 export type OfflinePolicy = z.infer<typeof OfflinePolicySchema>;
 export type TenantUpdatePolicy = z.infer<typeof TenantUpdatePolicySchema>;
 export type CohortUpdatePolicy = z.infer<typeof CohortUpdatePolicySchema>;
+export type EditionId = z.infer<typeof EditionIdSchema>;
+export type EditionCatalogEntry = z.infer<typeof EditionCatalogEntrySchema>;
 export type PrivilegedActionContext = {
   reason_code: string;
   step_up_token: string;
@@ -241,6 +262,12 @@ export async function listTenants(): Promise<ControlTenant[]> {
   return z.array(TenantSchema).parse(await res.json());
 }
 
+export async function listEditions(): Promise<EditionCatalogEntry[]> {
+  const res = await authFetch("/api/v1/editions");
+  await throwIfNotOk(res);
+  return EditionsResponseSchema.parse(await res.json()).items;
+}
+
 export async function updateTenant(
   tenantId: string,
   input: {
@@ -248,6 +275,7 @@ export async function updateTenant(
     display_name?: string;
     rollout_cohort?: string;
     update_channel?: "stable" | "pilot" | "internal";
+    edition?: EditionId;
   },
 ): Promise<ControlTenant> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
@@ -273,6 +301,7 @@ export async function createTenant(input: {
   force_update_reason?: string | null;
   rollout_cohort?: string;
   update_channel?: "stable" | "pilot" | "internal";
+  edition?: EditionId;
   offline_grace_hours?: number;
   trust_revocation_disconnects_immediately?: boolean;
   reconnect_requires_fresh_heartbeat?: boolean;

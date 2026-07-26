@@ -31,10 +31,11 @@ import {
   updateTenant,
   updateTenantUpdatePolicy,
   type ControlTenant,
+  type EditionId,
 } from "@/services/license-control-service";
 
 type TenantChannelFilter = "all" | "stable" | "pilot" | "internal";
-type SortKey = "slug" | "display_name" | "rollout_cohort" | "update_channel" | "created_at";
+type SortKey = "slug" | "display_name" | "rollout_cohort" | "update_channel" | "edition" | "created_at";
 type SortDirection = "asc" | "desc";
 
 type AddTenantForm = {
@@ -42,6 +43,7 @@ type AddTenantForm = {
   display_name: string;
   rollout_cohort: string;
   update_channel: "stable" | "pilot" | "internal";
+  edition: EditionId;
 };
 
 type AddTenantErrors = Partial<Record<keyof AddTenantForm, string>>;
@@ -51,7 +53,15 @@ const DEFAULT_ADD_FORM: AddTenantForm = {
   display_name: "",
   rollout_cohort: "stable-main",
   update_channel: "stable",
+  edition: "core",
 };
+
+const EDITION_OPTIONS: Array<{ value: EditionId; labelKey: string; fallback: string }> = [
+  { value: "core", labelKey: "editions.core", fallback: "Core" },
+  { value: "professional", labelKey: "editions.professional", fallback: "Professional" },
+  { value: "enterprise", labelKey: "editions.enterprise", fallback: "Enterprise" },
+  { value: "development", labelKey: "editions.development", fallback: "Development" },
+];
 
 function compareNullable(left: string | null | undefined, right: string | null | undefined): number {
   return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
@@ -177,6 +187,7 @@ export function CustomerWorkspace() {
         tenant.display_name,
         tenant.rollout_cohort ?? "",
         tenant.update_channel ?? "",
+        tenant.edition ?? "",
       ]
         .join(" ")
         .toLowerCase()
@@ -196,6 +207,9 @@ export function CustomerWorkspace() {
       }
       if (sortKey === "update_channel") {
         return compareNullable(left.update_channel, right.update_channel) * direction;
+      }
+      if (sortKey === "edition") {
+        return compareNullable(left.edition, right.edition) * direction;
       }
       return compareNullable(left.slug, right.slug) * direction;
     });
@@ -273,6 +287,7 @@ export function CustomerWorkspace() {
       display_name: tenant.display_name,
       rollout_cohort: tenant.rollout_cohort ?? "stable-main",
       update_channel: (tenant.update_channel ?? "stable") as AddTenantForm["update_channel"],
+      edition: (tenant.edition ?? "core") as EditionId,
     });
     setTenantDialogMode("edit");
   };
@@ -292,6 +307,7 @@ export function CustomerWorkspace() {
           display_name: addTenantForm.display_name.trim(),
           rollout_cohort: addTenantForm.rollout_cohort.trim(),
           update_channel: addTenantForm.update_channel,
+          edition: addTenantForm.edition,
         });
         setTenantSuccess(`Customer "${updated.display_name}" was updated successfully.`);
         await loadTenants(updated.id);
@@ -303,6 +319,7 @@ export function CustomerWorkspace() {
           display_name: addTenantForm.display_name.trim(),
           rollout_cohort: addTenantForm.rollout_cohort.trim(),
           update_channel: addTenantForm.update_channel,
+          edition: addTenantForm.edition,
         });
         setTenantSuccess(`Customer "${created.display_name}" was added successfully.`);
         setSearchQuery("");
@@ -421,6 +438,7 @@ export function CustomerWorkspace() {
               <option value="slug">{t("customers.columns.slug", "Slug")}</option>
               <option value="display_name">{t("customers.columns.company", "Company")}</option>
               <option value="rollout_cohort">{t("customers.columns.cohort", "Cohort")}</option>
+              <option value="edition">{t("customers.columns.edition", "Edition")}</option>
               <option value="update_channel">{t("customers.columns.channel", "Channel")}</option>
               <option value="created_at">{t("customers.columns.created", "Created")}</option>
             </select>
@@ -496,6 +514,7 @@ export function CustomerWorkspace() {
                   <TableHead>{t("customers.columns.slug", "Slug")}</TableHead>
                   <TableHead>{t("customers.columns.company", "Company")}</TableHead>
                   <TableHead>{t("customers.columns.id", "Tenant ID")}</TableHead>
+                  <TableHead>{t("customers.columns.edition", "Edition")}</TableHead>
                   <TableHead>{t("customers.columns.cohort", "Cohort")}</TableHead>
                   <TableHead>{t("customers.columns.channel", "Channel")}</TableHead>
                   <TableHead className="w-[1%] whitespace-nowrap text-right">
@@ -518,6 +537,9 @@ export function CustomerWorkspace() {
                     <TableCell className="font-medium">{tenant.slug}</TableCell>
                     <TableCell>{tenant.display_name}</TableCell>
                     <TableCell className="font-mono text-xs">{tenant.id}</TableCell>
+                    <TableCell>
+                      {t(`editions.${tenant.edition ?? "core"}`, tenant.edition ?? "core")}
+                    </TableCell>
                     <TableCell>{tenant.rollout_cohort ?? "—"}</TableCell>
                     <TableCell>{tenant.update_channel ?? "stable"}</TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -579,6 +601,15 @@ export function CustomerWorkspace() {
             <div>
               <Label htmlFor="cohort">{t("customers.cohort", "Rollout cohort")}</Label>
               <Input id="cohort" value={selectedTenant.rollout_cohort ?? "—"} className="mt-1" readOnly />
+            </div>
+            <div>
+              <Label htmlFor="tenant-edition">{t("customers.edition", "Edition")}</Label>
+              <Input
+                id="tenant-edition"
+                value={t(`editions.${selectedTenant.edition ?? "core"}`, selectedTenant.edition ?? "core")}
+                className="mt-1"
+                readOnly
+              />
             </div>
             <div>
               <Label htmlFor="tenant-name">{t("customers.tenantName", "Tenant display name")}</Label>
@@ -1016,6 +1047,26 @@ export function CustomerWorkspace() {
                 </select>
               </div>
               <div>
+                <Label htmlFor="add-company-edition">{t("customers.edition", "Edition")}</Label>
+                <select
+                  id="add-company-edition"
+                  className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+                  value={addTenantForm.edition}
+                  onChange={(event) =>
+                    setAddTenantForm((previous) => ({
+                      ...previous,
+                      edition: event.target.value as EditionId,
+                    }))
+                  }
+                >
+                  {EDITION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {t(opt.labelKey, opt.fallback)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
                 <Label htmlFor="add-company-cohort">{t("customers.cohort", "Rollout cohort")}</Label>
                 <Input
                   id="add-company-cohort"

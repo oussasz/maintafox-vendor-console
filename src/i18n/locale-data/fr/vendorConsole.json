@@ -98,6 +98,16 @@
     "metadataHint": "Les métadonnées tenant proviennent de l'API control-plane et restent la source d'autorité.",
     "tenantSlug": "Identifiant tenant",
     "cohort": "Cohorte de déploiement",
+    "edition": "Édition",
+    "columns": {
+      "slug": "Identifiant",
+      "company": "Société",
+      "id": "ID tenant",
+      "edition": "Édition",
+      "cohort": "Cohorte",
+      "channel": "Canal",
+      "actions": "Actions"
+    },
     "bulk": {
       "title": "Réaffectation de canal en masse (simulation)",
       "hint": "Simulation d'abord, version de lignée pour concurrence optimiste, alignement canal.",
@@ -108,6 +118,14 @@
       "dryRun": "Simulation (sans mutation)",
       "buildPreview": "Construire la charge utile"
     }
+  },
+  "editions": {
+    "core": "Core",
+    "professional": "Professional",
+    "enterprise": "Enterprise",
+    "development": "Development",
+    "modulesTitle": "Modules de l'édition",
+    "modulesHint": "Préréglage de capacités en lecture seule. Le bureau applique les modules depuis l'enveloppe de licence signée."
   },
   "machines": {
     "title": "Machines et activation",

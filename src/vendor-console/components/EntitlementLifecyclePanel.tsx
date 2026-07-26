@@ -17,12 +17,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import {
   issueLicense,
+  listEditions,
   listTenantLicenses,
   listTenants,
   revokeLicense,
   updateLicense,
   type ControlLicense,
   type ControlTenant,
+  type EditionCatalogEntry,
 } from "@/services/license-control-service";
 
 type LicenseState = "active" | "revoked" | "expired";
@@ -160,11 +162,25 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
   const [issueForm, setIssueForm] = useState<IssueForm>(DEFAULT_ISSUE_FORM);
   const [revokeReason, setRevokeReason] = useState("");
   const [clipboardBusy, setClipboardBusy] = useState(false);
+  const [editionCatalog, setEditionCatalog] = useState<EditionCatalogEntry[]>([]);
 
   const selectedTenant = useMemo(
     () => tenants.find((tenant) => tenant.id === selectedTenantId) ?? null,
     [tenants, selectedTenantId],
   );
+
+  const selectedEditionEntry = useMemo(() => {
+    const editionId = selectedTenant?.edition ?? "core";
+    return editionCatalog.find((entry) => entry.id === editionId) ?? null;
+  }, [editionCatalog, selectedTenant?.edition]);
+
+  const enabledModules = useMemo(() => {
+    if (!selectedEditionEntry) return [] as string[];
+    return Object.entries(selectedEditionEntry.capabilities)
+      .filter(([, enabled]) => enabled)
+      .map(([key]) => key)
+      .sort();
+  }, [selectedEditionEntry]);
 
   const selectedLicense = useMemo(
     () => licenses.find((license) => license.id === selectedLicenseId) ?? null,
@@ -177,8 +193,9 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
     setLoadingTenants(true);
     setLoadError(null);
     try {
-      const rows = await listTenants();
+      const [rows, editions] = await Promise.all([listTenants(), listEditions()]);
       setTenants(rows);
+      setEditionCatalog(editions);
       if (rows.length === 0) {
         setSelectedTenantId("");
         setLicenses([]);
@@ -392,6 +409,24 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
           <p className="mt-2 text-xs text-amber-300">Select a tenant to issue or manage entitlement keys.</p>
         ) : null}
         {issueDisabledReason ? <p className="mt-2 text-xs text-text-muted">{issueDisabledReason}</p> : null}
+
+        {selectedTenant ? (
+          <div className="mt-4 rounded-md border border-surface-border bg-surface-2 p-3">
+            <p className="text-xs font-medium text-text-primary">
+              {t("editions.modulesTitle", "Edition modules")} —{" "}
+              {t(`editions.${selectedTenant.edition ?? "core"}`, selectedTenant.edition ?? "core")}
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              {t(
+                "editions.modulesHint",
+                "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope.",
+              )}
+            </p>
+            <p className="mt-2 text-xs text-text-muted">
+              {enabledModules.length > 0 ? enabledModules.join(", ") : "—"}
+            </p>
+          </div>
+        ) : null}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-5">
           <div>

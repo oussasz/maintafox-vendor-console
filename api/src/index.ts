@@ -14,6 +14,19 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
+import {
+  EDITION_IDS,
+  listEditionCatalog,
+  parseEditionId,
+  type EditionId,
+} from "./edition-catalog.js";
+import {
+  addHoursIso,
+  buildSignedEntitlementEnvelope,
+  capabilitiesDigest,
+  type EntitlementEnvelopePayload,
+} from "./entitlement-signer.js";
+
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
 if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
   console.error("FATAL: Set JWT_SECRET (min 32 characters) in the environment.");
@@ -300,6 +313,14 @@ ensureColumn(
   "ALTER TABLE tenants ADD COLUMN bootstrap_method TEXT NULL",
 );
 ensureColumn("license_keys", "update_channel", "ALTER TABLE license_keys ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
+ensureColumn("tenants", "edition", "ALTER TABLE tenants ADD COLUMN edition TEXT NOT NULL DEFAULT 'core'");
+ensureColumn(
+  "tenants",
+  "entitlement_lineage",
+  "ALTER TABLE tenants ADD COLUMN entitlement_lineage INTEGER NOT NULL DEFAULT 0",
+);
+
+const EditionIdSchema = z.enum(EDITION_IDS);
 
 type TenantInsertInput = {
   id: string;
@@ -310,6 +331,7 @@ type TenantInsertInput = {
   force_update_reason?: string | null;
   rollout_cohort?: string;
   update_channel?: string;
+  edition?: EditionId;
   offline_grace_hours?: number;
   trust_revocation_disconnects_immediately?: boolean;
   reconnect_requires_fresh_heartbeat?: boolean;
@@ -363,6 +385,7 @@ function insertTenantRow(input: TenantInsertInput): void {
   const cols = tenantTableColumns();
   const now = new Date().toISOString();
   const updateChannel = input.update_channel ?? "stable";
+  const edition = parseEditionId(input.edition, "core");
   const values: Record<string, unknown> = {
     id: input.id,
     slug: input.slug,
@@ -372,6 +395,8 @@ function insertTenantRow(input: TenantInsertInput): void {
     force_update_reason: input.force_update_reason ?? null,
     rollout_cohort: input.rollout_cohort ?? "stable-main",
     update_channel: updateChannel,
+    edition,
+    entitlement_lineage: 0,
     offline_grace_hours: input.offline_grace_hours ?? 72,
     trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ? 1 : 0,
     reconnect_requires_fresh_heartbeat: (input.reconnect_requires_fresh_heartbeat ?? true) ? 1 : 0,
@@ -402,11 +427,25 @@ function insertTenantRow(input: TenantInsertInput): void {
 
 function updateTenantRow(
   tenantId: string,
-  input: { slug: string; display_name: string; rollout_cohort: string; update_channel: string },
+  input: {
+    slug: string;
+    display_name: string;
+    rollout_cohort: string;
+    update_channel: string;
+    edition: EditionId;
+    bumpEntitlementLineage?: boolean;
+  },
 ): void {
   const cols = tenantTableColumns();
   const assignments = ["slug = ?", "display_name = ?", "rollout_cohort = ?", "update_channel = ?"];
   const params: unknown[] = [input.slug, input.display_name, input.rollout_cohort, input.update_channel];
+  if (cols.has("edition")) {
+    assignments.push("edition = ?");
+    params.push(input.edition);
+  }
+  if (input.bumpEntitlementLineage && cols.has("entitlement_lineage")) {
+    assignments.push("entitlement_lineage = entitlement_lineage + 1");
+  }
   if (cols.has("rollout_channel")) {
     assignments.push("rollout_channel = ?");
     params.push(input.update_channel);
@@ -849,6 +888,7 @@ const CreateTenantBody = z.object({
   force_update_reason: z.string().trim().min(2).max(512).optional().nullable(),
   rollout_cohort: z.string().trim().min(2).max(64).optional(),
   update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
+  edition: EditionIdSchema.optional(),
   offline_grace_hours: z.number().int().min(1).max(720).optional(),
   trust_revocation_disconnects_immediately: z.boolean().optional(),
   reconnect_requires_fresh_heartbeat: z.boolean().optional(),
@@ -860,6 +900,7 @@ const UpdateTenantBody = z
     display_name: z.string().min(2).max(128).optional(),
     rollout_cohort: z.string().trim().min(2).max(64).optional(),
     update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
+    edition: EditionIdSchema.optional(),
   })
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "empty_patch" });
@@ -1402,6 +1443,10 @@ app.get("/api/v1/me/permissions", authMiddleware, (_req, res) => {
   res.json(VENDOR_PERMISSIONS);
 });
 
+app.get("/api/v1/editions", authMiddleware, (_req, res) => {
+  res.json({ items: listEditionCatalog() });
+});
+
 app.get("/api/v1/tenants", authMiddleware, (req, res) => {
   const { cursor, limit, withPagination } = parsePagination(req.query);
   const effectiveLimit = withPagination ? limit : 10_000;
@@ -1412,6 +1457,7 @@ app.get("/api/v1/tenants", authMiddleware, (req, res) => {
     rows = db
       .prepare(
         `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+                COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
                 reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
@@ -1424,6 +1470,7 @@ app.get("/api/v1/tenants", authMiddleware, (req, res) => {
     rows = db
       .prepare(
         `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+                COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
                 reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
@@ -1453,6 +1500,7 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
   runIdempotent(req, res, () => {
     const input = parsed.data;
     const id = newId("tenant");
+    const edition = parseEditionId(input.edition, "core");
     try {
       insertTenantRow({
         id,
@@ -1463,6 +1511,7 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
         force_update_reason: input.force_update_reason ?? null,
         rollout_cohort: input.rollout_cohort ?? "stable-main",
         update_channel: input.update_channel ?? "stable",
+        edition,
         offline_grace_hours: input.offline_grace_hours ?? 72,
         trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ?? false,
         reconnect_requires_fresh_heartbeat: input.reconnect_requires_fresh_heartbeat ?? true,
@@ -1481,6 +1530,8 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
         force_update_reason: input.force_update_reason ?? null,
         rollout_cohort: input.rollout_cohort ?? "stable-main",
         update_channel: input.update_channel ?? "stable",
+        edition,
+        entitlement_lineage: 0,
         offline_grace_hours: input.offline_grace_hours ?? 72,
         trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ?? false,
         reconnect_requires_fresh_heartbeat: input.reconnect_requires_fresh_heartbeat ?? true,
@@ -1500,9 +1551,20 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   }
   const row = db
     .prepare(
-      `SELECT id, slug, display_name, rollout_cohort, update_channel FROM tenants WHERE id = ?`,
+      `SELECT id, slug, display_name, rollout_cohort, update_channel,
+              COALESCE(edition, 'core') AS edition
+       FROM tenants WHERE id = ?`,
     )
-    .get(tenantId) as { id: string; slug: string; display_name: string; rollout_cohort: string; update_channel: string } | undefined;
+    .get(tenantId) as
+    | {
+        id: string;
+        slug: string;
+        display_name: string;
+        rollout_cohort: string;
+        update_channel: string;
+        edition: string;
+      }
+    | undefined;
   if (!row) {
     res.status(404).json({ error: "tenant_not_found" });
     return;
@@ -1512,12 +1574,17 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   const nextDisplay = input.display_name ?? row.display_name;
   const nextCohort = input.rollout_cohort ?? row.rollout_cohort;
   const nextChannel = input.update_channel ?? row.update_channel;
+  const prevEdition = parseEditionId(row.edition, "core");
+  const nextEdition = input.edition != null ? parseEditionId(input.edition, "core") : prevEdition;
+  const editionChanged = nextEdition !== prevEdition;
   try {
     updateTenantRow(tenantId, {
       slug: nextSlug,
       display_name: nextDisplay,
       rollout_cohort: nextCohort,
       update_channel: nextChannel,
+      edition: nextEdition,
+      bumpEntitlementLineage: editionChanged,
     });
   } catch (err) {
     const failure = tenantWriteFailure(err);
@@ -1527,6 +1594,7 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   const out = db
     .prepare(
       `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+              COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
               offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat, is_active, created_at
        FROM tenants WHERE id = ?`,
     )
@@ -3180,6 +3248,8 @@ type ActivationLicenseRow = {
   max_machines: number;
   update_channel: string;
   rollout_cohort: string;
+  edition: string;
+  entitlement_lineage: number;
   expires_at: string | null;
   revoked_at: string | null;
   force_min_app_version: string | null;
@@ -3199,7 +3269,10 @@ function loadLicenseForActivation(licenseKey: string): ActivationLicenseRow | un
   return db
     .prepare(
       `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
-              l.update_channel, t.rollout_cohort, t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
+              l.update_channel, t.rollout_cohort,
+              COALESCE(t.edition, 'core') AS edition,
+              COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
+              t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
               t.offline_grace_hours, t.trust_revocation_disconnects_immediately,
               t.reconnect_requires_fresh_heartbeat,
               t.display_name AS tenant_display_name, t.slug AS tenant_slug,
@@ -3221,11 +3294,64 @@ function countActiveActivations(licenseId: string): number {
   return row.count;
 }
 
+function resolveEnvelopeValidity(lic: ActivationLicenseRow): {
+  validUntil: string;
+  offlineGraceUntil: string;
+} {
+  const now = new Date().toISOString();
+  const validUntil =
+    lic.expires_at && !Number.isNaN(Date.parse(lic.expires_at))
+      ? new Date(lic.expires_at).toISOString()
+      : "2099-01-01T00:00:00.000Z";
+  const offlineGraceUntil = addHoursIso(validUntil === "2099-01-01T00:00:00.000Z" ? now : validUntil, lic.offline_grace_hours);
+  // Prefer grace relative to expiry when expiry is set.
+  const graceFromExpiry = lic.expires_at
+    ? addHoursIso(new Date(lic.expires_at).toISOString(), lic.offline_grace_hours)
+    : addHoursIso(now, lic.offline_grace_hours);
+  return {
+    validUntil,
+    offlineGraceUntil: lic.expires_at ? graceFromExpiry : offlineGraceUntil,
+  };
+}
+
+function buildEntitlementEnvelopeForLicense(
+  lic: ActivationLicenseRow,
+  opts?: { bumpLineage?: boolean; persistLineage?: boolean },
+): EntitlementEnvelopePayload {
+  // Soft phase: always issue lineage 1 with null previous so desktop apply does not
+  // require a prior local envelope id (control plane does not track device envelopes).
+  // entitlement_lineage still bumps for operator audit / concurrency hints.
+  if (opts?.bumpLineage) {
+    db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(lic.tenant_id);
+  } else if (opts?.persistLineage) {
+    db.prepare(
+      `UPDATE tenants SET entitlement_lineage = CASE WHEN COALESCE(entitlement_lineage, 0) < 1 THEN 1 ELSE entitlement_lineage END WHERE id = ?`,
+    ).run(lic.tenant_id);
+  }
+  const { validUntil, offlineGraceUntil } = resolveEnvelopeValidity(lic);
+  return buildSignedEntitlementEnvelope({
+    edition: lic.edition,
+    lineageVersion: 1,
+    previousEnvelopeId: null,
+    channel: lic.update_channel,
+    machineSlots: lic.max_machines,
+    validUntil,
+    offlineGraceUntil,
+  });
+}
+
 function buildActivationSummary(
   lic: ActivationLicenseRow,
   input: z.infer<typeof ActivationClaimBody>,
   resolvedPolicy: ReturnType<typeof resolveForceUpdatePolicy>,
+  opts?: { includeEnvelope?: boolean; bumpLineage?: boolean; persistLineage?: boolean },
 ): Record<string, unknown> {
+  const edition = parseEditionId(lic.edition, "core");
+  const includeEnvelope = opts?.includeEnvelope === true;
+  const envelope = buildEntitlementEnvelopeForLicense(lic, {
+    bumpLineage: opts?.bumpLineage,
+    persistLineage: opts?.persistLineage,
+  });
   return {
     tenant_id: lic.tenant_id,
     license_id: lic.id,
@@ -3233,7 +3359,9 @@ function buildActivationSummary(
     tenant_display_name: lic.tenant_display_name,
     tenant_slug: lic.tenant_slug,
     license_status: "active",
-    license_plan: lic.rollout_cohort,
+    edition,
+    license_plan: edition,
+    license_tier: edition,
     update_channel: lic.update_channel,
     expires_at: lic.expires_at,
     device_limit: lic.max_machines,
@@ -3249,6 +3377,9 @@ function buildActivationSummary(
     force_update_reason: resolvedPolicy.force_update_reason,
     force_update_policy_source: resolvedPolicy.policy_source,
     force_update_required: resolvedPolicy.force_update_required,
+    capabilities_digest: capabilitiesDigest(envelope.capabilities_json),
+    feature_flags_digest: capabilitiesDigest(envelope.feature_flags_json),
+    ...(includeEnvelope ? { entitlement_envelope: envelope } : {}),
   };
 }
 
@@ -3451,10 +3582,63 @@ app.post("/api/v1/activation/claim", (req, res) => {
     duration_ms: Date.now() - startedAt,
   });
   res.json({
-    ...buildActivationSummary(validated.lic, input, resolvedPolicy),
+    ...buildActivationSummary(validated.lic, input, resolvedPolicy, {
+      includeEnvelope: true,
+      persistLineage: true,
+    }),
     // Count after write so activated_device_count includes this device.
     activated_device_count: countActiveActivations(validated.lic.id),
     activation_token: activationToken,
+  });
+});
+
+app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, (req, res) => {
+  const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!activation) {
+    res.status(401).json({ error: "missing_token" });
+    return;
+  }
+  const licRow = db
+    .prepare(
+      `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+              l.update_channel, t.rollout_cohort,
+              COALESCE(t.edition, 'core') AS edition,
+              COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
+              t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
+              t.offline_grace_hours, t.trust_revocation_disconnects_immediately,
+              t.reconnect_requires_fresh_heartbeat,
+              t.display_name AS tenant_display_name, t.slug AS tenant_slug,
+              COALESCE(t.is_initialized, 0) AS is_initialized,
+              COALESCE(t.has_demo_data, 0) AS has_demo_data
+       FROM license_keys l
+       JOIN tenants t ON t.id = l.tenant_id
+       WHERE l.id = ? AND l.tenant_id = ?`,
+    )
+    .get(activation.licenseId, activation.tenantId) as ActivationLicenseRow | undefined;
+  if (!licRow || licRow.is_active !== 1) {
+    res.status(404).json({ error: "license_not_found" });
+    return;
+  }
+  if (licRow.revoked_at) {
+    res.status(403).json({ error: "license_revoked" });
+    return;
+  }
+  if (licRow.expires_at && new Date(licRow.expires_at) <= new Date()) {
+    res.status(403).json({ error: "license_expired" });
+    return;
+  }
+  const resolvedPolicy = resolveActivationPolicy(licRow, undefined);
+  const syntheticInput = {
+    license_key: licRow.license_key,
+    machine_fingerprint: activation.machineFingerprint,
+  };
+  const summary = buildActivationSummary(licRow, syntheticInput, resolvedPolicy, {
+    includeEnvelope: true,
+    bumpLineage: true,
+  });
+  res.json({
+    ...summary,
+    activated_device_count: countActiveActivations(licRow.id),
   });
 });
 

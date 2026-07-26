@@ -98,6 +98,16 @@
     "metadataHint": "Tenant metadata comes from the control-plane API and remains authoritative for operations.",
     "tenantSlug": "Tenant slug",
     "cohort": "Rollout cohort",
+    "edition": "Edition",
+    "columns": {
+      "slug": "Slug",
+      "company": "Company",
+      "id": "Tenant ID",
+      "edition": "Edition",
+      "cohort": "Cohort",
+      "channel": "Channel",
+      "actions": "Actions"
+    },
     "bulk": {
       "title": "Bulk channel reassignment (dry-run)",
       "hint": "Safe bulk: dry-run first, per-tenant lineage version for optimistic concurrency, channel alignment with rollout.",
@@ -108,6 +118,14 @@
       "dryRun": "Dry run (no mutations)",
       "buildPreview": "Build request payload"
     }
+  },
+  "editions": {
+    "core": "Core",
+    "professional": "Professional",
+    "enterprise": "Enterprise",
+    "development": "Development",
+    "modulesTitle": "Edition modules",
+    "modulesHint": "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope."
   },
   "machines": {
     "title": "Machines & activation",
