@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 
 const dataDir = mkdtempSync(join(tmpdir(), "mfx-legacy-tenant-"));
 const port = 33124;
@@ -51,7 +52,10 @@ async function run() {
       DATA_DIR: dataDir,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
-      SEED_BEHAVIOR: "disabled",
+      SEED_ADMIN_EMAIL: "admin@maintafox.systems",
+      ENTITLEMENT_ISSUER_SECRET_V1: "integration_test_entitlement_secret_min_32_chars_0001",
+      // "safe" seeds only the admin user (no domain data); "disabled" would make login impossible.
+      SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       CORS_ORIGIN: "http://localhost:5174",
     },
@@ -107,7 +111,9 @@ async function run() {
 
     console.log("legacy tenant schema integration test passed");
   } finally {
-    server.kill();
+    // Wait for exit so Windows releases the SQLite file handles before the temp dir is removed.
+    server.kill("SIGTERM");
+    await once(server, "exit").catch(() => undefined);
     rmSync(dataDir, { recursive: true, force: true });
   }
 }

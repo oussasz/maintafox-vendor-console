@@ -15,12 +15,17 @@ export const ENTITLEMENT_SIGNATURE_ALG_V1 = "sha256:issuer-key-v1";
 export const ENTITLEMENT_ISSUER = "maintafox-vps";
 export const ENTITLEMENT_KEY_ID_V1 = "key-v1";
 
-/** Default matches desktop trusted_issuer_secrets() material string. */
-const DEFAULT_SECRET_V1 = "MAINTAFOX_TRUSTED_ISSUER_KEY_V1";
-
-function issuerSecretV1(): string {
+/**
+ * Symmetric v1 signing secret. There is deliberately no built-in fallback: the previous default
+ * was a literal also compiled into the desktop binary, which made envelopes forgeable.
+ * Interim scheme only — master plan Phase 1.1 replaces it with Ed25519 (private key server-side).
+ */
+export function issuerSecretV1(): string {
   const fromEnv = process.env.ENTITLEMENT_ISSUER_SECRET_V1?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_SECRET_V1;
+  if (!fromEnv || fromEnv.length < 32) {
+    throw new Error("ENTITLEMENT_ISSUER_SECRET_V1 is not configured (min 32 characters).");
+  }
+  return fromEnv;
 }
 
 export type EntitlementEnvelopePayload = {

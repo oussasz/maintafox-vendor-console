@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
+import { obtainStepUpToken } from "./lib/step-up.mjs";
+
 const dataDir = mkdtempSync(join(tmpdir(), "mfx-control-api-"));
 const port = 33117;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -35,6 +37,8 @@ async function run() {
       DATA_DIR: dataDir,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
+      SEED_ADMIN_EMAIL: "admin@maintafox.systems",
+      ENTITLEMENT_ISSUER_SECRET_V1: "integration_test_entitlement_secret_min_32_chars_0001",
       SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       REQUIRE_PRIVILEGED_REASON: "1",
@@ -64,12 +68,13 @@ async function run() {
     const loginBody = await loginRes.json();
     const token = loginBody.access_token;
     assert.ok(token, "access token required");
+    const stepUpToken = await obtainStepUpToken(baseUrl, token, "AdminPassw0rd!");
 
     const privilegedHeaders = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "X-Operator-Reason": "INC-2026-042 force-update drill",
-      "X-Step-Up-Token": "stepup-token-valid",
+      "X-Step-Up-Token": stepUpToken,
     };
 
     const tenantRes = await fetch(`${baseUrl}/api/v1/tenants`, {

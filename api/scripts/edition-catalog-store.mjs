@@ -25,6 +25,9 @@ import {
 } from "../dist/edition-catalog-store.js";
 import { buildSignedEntitlementEnvelope } from "../dist/entitlement-signer.js";
 
+// The signer has no built-in secret; tests must configure one explicitly.
+process.env.ENTITLEMENT_ISSUER_SECRET_V1 = "integration_test_entitlement_secret_min_32_chars_0001";
+
 const db = new Database(":memory:");
 db.pragma("foreign_keys = ON");
 db.exec(`

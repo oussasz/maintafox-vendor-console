@@ -1,11 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { obtainStepUpToken } from "./lib/step-up.mjs";
+
 const BASE_URL = (process.env.BASE_URL ?? "https://api.maintafox.systems").replace(/\/$/, "");
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "";
 const OPERATOR_REASON = process.env.OPERATOR_REASON ?? "RC-UAT-S10";
-const STEP_UP_TOKEN = process.env.STEP_UP_TOKEN ?? "stepup-uat-token";
 const OUTPUT_DIR =
   process.env.OUTPUT_DIR ?? `./sprint10-uat-${new Date().toISOString().replace(/[:.]/g, "")}`;
 
@@ -64,6 +65,8 @@ async function main() {
     body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
   });
   const token = login.json?.access_token;
+  // Privileged calls need a real step-up token (password re-verification), not a static string.
+  const STEP_UP_TOKEN = token ? await obtainStepUpToken(BASE_URL, token, ADMIN_PASSWORD) : null;
   record("auth login success", login.res.status === 200 && typeof token === "string", {
     status: login.res.status,
   });

@@ -7,8 +7,8 @@ import cors from "cors";
 import Database from "better-sqlite3";
 import "dotenv/config";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import jwt from "jsonwebtoken";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -39,6 +39,7 @@ import {
   addHoursIso,
   buildSignedEntitlementEnvelope,
   capabilitiesDigest,
+  issuerSecretV1,
   type EntitlementEnvelopePayload,
 } from "./entitlement-signer.js";
 import {
@@ -47,6 +48,26 @@ import {
   TenantMediaObjectStore,
 } from "./storage/object-store.js";
 import { openSyncStore, runSyncExchange, type SyncStore } from "./sync/index.js";
+import {
+  STEP_UP_TTL_SECONDS,
+  VENDOR_ADMIN_TTL_SECONDS,
+  signDeviceActivationToken,
+  signStepUpToken,
+  signVendorAdminToken,
+  verifyDeviceActivationToken,
+  verifyStepUpToken,
+  verifyVendorAdminToken,
+} from "./auth-tokens.js";
+
+/** Required configuration: the process refuses to start rather than run on a hidden default. */
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    console.error(`FATAL: environment variable ${name} is required (see .env.example).`);
+    process.exit(1);
+  }
+  return value;
+}
 
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
 if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
@@ -55,8 +76,15 @@ if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
 }
 const JWT_SECRET: string = JWT_SECRET_RAW;
 
-const CORS_ORIGIN = process.env.CORS_ORIGIN ?? "http://console.maintafox.systems";
-const DATA_DIR = process.env.DATA_DIR ?? "/data";
+try {
+  issuerSecretV1();
+} catch (err) {
+  console.error(`FATAL: ${(err as Error).message}`);
+  process.exit(1);
+}
+
+const CORS_ORIGIN = requireEnv("CORS_ORIGIN");
+const DATA_DIR = requireEnv("DATA_DIR");
 
 /** Comma-separated `CORS_ORIGIN` (e.g. console + Tauri dev); empty segments ignored. */
 function parseCorsOrigins(raw: string): string[] {
@@ -64,18 +92,28 @@ function parseCorsOrigins(raw: string): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  return list.length > 0 ? list : ["http://console.maintafox.systems"];
+  if (list.length === 0) {
+    console.error("FATAL: CORS_ORIGIN must list at least one origin.");
+    process.exit(1);
+  }
+  return list;
 }
 const DB_PATH = join(DATA_DIR, "control-plane.db");
-const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? "admin@maintafox.systems";
+/** Only read when the users table is empty (first boot); see seedAdminIfEmpty. */
+const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL?.trim();
 const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 const SEED_BEHAVIOR_RAW = (process.env.SEED_BEHAVIOR ?? (NODE_ENV === "production" ? "disabled" : "full")).toLowerCase();
 const SEED_BEHAVIOR = SEED_BEHAVIOR_RAW === "disabled" || SEED_BEHAVIOR_RAW === "safe" || SEED_BEHAVIOR_RAW === "full"
   ? SEED_BEHAVIOR_RAW
   : "disabled";
-const REQUIRE_PRIVILEGED_STEP_UP = (process.env.REQUIRE_PRIVILEGED_STEP_UP ?? (NODE_ENV === "production" ? "1" : "0")) !== "0";
-const REQUIRE_PRIVILEGED_REASON = (process.env.REQUIRE_PRIVILEGED_REASON ?? (NODE_ENV === "production" ? "1" : "0")) !== "0";
+/** Minimum length of the X-Operator-Reason header on privileged actions. Always enforced. */
+const PRIVILEGED_REASON_MIN_LENGTH = 4;
+/** Desktop clamps one push to 1000 outbox rows (sync/queries.rs get_sync_push_payload). */
+const SYNC_MAX_OUTBOX_BATCH = 1000;
+/** Must stay <= nginx `client_max_body_size` on /api/v1/sync/exchange (deploy/nginx-edge.conf). */
+const SYNC_EXCHANGE_BODY_LIMIT = "32mb";
+const DEFAULT_JSON_BODY_LIMIT = "1mb";
 
 /** Matches vendor-console PermissionRecord + RBAC for console operators. */
 const VENDOR_PERMISSIONS = [
@@ -499,9 +537,10 @@ function seedAdminIfEmpty(): void {
   if (SEED_BEHAVIOR === "disabled") return;
   const row = db.prepare("SELECT id FROM users LIMIT 1").get();
   if (row) return;
-  if (!SEED_ADMIN_PASSWORD || SEED_ADMIN_PASSWORD.length < 8) {
+  if (!SEED_ADMIN_EMAIL || !SEED_ADMIN_PASSWORD || SEED_ADMIN_PASSWORD.length < 8) {
     console.warn(
-      "No users and SEED_ADMIN_PASSWORD missing or too short — create user via SQL or set SEED_ADMIN_PASSWORD.",
+      "No users and SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD missing (or password < 8 chars) — " +
+        "set both to seed the first vendor admin, or create the user via SQL.",
     );
     return;
   }
@@ -1030,7 +1069,7 @@ const SyncExchangeBody = z.object({
   protocol_version: z.literal("v1"),
   checkpoint_token: z.string().nullable().optional(),
   idempotency_key: z.string().min(8).max(128),
-  outbox_batch: z.array(SyncExchangeOutboxItem),
+  outbox_batch: z.array(SyncExchangeOutboxItem).max(SYNC_MAX_OUTBOX_BATCH),
   device_class: z.enum(["desktop", "mobile"]).optional(),
   media_manifest: z.array(z.unknown()).optional(),
   tenant_config: z.unknown().optional(),
@@ -1100,8 +1139,69 @@ const SupportInterventionBody = z.object({
 }).strict();
 
 const app = express();
+// Deployment topology: internet → nginx edge (deploy/nginx-edge.conf) → this API, which is only
+// `expose`d inside the compose network. Trusting exactly one hop makes req.ip the real client
+// address (last X-Forwarded-For entry appended by nginx) without trusting client-supplied entries.
+app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json());
+// Sync batches carry up to SYNC_MAX_OUTBOX_BATCH rows; every other route keeps the small default.
+// body-parser skips already-parsed bodies, so the route-specific parser must be registered first.
+app.use("/api/v1/sync/exchange", express.json({ limit: SYNC_EXCHANGE_BODY_LIMIT }));
+app.use(express.json({ limit: DEFAULT_JSON_BODY_LIMIT }));
+
+function rateLimitedResponse(_req: express.Request, res: express.Response): void {
+  res.status(429).json({ error: "rate_limited", message: "Too many requests; retry later." });
+}
+
+/** Brute-force guard on password login (per client IP). */
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rateLimitedResponse,
+});
+
+/** Password re-verification for privileged actions (per authenticated operator). */
+const stepUpRateLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => `user:${(req as AuthRequest).userId ?? "unknown"}`,
+  handler: rateLimitedResponse,
+});
+
+/** Licence-key guessing guard on activation preview/claim (per client IP). */
+const activationRateLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rateLimitedResponse,
+});
+
+/** Public checkout creates tenants from unauthenticated input (per client IP). */
+const publicCheckoutRateLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: rateLimitedResponse,
+});
+
+/** Per activated machine; desktop retries with backoff on 429 (sync RATE_LIMIT class). */
+const deviceRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+    return act ? `device:${act.tenantId}:${act.machineFingerprint}` : `ip:${req.ip ?? "unknown"}`;
+  },
+  handler: rateLimitedResponse,
+});
 app.use(
   cors({
     origin: parseCorsOrigins(CORS_ORIGIN),
@@ -1136,8 +1236,8 @@ app.get("/health", (_req, res) => {
     status: "ok",
     seed_behavior: SEED_BEHAVIOR,
     privileged_guard: {
-      require_step_up: REQUIRE_PRIVILEGED_STEP_UP,
-      require_reason: REQUIRE_PRIVILEGED_REASON,
+      require_step_up: true,
+      require_reason: true,
     },
   });
 });
@@ -1253,7 +1353,7 @@ app.get("/api/v1/ops/observability/slo", authMiddleware, (_req, res) => {
   });
 });
 
-app.post("/api/v1/auth/login", (req, res) => {
+app.post("/api/v1/auth/login", loginRateLimiter, (req, res) => {
   const startedAt = Date.now();
   const parsed = LoginBody.safeParse(req.body);
   if (!parsed.success) {
@@ -1280,10 +1380,7 @@ app.post("/api/v1/auth/login", (req, res) => {
     res.status(401).json({ error: "invalid_credentials" });
     return;
   }
-  const token = jwt.sign({ sub: String(user.id), email: user.email }, JWT_SECRET, {
-    expiresIn: "12h",
-    algorithm: "HS256",
-  });
+  const token = signVendorAdminToken(JWT_SECRET, user);
   observeAuthAttempt(Date.now() - startedAt, true);
   structuredLog("auth_login_success", {
     status: 200,
@@ -1293,24 +1390,65 @@ app.post("/api/v1/auth/login", (req, res) => {
   res.json({
     access_token: token,
     token_type: "Bearer",
-    expires_in: 12 * 3600,
+    expires_in: VENDOR_ADMIN_TTL_SECONDS,
   });
 });
 
+/**
+ * Vendor-console operator authentication. Only accepts vendor_admin tokens (device activation and
+ * step-up tokens are rejected by audience/kind) and re-checks that the operator still exists, so a
+ * deleted operator's unexpired token stops working immediately.
+ */
 function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer ")) {
     res.status(401).json({ error: "missing_token" });
     return;
   }
-  try {
-    const payload = jwt.verify(h.slice(7), JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload;
-    (req as express.Request & { userId?: string }).userId = payload.sub;
-    next();
-  } catch {
+  const claims = verifyVendorAdminToken(JWT_SECRET, h.slice(7));
+  if (!claims) {
     res.status(401).json({ error: "invalid_token" });
+    return;
   }
+  const operator = db.prepare("SELECT id FROM users WHERE id = ?").get(claims.userId) as { id: number } | undefined;
+  if (!operator) {
+    res.status(401).json({ error: "invalid_token" });
+    return;
+  }
+  (req as AuthRequest).userId = String(claims.userId);
+  next();
 }
+
+const StepUpBody = z.object({ password: z.string().min(1).max(1024) }).strict();
+
+/**
+ * Privileged-action step-up: the operator re-enters their password and receives a short-lived
+ * token bound to their user id, sent as X-Step-Up-Token on privileged requests
+ * (see requirePrivilegedGuard). Interim control until TOTP lands (master plan Phase 4.1).
+ */
+app.post("/api/v1/auth/step-up", authMiddleware, stepUpRateLimiter, async (req, res) => {
+  const parsed = StepUpBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const userId = Number((req as AuthRequest).userId);
+  const user = db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(userId) as
+    | { id: number; password_hash: string }
+    | undefined;
+  if (!user || !(await bcrypt.compare(parsed.data.password, user.password_hash))) {
+    structuredLog("auth_step_up_failed", { user_id: userId, status: 401 });
+    res.status(401).json({ error: "invalid_credentials" });
+    return;
+  }
+  const jti = newId("stepup");
+  structuredLog("auth_step_up_success", { user_id: userId, step_up_id: jti });
+  res.json({
+    step_up_token: signStepUpToken(JWT_SECRET, user.id, jti),
+    token_type: "StepUp",
+    expires_in: STEP_UP_TTL_SECONDS,
+  });
+});
 
 type ActivationAuthContext = {
   tenantId: string;
@@ -1327,42 +1465,28 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
     return;
   }
   const token = h.slice(7);
-  try {
-    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }) as jwt.JwtPayload & {
-      kind?: string;
-      tenant_id?: string;
-      license_id?: string;
-      machine_fingerprint?: string;
-    };
-    if (
-      payload.kind !== "activation" ||
-      !payload.tenant_id ||
-      !payload.license_id ||
-      !payload.machine_fingerprint
-    ) {
-      res.status(403).json({ error: "invalid_token" });
-      return;
-    }
-    const row = db
-      .prepare(
-        `SELECT revoked_at FROM machine_activations
-         WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
-      )
-      .get(payload.tenant_id, payload.license_id, payload.machine_fingerprint) as { revoked_at: string | null } | undefined;
-    if (!row || row.revoked_at) {
-      res.status(403).json({ error: "activation_revoked" });
-      return;
-    }
-    (req as express.Request & { activation?: ActivationAuthContext }).activation = {
-      tenantId: payload.tenant_id,
-      licenseId: payload.license_id,
-      machineFingerprint: payload.machine_fingerprint,
-      token,
-    };
-    next();
-  } catch {
+  const claims = verifyDeviceActivationToken(JWT_SECRET, token);
+  if (!claims) {
     res.status(401).json({ error: "invalid_token" });
+    return;
   }
+  const row = db
+    .prepare(
+      `SELECT revoked_at FROM machine_activations
+       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
+    )
+    .get(claims.tenantId, claims.licenseId, claims.machineFingerprint) as { revoked_at: string | null } | undefined;
+  if (!row || row.revoked_at) {
+    res.status(403).json({ error: "activation_revoked" });
+    return;
+  }
+  (req as express.Request & { activation?: ActivationAuthContext }).activation = {
+    tenantId: claims.tenantId,
+    licenseId: claims.licenseId,
+    machineFingerprint: claims.machineFingerprint,
+    token,
+  };
+  next();
 }
 
 // Fan-out implemented in api/src/sync (selectInboundForDevice).
@@ -1485,18 +1609,27 @@ function requirePrivilegedAction(
 ): { ok: true; reasonCode: string | null; auditRecordId: string } | { ok: false; status: number; body: unknown } {
   const reasonCode = req.header("X-Operator-Reason")?.trim() ?? null;
   const stepUpToken = req.header("X-Step-Up-Token")?.trim() ?? null;
-  if (REQUIRE_PRIVILEGED_REASON && (!reasonCode || reasonCode.length < 4)) {
+  if (!reasonCode || reasonCode.length < PRIVILEGED_REASON_MIN_LENGTH) {
     return {
       ok: false,
       status: 403,
       body: { error: "privileged_action_guard_failed", reason: "missing_reason_code" },
     };
   }
-  if (REQUIRE_PRIVILEGED_STEP_UP && (!stepUpToken || stepUpToken.length < 8)) {
+  if (!stepUpToken) {
     return {
       ok: false,
       status: 403,
       body: { error: "privileged_action_guard_failed", reason: "missing_step_up_token" },
+    };
+  }
+  const operatorId = Number((req as AuthRequest).userId);
+  const stepUp = Number.isSafeInteger(operatorId) ? verifyStepUpToken(JWT_SECRET, stepUpToken, operatorId) : null;
+  if (!stepUp) {
+    return {
+      ok: false,
+      status: 403,
+      body: { error: "privileged_action_guard_failed", reason: "invalid_or_expired_step_up_token" },
     };
   }
   const auditRecordId = appendAuditRecord({
@@ -1509,7 +1642,8 @@ function requirePrivilegedAction(
     entity_refs: input.entity_refs,
     payload: {
       ...(input.payload as Record<string, unknown> | undefined),
-      privileged_step_up_present: !!stepUpToken,
+      privileged_step_up_present: true,
+      step_up_id: stepUp.jti,
     },
   });
   return { ok: true, reasonCode, auditRecordId };
@@ -2615,7 +2749,7 @@ function issueLicenseForPaidOrder(input: {
 }
 
 /** Public payment proxy: create SlickPay invoice and return checkout_url. */
-app.post("/api/v1/payments/slickpay/initiate", async (req, res) => {
+app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async (req, res) => {
   if (!slickPayConfigured()) {
     res.status(503).json({
       error: "slickpay_not_configured",
@@ -4014,7 +4148,7 @@ app.get("/api/v1/audit/hardening/readiness", authMiddleware, (_req, res) => {
  * Tenant-runtime sync: push local outbox rows using activation JWT (same secret as `/activation/claim`).
  * Returns a batch matching desktop `ApplySyncBatchInput` for `apply_sync_batch`.
  */
-app.post("/api/v1/sync/exchange", activationAuthMiddleware, async (req, res) => {
+app.post("/api/v1/sync/exchange", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!act) {
     res.status(500).json({ error: "internal_error" });
@@ -4047,7 +4181,7 @@ app.post("/api/v1/sync/exchange", activationAuthMiddleware, async (req, res) => 
   }
 });
 
-app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, async (req, res) => {
+app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!act) {
     res.status(500).json({ error: "internal_error" });
@@ -4087,7 +4221,7 @@ app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, async (req,
   }
 });
 
-app.post("/api/v1/sync/media/presign-get", activationAuthMiddleware, async (req, res) => {
+app.post("/api/v1/sync/media/presign-get", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!act) {
     res.status(500).json({ error: "internal_error" });
@@ -4343,7 +4477,7 @@ function validateLicenseForActivation(
   return { ok: true, lic };
 }
 
-app.post("/api/v1/activation/preview", (req, res) => {
+app.post("/api/v1/activation/preview", activationRateLimiter, (req, res) => {
   const startedAt = Date.now();
   const parsed = ActivationClaimBody.safeParse(req.body);
   if (!parsed.success) {
@@ -4381,7 +4515,7 @@ app.post("/api/v1/activation/preview", (req, res) => {
   res.json(buildActivationSummary(validated.lic, input, resolvedPolicy));
 });
 
-app.post("/api/v1/activation/claim", (req, res) => {
+app.post("/api/v1/activation/claim", activationRateLimiter, (req, res) => {
   const startedAt = Date.now();
   const parsed = ActivationClaimBody.safeParse(req.body);
   if (!parsed.success) {
@@ -4414,15 +4548,10 @@ app.post("/api/v1/activation/claim", (req, res) => {
   }
 
   const resolvedPolicy = resolveActivationPolicy(validated.lic, input.app_version);
-  const tokenPayload = {
-    kind: "activation",
-    tenant_id: validated.lic.tenant_id,
-    license_id: validated.lic.id,
-    machine_fingerprint: input.machine_fingerprint,
-  };
-  const activationToken = jwt.sign(tokenPayload, JWT_SECRET, {
-    expiresIn: "30d",
-    algorithm: "HS256",
+  const activationToken = signDeviceActivationToken(JWT_SECRET, {
+    tenantId: validated.lic.tenant_id,
+    licenseId: validated.lic.id,
+    machineFingerprint: input.machine_fingerprint,
   });
 
   const existing = db
@@ -4476,7 +4605,7 @@ app.post("/api/v1/activation/claim", (req, res) => {
   });
 });
 
-app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, (req, res) => {
+app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });
@@ -4528,7 +4657,7 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, (req, re
   });
 });
 
-app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, (req, res) => {
+app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });
@@ -4549,7 +4678,7 @@ app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, (req, res)
   });
 });
 
-app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware, (req, res) => {
+app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });

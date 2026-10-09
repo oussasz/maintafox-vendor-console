@@ -35,6 +35,8 @@ async function run() {
       DATA_DIR: dataDir,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
+      SEED_ADMIN_EMAIL: "admin@maintafox.systems",
+      ENTITLEMENT_ISSUER_SECRET_V1: "integration_test_entitlement_secret_min_32_chars_0001",
       SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       REQUIRE_PRIVILEGED_REASON: "1",

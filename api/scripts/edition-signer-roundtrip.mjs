@@ -19,7 +19,9 @@ import {
   signEnvelope,
 } from "../dist/entitlement-signer.js";
 
-const secret = "MAINTAFOX_TRUSTED_ISSUER_KEY_V1";
+// The signer has no built-in secret; tests must configure one explicitly.
+const secret = "integration_test_entitlement_secret_min_32_chars_0001";
+process.env.ENTITLEMENT_ISSUER_SECRET_V1 = secret;
 
 const catalog = listFactoryEditionCatalog();
 assert.equal(catalog.length, 4);
