@@ -5,6 +5,8 @@
 - Console: `https://console.maintafox.systems`
 - API: `https://api.maintafox.systems`
 
+**Sync exchange (Postgres mirror + MinIO):** see [`SYNC_EXCHANGE.md`](./SYNC_EXCHANGE.md).
+
 **DNS:** Both hostnames must resolve to your server’s public IP (same A record target).
 
 ---

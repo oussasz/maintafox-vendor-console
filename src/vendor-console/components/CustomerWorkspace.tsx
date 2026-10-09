@@ -24,6 +24,7 @@ import {
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
   isDuplicateTenantSlugMessage,
+  listEditions,
   listTenants,
   rollbackCohortUpdatePolicy,
   rollbackTenantUpdatePolicy,
@@ -31,6 +32,7 @@ import {
   updateTenant,
   updateTenantUpdatePolicy,
   type ControlTenant,
+  type EditionCatalogEntry,
   type EditionId,
 } from "@/services/license-control-service";
 
@@ -55,13 +57,6 @@ const DEFAULT_ADD_FORM: AddTenantForm = {
   update_channel: "stable",
   edition: "core",
 };
-
-const EDITION_OPTIONS: Array<{ value: EditionId; labelKey: string; fallback: string }> = [
-  { value: "core", labelKey: "editions.core", fallback: "Core" },
-  { value: "professional", labelKey: "editions.professional", fallback: "Professional" },
-  { value: "enterprise", labelKey: "editions.enterprise", fallback: "Enterprise" },
-  { value: "development", labelKey: "editions.development", fallback: "Development" },
-];
 
 function compareNullable(left: string | null | undefined, right: string | null | undefined): number {
   return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
@@ -99,6 +94,7 @@ function validateAddTenantForm(form: AddTenantForm): AddTenantErrors {
 export function CustomerWorkspace() {
   const { t } = useTranslation("vendorConsole");
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
+  const [editionCatalog, setEditionCatalog] = useState<EditionCatalogEntry[]>([]);
   const [loadingTenants, setLoadingTenants] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
   const [tenantSuccess, setTenantSuccess] = useState<string | null>(null);
@@ -141,8 +137,9 @@ export function CustomerWorkspace() {
     setLoadingTenants(true);
     setTenantError(null);
     try {
-      const rows = await listTenants();
+      const [rows, editions] = await Promise.all([listTenants(), listEditions()]);
       setTenants(rows);
+      setEditionCatalog(editions);
       setTenantIds(rows.map((r) => r.id).join(", "));
       if (rows.length === 0) {
         setSelectedTenantId("");
@@ -538,7 +535,9 @@ export function CustomerWorkspace() {
                     <TableCell>{tenant.display_name}</TableCell>
                     <TableCell className="font-mono text-xs">{tenant.id}</TableCell>
                     <TableCell>
-                      {t(`editions.${tenant.edition ?? "core"}`, tenant.edition ?? "core")}
+                      {editionCatalog.find((e) => e.id === (tenant.edition ?? "core"))?.label ??
+                        tenant.edition ??
+                        "core"}
                     </TableCell>
                     <TableCell>{tenant.rollout_cohort ?? "—"}</TableCell>
                     <TableCell>{tenant.update_channel ?? "stable"}</TableCell>
@@ -606,7 +605,11 @@ export function CustomerWorkspace() {
               <Label htmlFor="tenant-edition">{t("customers.edition", "Edition")}</Label>
               <Input
                 id="tenant-edition"
-                value={t(`editions.${selectedTenant.edition ?? "core"}`, selectedTenant.edition ?? "core")}
+                value={
+                  editionCatalog.find((e) => e.id === (selectedTenant.edition ?? "core"))?.label ??
+                  selectedTenant.edition ??
+                  "core"
+                }
                 className="mt-1"
                 readOnly
               />
@@ -1059,9 +1062,9 @@ export function CustomerWorkspace() {
                     }))
                   }
                 >
-                  {EDITION_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {t(opt.labelKey, opt.fallback)}
+                  {editionCatalog.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>

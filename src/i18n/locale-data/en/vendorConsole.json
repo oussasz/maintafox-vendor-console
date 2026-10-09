@@ -12,6 +12,7 @@
     "overview": "Overview",
     "customers": "Customers",
     "entitlements": "Entitlements",
+    "editions": "Editions",
     "machines": "Machines",
     "sync": "Sync operations",
     "rollouts": "Rollouts",
@@ -125,7 +126,49 @@
     "enterprise": "Enterprise",
     "development": "Development",
     "modulesTitle": "Edition modules",
-    "modulesHint": "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope."
+    "modulesHint": "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope.",
+    "pageTitle": "Editions",
+    "pageBody": "Manage license presets and module capability maps. Tenants pick an edition; newly issued keys stamp the current map.",
+    "create": "New edition",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "reissueBanner": "Changes apply to keys issued after save. Re-issue a license (or re-activate) to refresh already-activated machines.",
+    "empty": "No editions in catalog.",
+    "system": "System",
+    "custom": "Custom",
+    "columns": {
+      "id": "Id",
+      "label": "Label",
+      "type": "Type",
+      "modules": "Enabled modules",
+      "version": "Version",
+      "actions": "Actions"
+    },
+    "createTitle": "Create edition",
+    "editTitle": "Edit edition",
+    "editorHint": "Send the full module map on save. System edition ids cannot be renamed or deleted.",
+    "fields": {
+      "id": "Edition id",
+      "label": "Label",
+      "cloneFrom": "Start from"
+    },
+    "groups": {
+      "operations": "Operations",
+      "planning": "Planning",
+      "compliance": "Compliance",
+      "analytics": "Analytics",
+      "control": "Control plane"
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "created": "Edition {{id}} created.",
+    "updated": "Edition {{id}} saved. Re-issue keys to refresh activated machines.",
+    "deleted": "Edition {{id}} deleted.",
+    "deleteTitle": "Delete edition",
+    "deleteBody": "Delete {{id}}? This fails if any tenant (including inactive) still uses it.",
+    "deleting": "Deleting…",
+    "confirmDelete": "Delete"
   },
   "machines": {
     "title": "Machines & activation",

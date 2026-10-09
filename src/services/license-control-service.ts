@@ -2,7 +2,41 @@ import { z } from "zod";
 
 import { getAccessToken } from "@/lib/auth-token";
 
-const EditionIdSchema = z.enum(["core", "professional", "enterprise", "development"]);
+/** System + custom edition ids from the persisted catalog. */
+const EditionIdSchema = z.string().min(2).max(64);
+
+const MODULE_CAPABILITY_KEYS = [
+  "equipment",
+  "requests",
+  "work_orders",
+  "inventory",
+  "personnel",
+  "organization",
+  "reference",
+  "planning",
+  "pm",
+  "permits",
+  "inspections",
+  "training",
+  "reports",
+  "rams",
+  "finance",
+  "sync",
+  "erp",
+] as const;
+
+export type ModuleCapabilityKey = (typeof MODULE_CAPABILITY_KEYS)[number];
+export { MODULE_CAPABILITY_KEYS };
+
+const CapabilitiesMapSchema = z
+  .object(
+    Object.fromEntries(MODULE_CAPABILITY_KEYS.map((k) => [k, z.boolean()])) as {
+      [K in ModuleCapabilityKey]: z.ZodBoolean;
+    },
+  )
+  .strict();
+
+export type CapabilitiesMap = z.infer<typeof CapabilitiesMapSchema>;
 
 const TenantSchema = z.object({
   id: z.string(),
@@ -27,7 +61,11 @@ const TenantSchema = z.object({
 const EditionCatalogEntrySchema = z.object({
   id: EditionIdSchema,
   label: z.string(),
-  capabilities: z.record(z.boolean()),
+  capabilities: CapabilitiesMapSchema,
+  is_system: z.boolean(),
+  row_version: z.number(),
+  updated_at: z.string().nullable().optional(),
+  updated_by: z.string().nullable().optional(),
 });
 
 const EditionsResponseSchema = z.object({
@@ -206,6 +244,15 @@ export async function parseControlPlaneErrorResponse(res: Response): Promise<str
     if (code === "license_revoked") {
       return msg || "This license key is revoked and cannot be updated.";
     }
+    if (code === "edition_version_conflict") {
+      return msg || "This edition was modified by another operator. Refresh and try again.";
+    }
+    if (code === "edition_in_use") {
+      return msg || "This edition is still assigned to one or more tenants (including inactive).";
+    }
+    if (code === "edition_id_taken") {
+      return msg || "An edition with this id already exists.";
+    }
     if (msg || detailStr) {
       return msg || detailStr;
     }
@@ -266,6 +313,46 @@ export async function listEditions(): Promise<EditionCatalogEntry[]> {
   const res = await authFetch("/api/v1/editions");
   await throwIfNotOk(res);
   return EditionsResponseSchema.parse(await res.json()).items;
+}
+
+export async function createEdition(input: {
+  id: string;
+  label: string;
+  capabilities: CapabilitiesMap;
+  clone_from?: string;
+}): Promise<EditionCatalogEntry> {
+  const res = await authFetch("/api/v1/editions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  await throwIfNotOk(res);
+  return EditionCatalogEntrySchema.parse(await res.json());
+}
+
+export async function updateEdition(
+  editionId: string,
+  input: {
+    label?: string;
+    capabilities: CapabilitiesMap;
+    expected_row_version: number;
+  },
+): Promise<EditionCatalogEntry> {
+  const res = await authFetch(`/api/v1/editions/${encodeURIComponent(editionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+    headers: {
+      "If-Match": String(input.expected_row_version),
+    },
+  });
+  await throwIfNotOk(res);
+  return EditionCatalogEntrySchema.parse(await res.json());
+}
+
+export async function deleteEdition(editionId: string): Promise<void> {
+  const res = await authFetch(`/api/v1/editions/${encodeURIComponent(editionId)}`, {
+    method: "DELETE",
+  });
+  await throwIfNotOk(res);
 }
 
 export async function updateTenant(

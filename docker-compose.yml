@@ -1,10 +1,66 @@
 # Full stack: edge (nginx) + vendor console SPA + control API (JWT).
+# Optional: Postgres sync mirror + MinIO TenantMedia (DATABASE_URL / S3_*).
 #
 # DNS: console.maintafox.systems and api.maintafox.systems → this server's public IP.
 # First deploy: copy .env.example to .env and set JWT_SECRET + SEED_ADMIN_PASSWORD.
 # TLS: issue certs on the host (certbot) and mount /etc/letsencrypt into edge (see deploy/VPS-COMMANDS.md).
+#
+# Memory caps are soft safety bounds for a ~4 GiB VPS — well above normal RSS so they
+# do not affect healthy operation; they only stop a runaway process from filling the host.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: maintafox-sync-postgres
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-maintafox}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maintafox_sync_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-maintafox_sync}
+    volumes:
+      - sync_postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maintafox -d maintafox_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: maintafox-minio
+    restart: unless-stopped
+    mem_limit: 512m
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+    volumes:
+      - sync_minio_data:/data
+    expose:
+      - "9000"
+      - "9001"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-01-17T23-25-50Z
+    container_name: maintafox-minio-init
+    mem_limit: 128m
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb -p local/$${S3_BUCKET} || true;
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+      S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
+
   api:
     image: maintafox-control-api:local
     pull_policy: never
@@ -13,6 +69,7 @@ services:
       dockerfile: api/Dockerfile
     container_name: maintafox-control-api
     restart: unless-stopped
+    mem_limit: 512m
     environment:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://console.maintafox.systems}
@@ -22,10 +79,29 @@ services:
       PORT: "3000"
       REQUIRE_PRIVILEGED_STEP_UP: ${REQUIRE_PRIVILEGED_STEP_UP:-0}
       REQUIRE_PRIVILEGED_REASON: ${REQUIRE_PRIVILEGED_REASON:-0}
+      DATABASE_URL: ${DATABASE_URL:-postgres://maintafox:maintafox_sync_dev@postgres:5432/maintafox_sync}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+      S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-prod}
+      SLICKPAY_PUBLIC_KEY: ${SLICKPAY_PUBLIC_KEY:-}
+      SLICKPAY_SECRET_KEY: ${SLICKPAY_SECRET_KEY:-}
+      SLICKPAY_WEBHOOK_SECRET: ${SLICKPAY_WEBHOOK_SECRET:-}
+      SLICKPAY_API_BASE_URL: ${SLICKPAY_API_BASE_URL:-https://prodapi.slick-pay.com}
+      SLICKPAY_WEBHOOK_URL: ${SLICKPAY_WEBHOOK_URL:-https://api.maintafox.systems/api/v1/webhooks/slickpay}
+      SLICKPAY_DEFAULT_RETURN_URL: ${SLICKPAY_DEFAULT_RETURN_URL:-https://console.maintafox.systems/vendor-console/entitlements}
+      SLICKPAY_EXTRA_SLOT_PRICE: ${SLICKPAY_EXTRA_SLOT_PRICE:-0}
     volumes:
       - control_api_data:/data
     expose:
       - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   vendor-console:
     pull_policy: never
@@ -39,6 +115,7 @@ services:
     image: maintafox-vendor-console:local
     container_name: maintafox-vendor-console
     restart: unless-stopped
+    mem_limit: 128m
     expose:
       - "80"
 
@@ -46,6 +123,7 @@ services:
     image: nginx:1.27-alpine
     container_name: maintafox-edge
     restart: unless-stopped
+    mem_limit: 128m
     ports:
       - "${EDGE_HTTP_PORT:-80}:80"
       - "${EDGE_HTTPS_PORT:-443}:443"
@@ -59,3 +137,5 @@ services:
 
 volumes:
   control_api_data:
+  sync_postgres_data:
+  sync_minio_data:

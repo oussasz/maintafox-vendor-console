@@ -14,19 +14,24 @@ vi.mock("@/services/customer-entitlement-machine-contracts", () => ({
 
 vi.mock("@/services/license-control-service", () => ({
   listTenants: vi.fn(),
+  listEditions: vi.fn(),
   createTenant: vi.fn(),
+  updateTenant: vi.fn(),
+  deleteTenant: vi.fn(),
   getTenantUpdatePolicy: vi.fn(),
   getCohortUpdatePolicy: vi.fn(),
   updateTenantUpdatePolicy: vi.fn(),
   rollbackTenantUpdatePolicy: vi.fn(),
   updateCohortUpdatePolicy: vi.fn(),
   rollbackCohortUpdatePolicy: vi.fn(),
+  isDuplicateTenantSlugMessage: vi.fn(() => false),
 }));
 
 import {
   createTenant,
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
+  listEditions,
   listTenants,
   rollbackCohortUpdatePolicy,
   rollbackTenantUpdatePolicy,
@@ -34,6 +39,32 @@ import {
   updateTenantUpdatePolicy,
 } from "@/services/license-control-service";
 import { CustomerWorkspace } from "../CustomerWorkspace";
+
+const coreEdition = {
+  id: "core",
+  label: "Core",
+  is_system: true,
+  row_version: 1,
+  capabilities: {
+    equipment: true,
+    requests: true,
+    work_orders: true,
+    inventory: true,
+    personnel: true,
+    organization: true,
+    reference: true,
+    planning: false,
+    pm: false,
+    permits: false,
+    inspections: false,
+    training: false,
+    reports: false,
+    rams: false,
+    finance: false,
+    sync: false,
+    erp: false,
+  },
+};
 
 const tenantOne = {
   id: "ten-acme",
@@ -103,6 +134,7 @@ describe("CustomerWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPolicyReads();
+    vi.mocked(listEditions).mockResolvedValue([coreEdition]);
   });
 
   it("renders API-backed list and allows row selection", async () => {
@@ -157,6 +189,7 @@ describe("CustomerWorkspace", () => {
         display_name: "Beta Industries",
         rollout_cohort: "stable-main",
         update_channel: "stable",
+        edition: "core",
       });
     });
     expect(await screen.findByText('Customer "Beta Industries" was added successfully.')).toBeInTheDocument();

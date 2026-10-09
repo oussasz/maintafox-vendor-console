@@ -10,6 +10,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/services/license-control-service", () => ({
   listTenants: vi.fn(),
+  listEditions: vi.fn(),
   listTenantLicenses: vi.fn(),
   issueLicense: vi.fn(),
   revokeLicense: vi.fn(),
@@ -18,11 +19,38 @@ vi.mock("@/services/license-control-service", () => ({
 
 import {
   issueLicense,
+  listEditions,
   listTenantLicenses,
   listTenants,
   revokeLicense,
 } from "@/services/license-control-service";
 import { EntitlementLifecyclePanel } from "../EntitlementLifecyclePanel";
+
+const coreEdition = {
+  id: "core",
+  label: "Core",
+  is_system: true,
+  row_version: 1,
+  capabilities: {
+    equipment: true,
+    requests: true,
+    work_orders: true,
+    inventory: true,
+    personnel: true,
+    organization: true,
+    reference: true,
+    planning: false,
+    pm: false,
+    permits: false,
+    inspections: false,
+    training: false,
+    reports: false,
+    rams: false,
+    finance: false,
+    sync: false,
+    erp: false,
+  },
+};
 
 const tenant = {
   id: "ten-acme",
@@ -48,6 +76,7 @@ describe("EntitlementLifecyclePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listTenants).mockResolvedValue([tenant]);
+    vi.mocked(listEditions).mockResolvedValue([coreEdition]);
     vi.mocked(listTenantLicenses).mockResolvedValue([activeLicense]);
     vi.mocked(issueLicense).mockResolvedValue(activeLicense);
     vi.mocked(revokeLicense).mockResolvedValue();

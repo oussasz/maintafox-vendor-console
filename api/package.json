@@ -12,13 +12,17 @@
     "start": "node dist/index.js",
     "dev": "node --watch dist/index.js",
     "test:license-lifecycle": "pnpm run build && node scripts/license-issuance-lifecycle.integration.mjs",
+    "test:edition-catalog": "pnpm run build && node scripts/edition-catalog-store.mjs && node scripts/edition-catalog.integration.mjs",
     "test:legacy-tenant-schema": "pnpm run build && node scripts/legacy-tenant-schema.integration.mjs",
     "test:force-update": "pnpm run build && node scripts/force-update-governance.integration.mjs",
+    "test:sync-exchange-ab": "pnpm run build && node scripts/sync-exchange-ab.integration.mjs",
     "baseline:sprint9": "node scripts/sprint9-slo-baseline.mjs",
     "test:observability": "pnpm run build && node scripts/sprint9-observability.integration.mjs",
     "uat:sprint10": "node scripts/sprint10-uat-real-infra.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1116.0",
+    "@aws-sdk/s3-request-presigner": "^3.1116.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.7.0",
     "cors": "^2.8.5",
@@ -26,6 +30,7 @@
     "express": "^4.21.0",
     "helmet": "^7.2.0",
     "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -35,6 +40,7 @@
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
     "typescript": "^5.7.0"
   }
 }

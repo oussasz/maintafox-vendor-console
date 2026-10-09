@@ -23,6 +23,11 @@ const VendorConsoleEntitlementsPage = lazy(() =>
     default: m.VendorConsoleEntitlementsPage,
   })),
 );
+const VendorConsoleEditionsPage = lazy(() =>
+  import("@/vendor-console/pages/VendorConsoleEditionsPage").then((m) => ({
+    default: m.VendorConsoleEditionsPage,
+  })),
+);
 const VendorConsoleMachinesPage = lazy(() =>
   import("@/vendor-console/pages/VendorConsoleMachinesPage").then((m) => ({
     default: m.VendorConsoleMachinesPage,
@@ -105,6 +110,11 @@ const routes: RouteObject[] = [
                     path: "entitlements",
                     element: <PermissionRoute permission="entitlement.manage" />,
                     children: [{ index: true, element: <VendorConsoleEntitlementsPage /> }],
+                  },
+                  {
+                    path: "editions",
+                    element: <PermissionRoute permission="entitlement.manage" />,
+                    children: [{ index: true, element: <VendorConsoleEditionsPage /> }],
                   },
                   {
                     path: "machines",

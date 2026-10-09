@@ -7,9 +7,8 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   capabilitiesJsonForEdition,
   featureFlagsJsonForEdition,
-  parseEditionId,
+  isSystemEditionId,
   policyJsonForEdition,
-  type EditionId,
 } from "./edition-catalog.js";
 
 export const ENTITLEMENT_SIGNATURE_ALG_V1 = "sha256:issuer-key-v1";
@@ -85,7 +84,8 @@ export function capabilitiesDigest(capabilitiesJson: string): string {
 }
 
 export type BuildEnvelopeInput = {
-  edition: EditionId | string;
+  /** Catalog edition id (system or custom). Used as envelope `tier`. */
+  edition: string;
   lineageVersion: number;
   previousEnvelopeId?: string | null;
   channel: string;
@@ -95,10 +95,24 @@ export type BuildEnvelopeInput = {
   validUntil: string;
   offlineGraceUntil: string;
   state?: string;
+  /**
+   * Snapshot from edition_catalog at sign time (required for custom editions).
+   * When omitted, factory defaults are used for system editions only (scripts/tests).
+   */
+  capabilities_json?: string;
 };
 
 export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): EntitlementEnvelopePayload {
-  const edition = parseEditionId(input.edition, "core");
+  const tier = input.edition.trim();
+  let capabilitiesJson = input.capabilities_json;
+  if (!capabilitiesJson) {
+    if (!isSystemEditionId(tier)) {
+      throw new Error(
+        `capabilities_json is required when signing non-system edition '${tier}'`,
+      );
+    }
+    capabilitiesJson = capabilitiesJsonForEdition(tier);
+  }
   const now = input.issuedAt ?? new Date().toISOString();
   const unsigned: UnsignedEnvelope = {
     envelope_id: `env_${randomBytes(8).toString("hex")}`,
@@ -107,12 +121,12 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
     issuer: ENTITLEMENT_ISSUER,
     key_id: ENTITLEMENT_KEY_ID_V1,
     signature_alg: ENTITLEMENT_SIGNATURE_ALG_V1,
-    tier: edition,
+    tier,
     state: input.state ?? "active",
     channel: input.channel,
     machine_slots: input.machineSlots,
     feature_flags_json: featureFlagsJsonForEdition(),
-    capabilities_json: capabilitiesJsonForEdition(edition),
+    capabilities_json: capabilitiesJson,
     policy_json: policyJsonForEdition(),
     issued_at: now,
     valid_from: input.validFrom ?? now,

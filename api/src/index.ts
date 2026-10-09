@@ -9,23 +9,44 @@ import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import jwt from "jsonwebtoken";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
 import {
-  EDITION_IDS,
-  listEditionCatalog,
+  CapabilitiesMapSchema,
+  EditionSlugSchema,
+  SYSTEM_EDITION_IDS,
   parseEditionId,
   type EditionId,
 } from "./edition-catalog.js";
+import {
+  EditionCatalogError,
+  createEdition,
+  deleteEdition,
+  editionExists,
+  ensureEditionCatalogSchema,
+  ensureSystemEditionsPresent,
+  getEdition,
+  listEditions,
+  loadCapabilitiesJsonForSign,
+  repairAllEditionCapabilities,
+  seedEditionCatalogIfEmpty,
+  updateEdition,
+} from "./edition-catalog-store.js";
 import {
   addHoursIso,
   buildSignedEntitlementEnvelope,
   capabilitiesDigest,
   type EntitlementEnvelopePayload,
 } from "./entitlement-signer.js";
+import {
+  assertTenantOwnsObjectKey,
+  buildTenantMediaObjectKey,
+  TenantMediaObjectStore,
+} from "./storage/object-store.js";
+import { openSyncStore, runSyncExchange, type SyncStore } from "./sync/index.js";
 
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
 if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
@@ -75,6 +96,7 @@ const VENDOR_PERMISSIONS = [
 
 mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(DB_PATH);
+db.pragma("foreign_keys = ON");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -241,36 +263,8 @@ db.exec(`
   );
 `);
 
-// Sync exchange schema — dedicated bootstrap so upgraded SQLite files always get these tables.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tenant_sync_state (
-    tenant_id TEXT PRIMARY KEY,
-    checkpoint_seq INTEGER NOT NULL DEFAULT 0,
-    checkpoint_token TEXT NOT NULL,
-    updated_at_rfc3339 TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sync_mirror_ingress (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tenant_id TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_sync_id TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    row_version INTEGER NOT NULL,
-    payload_json TEXT NOT NULL,
-    payload_hash TEXT NOT NULL,
-    machine_fingerprint TEXT NOT NULL,
-    received_at_rfc3339 TEXT NOT NULL,
-    UNIQUE(tenant_id, idempotency_key)
-  );
-`);
-console.log(
-  JSON.stringify({
-    at: new Date().toISOString(),
-    event: "sync_exchange_schema_ensured",
-    tables: ["tenant_sync_state", "sync_mirror_ingress"],
-  }),
-);
+// Sync exchange schema is owned by SyncStore (SQLite fallback or Postgres via DATABASE_URL).
+
 
 function ensureColumn(table: string, column: string, alterSql: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -320,7 +314,38 @@ ensureColumn(
   "ALTER TABLE tenants ADD COLUMN entitlement_lineage INTEGER NOT NULL DEFAULT 0",
 );
 
-const EditionIdSchema = z.enum(EDITION_IDS);
+ensureEditionCatalogSchema(db);
+seedEditionCatalogIfEmpty(db);
+ensureSystemEditionsPresent(db);
+repairAllEditionCapabilities(db);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_orders (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    license_id TEXT NULL,
+    plan TEXT NOT NULL,
+    amount REAL NOT NULL,
+    extra_slots INTEGER NOT NULL DEFAULT 0,
+    total_amount REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'DZD',
+    status TEXT NOT NULL DEFAULT 'pending',
+    slickpay_invoice_id TEXT NULL,
+    slickpay_payment_url TEXT NULL,
+    user_info_json TEXT NULL,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    paid_at TEXT NULL,
+    error_message TEXT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(tenant_id) REFERENCES tenants(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id);
+  CREATE INDEX IF NOT EXISTS idx_payment_orders_invoice ON payment_orders(slickpay_invoice_id);
+`);
+
+/** Any catalog edition id (system or custom). Existence checked against DB on write. */
+const EditionIdSchema = z.string().min(2).max(64);
 
 type TenantInsertInput = {
   id: string;
@@ -374,6 +399,9 @@ function isTenantSlugUniqueViolation(err: unknown): boolean {
 }
 
 function tenantWriteFailure(err: unknown): { status: number; body: { error: string; message: string } } {
+  if (err instanceof EditionCatalogError && err.code === "edition_not_found") {
+    return { status: 400, body: { error: "edition_not_found", message: err.message } };
+  }
   if (isTenantSlugUniqueViolation(err)) {
     return { status: 409, body: { error: "tenant_conflict", message: "This tenant slug is already taken." } };
   }
@@ -385,7 +413,11 @@ function insertTenantRow(input: TenantInsertInput): void {
   const cols = tenantTableColumns();
   const now = new Date().toISOString();
   const updateChannel = input.update_channel ?? "stable";
-  const edition = parseEditionId(input.edition, "core");
+  const editionRaw = input.edition?.trim() || "core";
+  if (!editionExists(db, editionRaw)) {
+    throw new EditionCatalogError("edition_not_found", `Edition '${editionRaw}' not found`);
+  }
+  const edition = editionRaw;
   const values: Record<string, unknown> = {
     id: input.id,
     slug: input.slug,
@@ -432,10 +464,13 @@ function updateTenantRow(
     display_name: string;
     rollout_cohort: string;
     update_channel: string;
-    edition: EditionId;
+    edition: string;
     bumpEntitlementLineage?: boolean;
   },
 ): void {
+  if (!editionExists(db, input.edition)) {
+    throw new EditionCatalogError("edition_not_found", `Edition '${input.edition}' not found`);
+  }
   const cols = tenantTableColumns();
   const assignments = ["slug = ?", "display_name = ?", "rollout_cohort = ?", "update_channel = ?"];
   const params: unknown[] = [input.slug, input.display_name, input.rollout_cohort, input.update_channel];
@@ -928,6 +963,49 @@ const RevokeLicenseBody = z.object({
   reason: z.string().min(2).max(256).optional(),
 }).strict();
 
+const SlickPayUserInfoSchema = z
+  .object({
+    firstname: z.string().min(1).max(128).optional(),
+    lastname: z.string().min(1).max(128).optional(),
+    phone: z.string().min(6).max(32).optional(),
+    email: z.string().email().optional(),
+    address: z.string().min(1).max(256).optional(),
+    contact_id: z.string().uuid().optional(),
+    /** Company / organization aliases accepted from the public website. */
+    company: z.string().min(2).max(128).optional(),
+    company_name: z.string().min(2).max(128).optional(),
+    entreprise: z.string().min(2).max(128).optional(),
+    organization: z.string().min(2).max(128).optional(),
+    business_name: z.string().min(2).max(128).optional(),
+    slug: z
+      .string()
+      .min(2)
+      .max(64)
+      .regex(/^[a-z0-9-]+$/)
+      .optional(),
+  })
+  .passthrough();
+
+const SlickPayInitiateBody = z
+  .object({
+    plan: z.string().trim().min(1).max(64),
+    amount: z.number().nonnegative(),
+    tenant_id: z.string().min(3).optional(),
+    extra_slots: z.number().int().min(0).max(1000).optional().default(0),
+    user_info: SlickPayUserInfoSchema.optional(),
+    return_url: z.string().url().optional(),
+  })
+  .strict()
+  .superRefine((body, ctx) => {
+    if (!body.tenant_id && !body.user_info) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["user_info"],
+        message: "user_info is required when tenant_id is omitted (new customer checkout)",
+      });
+    }
+  });
+
 const ActivationClaimBody = z.object({
   license_key: z.string().min(8),
   machine_fingerprint: z.string().min(8).max(256),
@@ -935,7 +1013,7 @@ const ActivationClaimBody = z.object({
   app_version: z.string().max(32).optional(),
 }).strict();
 
-/** Desktop sync push — fields required to acknowledge rows on the control plane. */
+/** Desktop sync push — additive fields allowed (device_class, media_manifest, tenant_config). */
 const SyncExchangeOutboxItem = z
   .object({
     idempotency_key: z.string().min(1).max(256),
@@ -948,12 +1026,28 @@ const SyncExchangeOutboxItem = z
   })
   .strict();
 
-const SyncExchangeBody = z
+const SyncExchangeBody = z.object({
+  protocol_version: z.literal("v1"),
+  checkpoint_token: z.string().nullable().optional(),
+  idempotency_key: z.string().min(8).max(128),
+  outbox_batch: z.array(SyncExchangeOutboxItem),
+  device_class: z.enum(["desktop", "mobile"]).optional(),
+  media_manifest: z.array(z.unknown()).optional(),
+  tenant_config: z.unknown().optional(),
+});
+
+const SyncMediaPresignPutBody = z
   .object({
-    protocol_version: z.literal("v1"),
-    checkpoint_token: z.string().nullable().optional(),
-    idempotency_key: z.string().min(8).max(128),
-    outbox_batch: z.array(SyncExchangeOutboxItem),
+    parent_entity_type: z.string().min(1).max(128),
+    parent_entity_sync_id: z.string().min(1).max(256),
+    content_sha256: z.string().min(64).max(80),
+    object_key: z.string().min(1).max(1024).optional(),
+  })
+  .strict();
+
+const SyncMediaPresignGetBody = z
+  .object({
+    object_key: z.string().min(1).max(1024),
   })
   .strict();
 
@@ -1222,6 +1316,8 @@ type ActivationAuthContext = {
   tenantId: string;
   licenseId: string;
   machineFingerprint: string;
+  /** Raw bearer token (echoed by policy-refresh for desktop claim schema). */
+  token: string;
 };
 
 function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
@@ -1261,6 +1357,7 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
       tenantId: payload.tenant_id,
       licenseId: payload.license_id,
       machineFingerprint: payload.machine_fingerprint,
+      token,
     };
     next();
   } catch {
@@ -1268,29 +1365,8 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
   }
 }
 
-type SyncInboundFanOutItem = {
-  entity_type: string;
-  entity_sync_id: string;
-  operation: "create" | "update" | "delete" | "upsert" | "archive";
-  row_version: number;
-  payload_json: string;
-};
+// Fan-out implemented in api/src/sync (selectInboundForDevice).
 
-/**
- * TODO(Fan-out): Populate `inbound_items` from the tenant mirror / multi-writer queue so this device
- * receives commits from other machines and vendor-originated updates. Planned behavior: select rows
- * not yet delivered to `machineFingerprint`, ordered by checkpoint/sequence, cap batch size, respect
- * idempotency with desktop `sync_inbox`. May read from `sync_mirror_ingress` (cross-machine) and
- * future `tenant_mirror_*` tables; must return shapes compatible with desktop `ApplySyncBatchInput.inbound_items`.
- */
-function stubInboundItemsForSyncExchange(_ctx: {
-  tenantId: string;
-  machineFingerprint: string;
-  serverBatchId: string;
-  nextCheckpoint: string;
-}): SyncInboundFanOutItem[] {
-  return [];
-}
 
 function sendValidationError(
   res: express.Response,
@@ -1443,8 +1519,144 @@ app.get("/api/v1/me/permissions", authMiddleware, (_req, res) => {
   res.json(VENDOR_PERMISSIONS);
 });
 
+const CreateEditionBody = z
+  .object({
+    id: EditionSlugSchema,
+    label: z.string().trim().min(2).max(128),
+    capabilities: CapabilitiesMapSchema,
+    clone_from: EditionIdSchema.optional(),
+  })
+  .strict();
+
+const UpdateEditionBody = z
+  .object({
+    label: z.string().trim().min(2).max(128).optional(),
+    capabilities: CapabilitiesMapSchema,
+    expected_row_version: z.number().int().min(1),
+  })
+  .strict();
+
+function editionCatalogHttpError(err: unknown, res: express.Response): boolean {
+  if (!(err instanceof EditionCatalogError)) return false;
+  const status =
+    err.code === "edition_not_found"
+      ? 404
+      : err.code === "edition_version_conflict" ||
+          err.code === "edition_in_use" ||
+          err.code === "edition_id_taken"
+        ? 409
+        : err.code === "edition_system_immutable" || err.code === "edition_id_invalid"
+          ? 400
+          : err.code === "catalog_schema_invalid"
+            ? 500
+            : 400;
+  res.status(status).json({ error: err.code, message: err.message, ...(err.details ?? {}) });
+  return true;
+}
+
 app.get("/api/v1/editions", authMiddleware, (_req, res) => {
-  res.json({ items: listEditionCatalog() });
+  res.json({ items: listEditions(db) });
+});
+
+app.post("/api/v1/editions", authMiddleware, (req, res) => {
+  const parsed = CreateEditionBody.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  if (SYSTEM_EDITION_IDS.includes(parsed.data.id as (typeof SYSTEM_EDITION_IDS)[number])) {
+    res.status(400).json({
+      error: "edition_system_immutable",
+      message: "Cannot create an edition that overwrites a system id; clone with a different id.",
+    });
+    return;
+  }
+  try {
+    let capabilities = parsed.data.capabilities;
+    if (parsed.data.clone_from) {
+      const source = getEdition(db, parsed.data.clone_from);
+      if (!source) {
+        res.status(400).json({ error: "edition_not_found", message: `clone_from '${parsed.data.clone_from}' not found` });
+        return;
+      }
+      // Body capabilities still required (strict full map); clone_from is a UI convenience hint only when equal.
+      void source;
+      capabilities = parsed.data.capabilities;
+    }
+    const created = createEdition(db, {
+      id: parsed.data.id,
+      label: parsed.data.label,
+      capabilities,
+      actorId: resolveActorId(req),
+    });
+    appendAuditRecord({
+      actor_id: resolveActorId(req),
+      action_code: "edition_catalog_create",
+      action_category: "entitlement",
+      correlation_id: `edition-create-${created.id}`,
+      payload: { edition_id: created.id, label: created.label },
+    });
+    res.status(201).json(created);
+  } catch (err) {
+    if (editionCatalogHttpError(err, res)) return;
+    throw err;
+  }
+});
+
+app.patch("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
+  const editionId = req.params.editionId;
+  const parsed = UpdateEditionBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const ifMatch = req.header("if-match");
+  let expected = parsed.data.expected_row_version;
+  if (ifMatch) {
+    const n = Number.parseInt(ifMatch.replace(/"/g, ""), 10);
+    if (Number.isFinite(n)) expected = n;
+  }
+  try {
+    const updated = updateEdition(db, editionId, {
+      label: parsed.data.label,
+      capabilities: parsed.data.capabilities,
+      expected_row_version: expected,
+      actorId: resolveActorId(req),
+    });
+    appendAuditRecord({
+      actor_id: resolveActorId(req),
+      action_code: "edition_catalog_update",
+      action_category: "entitlement",
+      correlation_id: `edition-update-${editionId}-${updated.row_version}`,
+      payload: {
+        edition_id: editionId,
+        row_version: updated.row_version,
+        label: updated.label,
+      },
+    });
+    res.json(updated);
+  } catch (err) {
+    if (editionCatalogHttpError(err, res)) return;
+    throw err;
+  }
+});
+
+app.delete("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
+  const editionId = req.params.editionId;
+  try {
+    deleteEdition(db, editionId);
+    appendAuditRecord({
+      actor_id: resolveActorId(req),
+      action_code: "edition_catalog_delete",
+      action_category: "entitlement",
+      correlation_id: `edition-delete-${editionId}`,
+      payload: { edition_id: editionId },
+    });
+    res.status(204).send();
+  } catch (err) {
+    if (editionCatalogHttpError(err, res)) return;
+    throw err;
+  }
 });
 
 app.get("/api/v1/tenants", authMiddleware, (req, res) => {
@@ -1500,7 +1712,10 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
   runIdempotent(req, res, () => {
     const input = parsed.data;
     const id = newId("tenant");
-    const edition = parseEditionId(input.edition, "core");
+    const edition = (input.edition?.trim() || "core");
+    if (!editionExists(db, edition)) {
+      return { status: 400, body: { error: "edition_not_found", message: `Edition '${edition}' not found` } };
+    }
     try {
       insertTenantRow({
         id,
@@ -1574,8 +1789,12 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   const nextDisplay = input.display_name ?? row.display_name;
   const nextCohort = input.rollout_cohort ?? row.rollout_cohort;
   const nextChannel = input.update_channel ?? row.update_channel;
-  const prevEdition = parseEditionId(row.edition, "core");
-  const nextEdition = input.edition != null ? parseEditionId(input.edition, "core") : prevEdition;
+  const prevEdition = row.edition || "core";
+  const nextEdition = input.edition != null ? input.edition.trim() : prevEdition;
+  if (!editionExists(db, nextEdition)) {
+    res.status(400).json({ error: "edition_not_found", message: `Edition '${nextEdition}' not found` });
+    return;
+  }
   const editionChanged = nextEdition !== prevEdition;
   try {
     updateTenantRow(tenantId, {
@@ -1619,6 +1838,13 @@ app.delete("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
     db.prepare(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`).run(tenantId);
     db.prepare(`DELETE FROM tenant_sync_state WHERE tenant_id = ?`).run(tenantId);
     db.prepare(`DELETE FROM sync_mirror_ingress WHERE tenant_id = ?`).run(tenantId);
+    try {
+      db.prepare(`DELETE FROM sync_exchange_idempotency WHERE tenant_id = ?`).run(tenantId);
+      db.prepare(`DELETE FROM sync_device_cursor WHERE tenant_id = ?`).run(tenantId);
+      db.prepare(`DELETE FROM sync_rejection_log WHERE tenant_id = ?`).run(tenantId);
+    } catch {
+      // Tables may not exist yet on very old DBs before first exchange boot.
+    }
     db.prepare(`DELETE FROM tenants WHERE id = ?`).run(tenantId);
   });
   try {
@@ -2174,6 +2400,635 @@ app.patch("/api/v1/licenses/:licenseId", authMiddleware, (req, res) => {
     )
     .get(licenseId) as Record<string, unknown>;
   res.json(out);
+});
+
+// ─── SlickPay payments (renewal checkout + webhook) ─────────────────────────
+
+const SLICKPAY_PUBLIC_KEY = (process.env.SLICKPAY_PUBLIC_KEY ?? "").trim();
+const SLICKPAY_SECRET_KEY = (process.env.SLICKPAY_SECRET_KEY ?? "").trim();
+const SLICKPAY_WEBHOOK_SECRET = (process.env.SLICKPAY_WEBHOOK_SECRET ?? SLICKPAY_SECRET_KEY).trim();
+const SLICKPAY_API_BASE_URL = (process.env.SLICKPAY_API_BASE_URL ?? "https://prodapi.slick-pay.com").replace(/\/$/, "");
+const SLICKPAY_WEBHOOK_URL = (process.env.SLICKPAY_WEBHOOK_URL ?? "https://api.maintafox.systems/api/v1/webhooks/slickpay").trim();
+const SLICKPAY_DEFAULT_RETURN_URL = (
+  process.env.SLICKPAY_DEFAULT_RETURN_URL ?? "https://console.maintafox.systems/vendor-console/entitlements"
+).trim();
+const SLICKPAY_EXTRA_SLOT_PRICE = Number.parseFloat(process.env.SLICKPAY_EXTRA_SLOT_PRICE ?? "0");
+
+function slickPayConfigured(): boolean {
+  return SLICKPAY_PUBLIC_KEY.length > 0 && SLICKPAY_SECRET_KEY.length > 0;
+}
+
+function safeEqualUtf8(a: string, b: string): boolean {
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+function computeLicenseExpiresPlusOneYear(currentExpiresAt: string | null, now = new Date()): string {
+  const base =
+    currentExpiresAt && !Number.isNaN(Date.parse(currentExpiresAt)) && new Date(currentExpiresAt) > now
+      ? new Date(currentExpiresAt)
+      : now;
+  const next = new Date(base.getTime());
+  next.setUTCFullYear(next.getUTCFullYear() + 1);
+  return next.toISOString();
+}
+
+async function slickPayApi(
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
+  const res = await fetch(`${SLICKPAY_API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${SLICKPAY_PUBLIC_KEY}`,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json: Record<string, unknown> = {};
+  try {
+    json = (await res.json()) as Record<string, unknown>;
+  } catch {
+    json = {};
+  }
+  return { ok: res.ok, status: res.status, json };
+}
+
+function pickActiveLicenseForTenant(tenantId: string): {
+  id: string;
+  tenant_id: string;
+  max_machines: number;
+  expires_at: string | null;
+  revoked_at: string | null;
+} | undefined {
+  return db
+    .prepare(
+      `SELECT id, tenant_id, max_machines, expires_at, revoked_at
+       FROM license_keys
+       WHERE tenant_id = ? AND revoked_at IS NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(tenantId) as
+    | {
+        id: string;
+        tenant_id: string;
+        max_machines: number;
+        expires_at: string | null;
+        revoked_at: string | null;
+      }
+    | undefined;
+}
+
+type SlickPayUserInfo = z.infer<typeof SlickPayUserInfoSchema>;
+
+function pickCompanyNameFromUserInfo(ui: SlickPayUserInfo): string | null {
+  const candidates = [ui.company, ui.company_name, ui.entreprise, ui.organization, ui.business_name];
+  for (const raw of candidates) {
+    const v = typeof raw === "string" ? raw.trim() : "";
+    if (v.length >= 2) return v.slice(0, 128);
+  }
+  return null;
+}
+
+function resolveTenantDisplayNameFromUserInfo(ui: SlickPayUserInfo): string | null {
+  const company = pickCompanyNameFromUserInfo(ui);
+  if (company) return company;
+  const person = [ui.firstname, ui.lastname]
+    .map((p) => (typeof p === "string" ? p.trim() : ""))
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (person.length >= 2) return person.slice(0, 128);
+  if (ui.email && ui.email.trim().length >= 3) return ui.email.trim().slice(0, 128);
+  return null;
+}
+
+function slugifyTenantSlug(raw: string): string {
+  const ascii = raw
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+  const clipped = ascii.slice(0, 48).replace(/-+$/g, "");
+  return clipped.length >= 2 ? clipped : "customer";
+}
+
+function allocateUniqueTenantSlug(preferred: string): string {
+  const base = slugifyTenantSlug(preferred);
+  const exists = (slug: string) =>
+    Boolean(db.prepare("SELECT id FROM tenants WHERE slug = ?").get(slug));
+  if (!exists(base)) return base;
+  for (let i = 0; i < 12; i += 1) {
+    const candidate = `${base.slice(0, 52)}-${randomBytes(2).toString("hex")}`;
+    if (!exists(candidate)) return candidate;
+  }
+  return `${base.slice(0, 40)}-${randomBytes(4).toString("hex")}`;
+}
+
+function resolveEditionFromPlan(plan: string): string {
+  const normalized = plan.trim().toLowerCase().replace(/\s+/g, "-");
+  if (editionExists(db, normalized)) return normalized;
+  if (editionExists(db, plan.trim())) return plan.trim();
+  return "core";
+}
+
+function createTenantFromSlickPayUserInfo(
+  ui: SlickPayUserInfo,
+  plan: string,
+): { id: string; slug: string; display_name: string; edition: string } {
+  const displayName = resolveTenantDisplayNameFromUserInfo(ui);
+  if (!displayName) {
+    const err = new Error("insufficient_user_info");
+    (err as Error & { code?: string }).code = "insufficient_user_info";
+    throw err;
+  }
+  const slug = allocateUniqueTenantSlug(ui.slug?.trim() || displayName);
+  const id = newId("tenant");
+  const edition = resolveEditionFromPlan(plan);
+  insertTenantRow({
+    id,
+    slug,
+    display_name: displayName,
+    update_channel: "stable",
+    rollout_cohort: "stable-main",
+    edition,
+  });
+  appendAuditRecord({
+    actor_id: "payment_proxy",
+    action_code: "tenant_create",
+    action_category: "billing",
+    correlation_id: id,
+    scope_tenant_id: id,
+    reason_code: "slickpay_new_customer",
+    entity_refs: { tenant_id: id },
+    payload: {
+      slug,
+      display_name: displayName,
+      edition,
+      email: ui.email ?? null,
+      company: pickCompanyNameFromUserInfo(ui),
+    },
+  });
+  return { id, slug, display_name: displayName, edition };
+}
+
+function issueLicenseForPaidOrder(input: {
+  tenantId: string;
+  maxMachines: number;
+  expiresAt: string;
+  updateChannel?: string;
+}): { id: string; license_key: string; max_machines: number; expires_at: string } {
+  const tenant = db
+    .prepare(`SELECT id, update_channel, is_active FROM tenants WHERE id = ?`)
+    .get(input.tenantId) as { id: string; update_channel: string; is_active: number } | undefined;
+  if (!tenant || tenant.is_active !== 1) {
+    throw new Error("tenant_not_found_or_inactive");
+  }
+  const id = newId("lic");
+  const key = randomLicenseKey();
+  db.prepare(
+    `INSERT INTO license_keys
+      (id, tenant_id, license_key, max_machines, update_channel, issued_by_user_id, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    input.tenantId,
+    key,
+    input.maxMachines,
+    input.updateChannel ?? tenant.update_channel,
+    null,
+    input.expiresAt,
+  );
+  return {
+    id,
+    license_key: key,
+    max_machines: input.maxMachines,
+    expires_at: input.expiresAt,
+  };
+}
+
+/** Public payment proxy: create SlickPay invoice and return checkout_url. */
+app.post("/api/v1/payments/slickpay/initiate", async (req, res) => {
+  if (!slickPayConfigured()) {
+    res.status(503).json({
+      error: "slickpay_not_configured",
+      message: "Set SLICKPAY_PUBLIC_KEY and SLICKPAY_SECRET_KEY.",
+    });
+    return;
+  }
+  const parsed = SlickPayInitiateBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const input = parsed.data;
+  const extraSlots = input.extra_slots ?? 0;
+  const slotUnit = Number.isFinite(SLICKPAY_EXTRA_SLOT_PRICE) ? Math.max(0, SLICKPAY_EXTRA_SLOT_PRICE) : 0;
+  const totalAmount = input.amount + extraSlots * slotUnit;
+
+  let tenant: { id: string; display_name: string; is_active: number };
+  let tenantCreated = false;
+  if (input.tenant_id) {
+    const existing = db
+      .prepare(`SELECT id, display_name, is_active FROM tenants WHERE id = ?`)
+      .get(input.tenant_id) as { id: string; display_name: string; is_active: number } | undefined;
+    if (!existing) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    if (existing.is_active === 0) {
+      res.status(409).json({ error: "tenant_inactive" });
+      return;
+    }
+    tenant = existing;
+  } else {
+    try {
+      const createdTenant = createTenantFromSlickPayUserInfo(input.user_info!, input.plan);
+      tenant = { id: createdTenant.id, display_name: createdTenant.display_name, is_active: 1 };
+      tenantCreated = true;
+    } catch (err) {
+      if (err instanceof Error && (err as Error & { code?: string }).code === "insufficient_user_info") {
+        res.status(400).json({
+          error: "user_info_required",
+          message:
+            "Provide user_info.company (or company_name/entreprise) or firstname+lastname or email when tenant_id is omitted.",
+        });
+        return;
+      }
+      const failure = tenantWriteFailure(err);
+      res.status(failure.status).json(failure.body);
+      return;
+    }
+  }
+
+  const license = pickActiveLicenseForTenant(tenant.id);
+  const orderId = newId("pay");
+  const returnUrl = input.return_url ?? SLICKPAY_DEFAULT_RETURN_URL;
+  const meta = {
+    payment_order_id: orderId,
+    tenant_id: tenant.id,
+    license_id: license?.id ?? null,
+    plan: input.plan,
+    extra_slots: extraSlots,
+    tenant_created: tenantCreated,
+  };
+  // SlickPay docs type webhook_meta_data as array; wrap our object for compatibility.
+  const webhookMetaData = [meta];
+
+  db.prepare(
+    `INSERT INTO payment_orders
+      (id, tenant_id, license_id, plan, amount, extra_slots, total_amount, status, user_info_json, meta_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+  ).run(
+    orderId,
+    tenant.id,
+    license?.id ?? null,
+    input.plan,
+    input.amount,
+    extraSlots,
+    totalAmount,
+    input.user_info ? JSON.stringify(input.user_info) : null,
+    JSON.stringify(meta),
+  );
+
+  const invoiceBody: Record<string, unknown> = {
+    amount: totalAmount,
+    url: returnUrl,
+    webhook_url: SLICKPAY_WEBHOOK_URL,
+    webhook_signature: SLICKPAY_WEBHOOK_SECRET || SLICKPAY_SECRET_KEY,
+    webhook_meta_data: webhookMetaData,
+    note: `Maintafox ${input.plan} — tenant ${tenant.id}`,
+    items: [
+      {
+        name: `Maintafox ${input.plan}`,
+        price: totalAmount,
+        quantity: 1,
+      },
+    ],
+  };
+  const ui = input.user_info ?? {};
+  if (ui.contact_id) {
+    invoiceBody.contact = ui.contact_id;
+  } else {
+    if (ui.firstname) invoiceBody.firstname = ui.firstname;
+    if (ui.lastname) invoiceBody.lastname = ui.lastname;
+    if (ui.phone) invoiceBody.phone = ui.phone;
+    if (ui.email) invoiceBody.email = ui.email;
+    const address =
+      (typeof ui.address === "string" && ui.address.trim()) ||
+      pickCompanyNameFromUserInfo(ui) ||
+      tenant.display_name ||
+      "Maintafox customer";
+    invoiceBody.address = address;
+  }
+
+  const failInitiate = (status: number, body: Record<string, unknown>, errorMessage: string) => {
+    db.prepare(
+      `UPDATE payment_orders SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?`,
+    ).run(errorMessage.slice(0, 500), orderId);
+    if (tenantCreated) {
+      // Avoid orphan tenants when SlickPay rejects the first checkout for a new customer.
+      const hasLicense = Boolean(pickActiveLicenseForTenant(tenant.id));
+      if (!hasLicense) {
+        db.prepare(`DELETE FROM payment_orders WHERE id = ?`).run(orderId);
+        db.prepare(`DELETE FROM tenants WHERE id = ?`).run(tenant.id);
+      }
+    }
+    res.status(status).json(body);
+  };
+
+  try {
+    const created = await slickPayApi("POST", "/api/v2/users/invoices", invoiceBody);
+    if (!created.ok) {
+      failInitiate(
+        502,
+        { error: "slickpay_create_failed", status: created.status, details: created.json },
+        `http_${created.status}:${JSON.stringify(created.json).slice(0, 400)}`,
+      );
+      return;
+    }
+    const data =
+      created.json.data && typeof created.json.data === "object"
+        ? (created.json.data as Record<string, unknown>)
+        : created.json;
+    const invoiceId =
+      created.json.id !== undefined && created.json.id !== null
+        ? String(created.json.id)
+        : data.id !== undefined && data.id !== null
+          ? String(data.id)
+          : null;
+    const checkoutUrl =
+      (typeof created.json.url === "string" && created.json.url) ||
+      (typeof data.url === "string" && data.url) ||
+      null;
+    if (!invoiceId || !checkoutUrl) {
+      failInitiate(
+        502,
+        { error: "slickpay_invalid_response", details: created.json },
+        "missing_invoice_id_or_url",
+      );
+      return;
+    }
+
+    db.prepare(
+      `UPDATE payment_orders
+       SET slickpay_invoice_id = ?, slickpay_payment_url = ?, status = 'awaiting_payment', updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(invoiceId, checkoutUrl, orderId);
+
+    appendAuditRecord({
+      actor_id: "payment_proxy",
+      action_code: "payment_initiate",
+      action_category: "billing",
+      correlation_id: orderId,
+      scope_tenant_id: tenant.id,
+      entity_refs: { tenant_id: tenant.id, entitlement_id: license?.id },
+      payload: {
+        payment_order_id: orderId,
+        plan: input.plan,
+        total_amount: totalAmount,
+        invoice_id: invoiceId,
+        tenant_created: tenantCreated,
+      },
+    });
+
+    res.status(201).json({
+      checkout_url: checkoutUrl,
+      payment_order_id: orderId,
+      invoice_id: invoiceId,
+      total_amount: totalAmount,
+      currency: "DZD",
+      plan: input.plan,
+      tenant_id: tenant.id,
+      tenant_created: tenantCreated,
+      license_id: license?.id ?? null,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    failInitiate(502, { error: "slickpay_network_error", message }, message);
+  }
+});
+
+/** SlickPay webhook: verify signature, extend license +1 year, bump entitlement lineage. */
+app.post("/api/v1/webhooks/slickpay", async (req, res) => {
+  if (!slickPayConfigured() || !SLICKPAY_WEBHOOK_SECRET) {
+    res.status(503).json({ error: "slickpay_not_configured" });
+    return;
+  }
+
+  const payload = (req.body ?? {}) as Record<string, unknown>;
+  const headerSig =
+    req.header("x-slickpay-signature") ??
+    req.header("x-webhook-signature") ??
+    req.header("webhook-signature") ??
+    (typeof payload.webhook_signature === "string" ? payload.webhook_signature : null) ??
+    (typeof payload.signature === "string" ? payload.signature : null);
+  if (!headerSig || !safeEqualUtf8(String(headerSig), SLICKPAY_WEBHOOK_SECRET)) {
+    res.status(401).json({ error: "invalid_webhook_signature" });
+    return;
+  }
+
+  const invoiceIdRaw =
+    payload.id ??
+    payload.invoice_id ??
+    (payload.data && typeof payload.data === "object"
+      ? (payload.data as Record<string, unknown>).id ?? (payload.data as Record<string, unknown>).invoice_id
+      : null);
+  const invoiceId = invoiceIdRaw !== null && invoiceIdRaw !== undefined ? String(invoiceIdRaw) : null;
+  if (!invoiceId) {
+    res.status(400).json({ error: "missing_invoice_id" });
+    return;
+  }
+
+  let paymentStatus = "";
+  try {
+    const details = await slickPayApi("GET", `/api/v2/users/invoices/${encodeURIComponent(invoiceId)}`);
+    if (!details.ok) {
+      res.status(502).json({ error: "slickpay_verify_failed", status: details.status });
+      return;
+    }
+    const data =
+      details.json.data && typeof details.json.data === "object"
+        ? (details.json.data as Record<string, unknown>)
+        : details.json;
+    paymentStatus = String(data.payment_status ?? data.status ?? "").toLowerCase();
+  } catch (err) {
+    res.status(502).json({
+      error: "slickpay_verify_network_error",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  if (paymentStatus !== "paid") {
+    res.status(200).json({ ok: true, ignored: true, payment_status: paymentStatus });
+    return;
+  }
+
+  let order = db
+    .prepare(
+      `SELECT id, tenant_id, license_id, plan, extra_slots, status
+       FROM payment_orders WHERE slickpay_invoice_id = ? ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(invoiceId) as
+    | {
+        id: string;
+        tenant_id: string;
+        license_id: string | null;
+        plan: string;
+        extra_slots: number;
+        status: string;
+      }
+    | undefined;
+
+  if (!order) {
+    const metaRaw = payload.webhook_meta_data ?? payload.meta_data ?? payload.metadata;
+    const metaCandidate = Array.isArray(metaRaw)
+      ? metaRaw.find((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+      : metaRaw;
+    const meta =
+      metaCandidate && typeof metaCandidate === "object" && !Array.isArray(metaCandidate)
+        ? (metaCandidate as Record<string, unknown>)
+        : null;
+    const orderId = meta?.payment_order_id ? String(meta.payment_order_id) : null;
+    if (orderId) {
+      order = db
+        .prepare(
+          `SELECT id, tenant_id, license_id, plan, extra_slots, status FROM payment_orders WHERE id = ?`,
+        )
+        .get(orderId) as typeof order;
+    }
+  }
+
+  if (!order) {
+    res.status(404).json({ error: "payment_order_not_found", invoice_id: invoiceId });
+    return;
+  }
+  if (order.status === "paid") {
+    res.status(200).json({ ok: true, already_processed: true, payment_order_id: order.id });
+    return;
+  }
+
+  let license = order.license_id
+    ? (db
+        .prepare(
+          `SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ?`,
+        )
+        .get(order.license_id) as
+        | {
+            id: string;
+            tenant_id: string;
+            max_machines: number;
+            expires_at: string | null;
+            revoked_at: string | null;
+          }
+        | undefined)
+    : undefined;
+  if (!license) {
+    license = pickActiveLicenseForTenant(order.tenant_id);
+  }
+
+  const previousExpires = license?.expires_at ?? null;
+  const nextExpires = computeLicenseExpiresPlusOneYear(license?.expires_at ?? null);
+  const extraSlots = Math.max(0, order.extra_slots ?? 0);
+  const nowIso = new Date().toISOString();
+  let issuedNewLicense = false;
+  let nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
+
+  if (license?.revoked_at) {
+    db.prepare(
+      `UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = datetime('now') WHERE id = ?`,
+    ).run(order.id);
+    res.status(409).json({ error: "license_revoked" });
+    return;
+  }
+
+  let finalLicense = license;
+  try {
+    const tx = db.transaction(() => {
+      if (!finalLicense) {
+        const issued = issueLicenseForPaidOrder({
+          tenantId: order.tenant_id,
+          maxMachines: nextMaxMachines,
+          expiresAt: nextExpires,
+        });
+        finalLicense = {
+          id: issued.id,
+          tenant_id: order.tenant_id,
+          max_machines: issued.max_machines,
+          expires_at: issued.expires_at,
+          revoked_at: null,
+        };
+        issuedNewLicense = true;
+      } else {
+        db.prepare(`UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`).run(
+          nextExpires,
+          nextMaxMachines,
+          finalLicense.id,
+        );
+      }
+      db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(
+        finalLicense.tenant_id,
+      );
+      db.prepare(
+        `UPDATE payment_orders
+         SET status = 'paid', paid_at = ?, license_id = ?, slickpay_invoice_id = COALESCE(slickpay_invoice_id, ?),
+             updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(nowIso, finalLicense.id, invoiceId, order.id);
+    });
+    tx();
+  } catch (err) {
+    res.status(404).json({
+      error: "license_issue_failed",
+      tenant_id: order.tenant_id,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  if (!finalLicense) {
+    res.status(500).json({ error: "license_missing_after_payment" });
+    return;
+  }
+
+  appendAuditRecord({
+    actor_id: "system_slickpay_webhook",
+    action_code: issuedNewLicense ? "license_issue" : "license_renew",
+    action_category: "billing",
+    correlation_id: order.id,
+    scope_tenant_id: finalLicense.tenant_id,
+    reason_code: "slickpay_paid",
+    entity_refs: { tenant_id: finalLicense.tenant_id, entitlement_id: finalLicense.id },
+    payload: {
+      payment_order_id: order.id,
+      invoice_id: invoiceId,
+      plan: order.plan,
+      previous_expires_at: previousExpires,
+      expires_at: nextExpires,
+      max_machines: nextMaxMachines,
+      license_issued: issuedNewLicense,
+      entitlement_lineage_bumped: true,
+    },
+  });
+
+  res.status(200).json({
+    ok: true,
+    payment_order_id: order.id,
+    tenant_id: finalLicense.tenant_id,
+    license_id: finalLicense.id,
+    expires_at: nextExpires,
+    previous_expires_at: previousExpires,
+    max_machines: nextMaxMachines,
+    license_issued: issuedNewLicense,
+  });
 });
 
 app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, (req, res) => {
@@ -3159,7 +4014,7 @@ app.get("/api/v1/audit/hardening/readiness", authMiddleware, (_req, res) => {
  * Tenant-runtime sync: push local outbox rows using activation JWT (same secret as `/activation/claim`).
  * Returns a batch matching desktop `ApplySyncBatchInput` for `apply_sync_batch`.
  */
-app.post("/api/v1/sync/exchange", activationAuthMiddleware, (req, res) => {
+app.post("/api/v1/sync/exchange", activationAuthMiddleware, async (req, res) => {
   const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!act) {
     res.status(500).json({ error: "internal_error" });
@@ -3170,75 +4025,98 @@ app.post("/api/v1/sync/exchange", activationAuthMiddleware, (req, res) => {
     res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
     return;
   }
-  const body = parsed.data;
-  const nowIso = new Date().toISOString();
-  let stateRow = db
-    .prepare("SELECT checkpoint_seq, checkpoint_token FROM tenant_sync_state WHERE tenant_id = ?")
-    .get(act.tenantId) as { checkpoint_seq: number; checkpoint_token: string } | undefined;
-  if (!stateRow) {
-    const initialToken = `cp-${act.tenantId}-0`;
-    db.prepare(
-      `INSERT INTO tenant_sync_state (tenant_id, checkpoint_seq, checkpoint_token, updated_at_rfc3339) VALUES (?, 0, ?, ?)`,
-    ).run(act.tenantId, initialToken, nowIso);
-    stateRow = { checkpoint_seq: 0, checkpoint_token: initialToken };
-  }
-  const serverBatchId = newId("batch");
-  const acknowledged_items: Array<{
-    idempotency_key: string;
-    entity_sync_id: string;
-    operation: "create" | "update" | "delete" | "upsert" | "archive";
-  }> = [];
-  const insertIngress = db.prepare(
-    `INSERT OR IGNORE INTO sync_mirror_ingress (
-      tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
-      payload_json, payload_hash, machine_fingerprint, received_at_rfc3339
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  for (const item of body.outbox_batch) {
-    insertIngress.run(
-      act.tenantId,
-      item.idempotency_key,
-      item.entity_type,
-      item.entity_sync_id,
-      item.operation,
-      item.row_version,
-      item.payload_json,
-      item.payload_hash,
-      act.machineFingerprint,
-      nowIso,
+  try {
+    const store = await getSyncStore();
+    const response = await runSyncExchange(
+      store,
+      {
+        tenantId: act.tenantId,
+        licenseId: act.licenseId,
+        machineFingerprint: act.machineFingerprint,
+      },
+      parsed.data,
+      structuredLog,
     );
-    acknowledged_items.push({
-      idempotency_key: item.idempotency_key,
-      entity_sync_id: item.entity_sync_id,
-      operation: item.operation,
+    res.json(response);
+  } catch (e) {
+    structuredLog("sync_exchange_error", {
+      tenant_id: act.tenantId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    res.status(500).json({ error: "sync_exchange_failed" });
+  }
+});
+
+app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, async (req, res) => {
+  const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!act) {
+    res.status(500).json({ error: "internal_error" });
+    return;
+  }
+  const media = getMediaStore();
+  if (!media) {
+    res.status(503).json({ error: "object_storage_unavailable" });
+    return;
+  }
+  const parsed = SyncMediaPresignPutBody.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed);
+    return;
+  }
+  try {
+    const objectKey =
+      parsed.data.object_key?.trim() ||
+      buildTenantMediaObjectKey({
+        deploymentEnv: media.config.deploymentEnv,
+        tenantId: act.tenantId,
+        parentEntityType: parsed.data.parent_entity_type,
+        parentEntitySyncId: parsed.data.parent_entity_sync_id,
+        contentSha256: parsed.data.content_sha256,
+      });
+    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
+      res.status(403).json({ error: "object_key_tenant_mismatch" });
+      return;
+    }
+    const signed = await media.presignPut(objectKey);
+    res.json(signed);
+  } catch (e) {
+    res.status(400).json({
+      error: "presign_put_failed",
+      message: e instanceof Error ? e.message : String(e),
     });
   }
-  const nextSeq = stateRow.checkpoint_seq + 1;
-  const nextCheckpoint = `cp-${act.tenantId}-${nextSeq}`;
-  db.prepare(
-    `UPDATE tenant_sync_state SET checkpoint_seq = ?, checkpoint_token = ?, updated_at_rfc3339 = ? WHERE tenant_id = ?`,
-  ).run(nextSeq, nextCheckpoint, nowIso, act.tenantId);
-  structuredLog("sync_exchange", {
-    tenant_id: act.tenantId,
-    outbox_count: body.outbox_batch.length,
-    server_batch_id: serverBatchId,
-    checkpoint: nextCheckpoint,
-  });
-  const inbound_items = stubInboundItemsForSyncExchange({
-    tenantId: act.tenantId,
-    machineFingerprint: act.machineFingerprint,
-    serverBatchId,
-    nextCheckpoint,
-  });
-  res.json({
-    protocol_version: "v1",
-    server_batch_id: serverBatchId,
-    checkpoint_token: nextCheckpoint,
-    acknowledged_items,
-    rejected_items: [],
-    inbound_items,
-    policy_metadata_json: null,
-  });
+});
+
+app.post("/api/v1/sync/media/presign-get", activationAuthMiddleware, async (req, res) => {
+  const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!act) {
+    res.status(500).json({ error: "internal_error" });
+    return;
+  }
+  const media = getMediaStore();
+  if (!media) {
+    res.status(503).json({ error: "object_storage_unavailable" });
+    return;
+  }
+  const parsed = SyncMediaPresignGetBody.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed);
+    return;
+  }
+  const objectKey = parsed.data.object_key.trim();
+  if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
+    res.status(403).json({ error: "object_key_tenant_mismatch" });
+    return;
+  }
+  try {
+    const signed = await media.presignGet(objectKey);
+    res.json(signed);
+  } catch (e) {
+    res.status(400).json({
+      error: "presign_get_failed",
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
 });
 
 type ActivationLicenseRow = {
@@ -3321,23 +4199,29 @@ function buildEntitlementEnvelopeForLicense(
   // Soft phase: always issue lineage 1 with null previous so desktop apply does not
   // require a prior local envelope id (control plane does not track device envelopes).
   // entitlement_lineage still bumps for operator audit / concurrency hints.
-  if (opts?.bumpLineage) {
-    db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(lic.tenant_id);
-  } else if (opts?.persistLineage) {
-    db.prepare(
-      `UPDATE tenants SET entitlement_lineage = CASE WHEN COALESCE(entitlement_lineage, 0) < 1 THEN 1 ELSE entitlement_lineage END WHERE id = ?`,
-    ).run(lic.tenant_id);
-  }
-  const { validUntil, offlineGraceUntil } = resolveEnvelopeValidity(lic);
-  return buildSignedEntitlementEnvelope({
-    edition: lic.edition,
-    lineageVersion: 1,
-    previousEnvelopeId: null,
-    channel: lic.update_channel,
-    machineSlots: lic.max_machines,
-    validUntil,
-    offlineGraceUntil,
-  });
+  // Catalog snapshot + lineage bump run in one IMMEDIATE transaction so a concurrent
+  // edition PATCH cannot land between SELECT and envelope stamp.
+  return db.transaction(() => {
+    if (opts?.bumpLineage) {
+      db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(lic.tenant_id);
+    } else if (opts?.persistLineage) {
+      db.prepare(
+        `UPDATE tenants SET entitlement_lineage = CASE WHEN COALESCE(entitlement_lineage, 0) < 1 THEN 1 ELSE entitlement_lineage END WHERE id = ?`,
+      ).run(lic.tenant_id);
+    }
+    const snap = loadCapabilitiesJsonForSign(db, lic.edition);
+    const { validUntil, offlineGraceUntil } = resolveEnvelopeValidity(lic);
+    return buildSignedEntitlementEnvelope({
+      edition: snap.tier,
+      capabilities_json: snap.capabilities_json,
+      lineageVersion: 1,
+      previousEnvelopeId: null,
+      channel: lic.update_channel,
+      machineSlots: lic.max_machines,
+      validUntil,
+      offlineGraceUntil,
+    });
+  }).immediate();
 }
 
 function buildActivationSummary(
@@ -3346,7 +4230,7 @@ function buildActivationSummary(
   resolvedPolicy: ReturnType<typeof resolveForceUpdatePolicy>,
   opts?: { includeEnvelope?: boolean; bumpLineage?: boolean; persistLineage?: boolean },
 ): Record<string, unknown> {
-  const edition = parseEditionId(lic.edition, "core");
+  const edition = editionExists(db, lic.edition) ? lic.edition : parseEditionId(lic.edition, "core");
   const includeEnvelope = opts?.includeEnvelope === true;
   const envelope = buildEntitlementEnvelopeForLicense(lic, {
     bumpLineage: opts?.bumpLineage,
@@ -3639,6 +4523,8 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, (req, re
   res.json({
     ...summary,
     activated_device_count: countActiveActivations(licRow.id),
+    // Echo the still-valid activation token so desktop Zod claim schema accepts the payload.
+    activation_token: activation.token,
   });
 });
 
@@ -3709,6 +4595,45 @@ app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware
 });
 
 const port = Number(process.env.PORT ?? 3000);
-app.listen(port, "0.0.0.0", () => {
-  console.log(`control-api listening on ${port}`);
-});
+
+let syncStoreSingleton: SyncStore | null = null;
+let syncStorePromise: Promise<SyncStore> | null = null;
+let mediaStoreSingleton: TenantMediaObjectStore | null | undefined;
+
+async function getSyncStore(): Promise<SyncStore> {
+  if (syncStoreSingleton) return syncStoreSingleton;
+  if (!syncStorePromise) {
+    syncStorePromise = openSyncStore(db, process.env["DATABASE_URL"]).then((store) => {
+      syncStoreSingleton = store;
+      structuredLog("sync_store_ready", {
+        backend: store.backend,
+        database_url_set: Boolean(process.env["DATABASE_URL"]?.trim()),
+      });
+      return store;
+    });
+  }
+  return syncStorePromise;
+}
+
+function getMediaStore(): TenantMediaObjectStore | null {
+  if (mediaStoreSingleton === undefined) {
+    mediaStoreSingleton = TenantMediaObjectStore.fromEnv();
+    structuredLog("object_store_config", {
+      configured: mediaStoreSingleton !== null,
+      bucket: mediaStoreSingleton?.config.bucket ?? null,
+    });
+  }
+  return mediaStoreSingleton;
+}
+
+void getSyncStore()
+  .then(() => {
+    getMediaStore();
+    app.listen(port, "0.0.0.0", () => {
+      console.log(`control-api listening on ${port}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Failed to initialize sync store", err);
+    process.exit(1);
+  });

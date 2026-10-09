@@ -5,7 +5,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
-import { capabilitiesJsonForEdition, listEditionCatalog, parseEditionId } from "../dist/edition-catalog.js";
+import {
+  capabilitiesJsonForEdition,
+  listFactoryEditionCatalog,
+  parseEditionId,
+} from "../dist/edition-catalog.js";
 import {
   buildSignedEntitlementEnvelope,
   canonicalPayload,
@@ -17,12 +21,15 @@ import {
 
 const secret = "MAINTAFOX_TRUSTED_ISSUER_KEY_V1";
 
-const catalog = listEditionCatalog();
+const catalog = listFactoryEditionCatalog();
 assert.equal(catalog.length, 4);
 assert.equal(parseEditionId("enterprise"), "enterprise");
 assert.equal(capabilitiesJsonForEdition("core").includes('"planning":false'), true);
+assert.equal(capabilitiesJsonForEdition("core").includes('"training":false'), true);
 assert.equal(capabilitiesJsonForEdition("professional").includes('"planning":true'), true);
+assert.equal(capabilitiesJsonForEdition("professional").includes('"training":false'), true);
 assert.equal(capabilitiesJsonForEdition("enterprise").includes('"finance":true'), true);
+assert.equal(capabilitiesJsonForEdition("enterprise").includes('"training":true'), true);
 
 const envelope = buildSignedEntitlementEnvelope({
   edition: "core",

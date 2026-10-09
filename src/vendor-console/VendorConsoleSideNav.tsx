@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, Cpu, FileSearch, Layers, Rocket, Server, Users } from "lucide-react";
+import { Activity, BookMarked, Cpu, FileSearch, Layers, Rocket, Server, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
 
@@ -29,6 +29,12 @@ const NAV: {
     labelKey: "nav.entitlements",
     permission: "entitlement.manage",
     icon: <Server className="h-4 w-4" />,
+  },
+  {
+    to: "/vendor-console/editions",
+    labelKey: "nav.editions",
+    permission: "entitlement.manage",
+    icon: <BookMarked className="h-4 w-4" />,
   },
   {
     to: "/vendor-console/machines",

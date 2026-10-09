@@ -12,6 +12,7 @@
     "overview": "Vue d'ensemble",
     "customers": "Clients",
     "entitlements": "Licences",
+    "editions": "Éditions",
     "machines": "Machines",
     "sync": "Synchronisation",
     "rollouts": "Déploiements",
@@ -125,7 +126,49 @@
     "enterprise": "Enterprise",
     "development": "Development",
     "modulesTitle": "Modules de l'édition",
-    "modulesHint": "Préréglage de capacités en lecture seule. Le bureau applique les modules depuis l'enveloppe de licence signée."
+    "modulesHint": "Préréglage de capacités en lecture seule. Le bureau applique les modules depuis l'enveloppe de licence signée.",
+    "pageTitle": "Éditions",
+    "pageBody": "Gérez les préréglages de licence et les cartes de modules. Les tenants choisissent une édition ; les nouvelles clés tamponnent la carte actuelle.",
+    "create": "Nouvelle édition",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "reissueBanner": "Les changements s'appliquent aux clés émises après l'enregistrement. Réémettez une licence (ou réactivez) pour rafraîchir les machines déjà activées.",
+    "empty": "Aucune édition dans le catalogue.",
+    "system": "Système",
+    "custom": "Personnalisée",
+    "columns": {
+      "id": "Id",
+      "label": "Libellé",
+      "type": "Type",
+      "modules": "Modules actifs",
+      "version": "Version",
+      "actions": "Actions"
+    },
+    "createTitle": "Créer une édition",
+    "editTitle": "Modifier l'édition",
+    "editorHint": "Envoyez la carte complète des modules à l'enregistrement. Les ids système ne peuvent pas être renommés ni supprimés.",
+    "fields": {
+      "id": "Id d'édition",
+      "label": "Libellé",
+      "cloneFrom": "Partir de"
+    },
+    "groups": {
+      "operations": "Opérations",
+      "planning": "Planification",
+      "compliance": "Conformité",
+      "analytics": "Analytique",
+      "control": "Plan de contrôle"
+    },
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "created": "Édition {{id}} créée.",
+    "updated": "Édition {{id}} enregistrée. Réémettez les clés pour rafraîchir les machines activées.",
+    "deleted": "Édition {{id}} supprimée.",
+    "deleteTitle": "Supprimer l'édition",
+    "deleteBody": "Supprimer {{id}} ? Échec si un tenant (même inactif) l'utilise encore.",
+    "deleting": "Suppression…",
+    "confirmDelete": "Supprimer"
   },
   "machines": {
     "title": "Machines et activation",
