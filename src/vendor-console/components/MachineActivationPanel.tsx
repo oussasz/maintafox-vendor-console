@@ -21,7 +21,7 @@ import { useVendorConsole } from "../VendorConsoleContext";
 
 export function MachineActivationPanel() {
   const { t } = useTranslation("vendorConsole");
-  const { openStepUp } = useVendorConsole();
+  const { requireStepUp } = useVendorConsole();
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [rows, setRows] = useState<ActivationRow[]>([]);
@@ -170,6 +170,9 @@ export function MachineActivationPanel() {
                   trust_revocation_disconnects_immediately:
                     policy.trust_revocation_disconnects_immediately,
                   reconnect_requires_fresh_heartbeat: policy.reconnect_requires_fresh_heartbeat,
+                }, {
+                  reason_code: "offline-policy-change",
+                  step_up_token: await requireStepUp("offline policy change"),
                 });
                 setPolicy(updated);
                 setLiveSuccess("Offline grace window updated (+12h).");
@@ -198,6 +201,9 @@ export function MachineActivationPanel() {
                   trust_revocation_disconnects_immediately:
                     !policy.trust_revocation_disconnects_immediately,
                   reconnect_requires_fresh_heartbeat: policy.reconnect_requires_fresh_heartbeat,
+                }, {
+                  reason_code: "offline-policy-change",
+                  step_up_token: await requireStepUp("offline policy change"),
                 });
                 setPolicy(updated);
                 setLiveSuccess("Trust revoke behavior updated.");
@@ -330,8 +336,8 @@ export function MachineActivationPanel() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => openStepUp("slot_release")}
-                      title="Requires step-up confirmation before server-side slot release."
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("machines.action.slotRelease", "Slot release")}
                     </Button>
@@ -339,8 +345,8 @@ export function MachineActivationPanel() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => openStepUp("device_rebind")}
-                      title="Requires step-up confirmation before server-side device rebind."
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("machines.action.rebind", "Rebind")}
                     </Button>
@@ -348,16 +354,16 @@ export function MachineActivationPanel() {
                       type="button"
                       size="sm"
                       variant="secondary"
-                      onClick={() => openStepUp("soft_suspend")}
-                      title="Requires step-up confirmation before server-side soft suspend."
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("machines.action.softSuspend", "Soft suspend")}
                     </Button>
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => openStepUp("policy_refresh")}
-                      title="Requires step-up confirmation before server-side policy refresh."
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("machines.action.policyRefresh", "Policy refresh")}
                     </Button>

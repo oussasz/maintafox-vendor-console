@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
+    // Like i18next: a string 2nd arg is the default value; an options object is not rendered.
+    t: (key: string, fallback?: unknown) => (typeof fallback === "string" ? fallback : key),
   }),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("@/services/license-control-service", () => ({
   issueLicense: vi.fn(),
   revokeLicense: vi.fn(),
   updateLicense: vi.fn(),
+  requestStepUpToken: vi.fn(async () => ({ token: "stepup-test-token", expiresAtMs: Date.now() + 300_000 })),
 }));
 
 import {
@@ -25,6 +27,7 @@ import {
   revokeLicense,
 } from "@/services/license-control-service";
 import { EntitlementLifecyclePanel } from "../EntitlementLifecyclePanel";
+import { renderWithConsole } from "./renderWithConsole";
 
 const coreEdition = {
   id: "core",
@@ -83,7 +86,7 @@ describe("EntitlementLifecyclePanel", () => {
   });
 
   it("renders key list and opens detail dialog on row click", async () => {
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
 
     await screen.findByText("MFX-KEY-001");
     await userEvent.click(screen.getByText("MFX-KEY-001"));
@@ -108,7 +111,7 @@ describe("EntitlementLifecyclePanel", () => {
       return [activeLicense, createdLicense];
     });
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     await screen.findByText("MFX-KEY-001");
 
     await userEvent.click(screen.getAllByRole("button", { name: "Add/Issue key" })[0]!);
@@ -152,7 +155,7 @@ describe("EntitlementLifecyclePanel", () => {
       .mockRejectedValueOnce(new Error("License list failed (500)"))
       .mockResolvedValueOnce([activeLicense]);
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
 
     await screen.findByText("License list failed (500)");
     const callsBeforeRetry = vi.mocked(listTenantLicenses).mock.calls.length;
@@ -165,7 +168,7 @@ describe("EntitlementLifecyclePanel", () => {
   });
 
   it("revoke action works and detail dialog points operators to list Actions", async () => {
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     await screen.findByText("MFX-KEY-001");
 
     await userEvent.click(screen.getByText("MFX-KEY-001"));
@@ -174,8 +177,15 @@ describe("EntitlementLifecyclePanel", () => {
     await userEvent.type(within(dialog).getByLabelText("Revoke reason"), "security incident");
     await userEvent.click(within(dialog).getByRole("button", { name: "Revoke key" }));
 
+    // Privileged action: server-verified password step-up before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("stepUp.passwordLabel"), "operator-password");
+    await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+
     await waitFor(() => {
-      expect(revokeLicense).toHaveBeenCalledWith("lic-001", "security incident");
+      expect(revokeLicense).toHaveBeenCalledWith("lic-001", "security incident", {
+        reason_code: "security incident",
+        step_up_token: "stepup-test-token",
+      });
     });
 
     expect(
@@ -220,7 +230,7 @@ describe("EntitlementLifecyclePanel", () => {
       currentRows = [revokedIssued];
     });
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     expect(await screen.findByText("No keys have been issued for this tenant.")).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole("button", { name: "Add/Issue key" })[0]!);
@@ -264,8 +274,15 @@ describe("EntitlementLifecyclePanel", () => {
     );
     await userEvent.click(within(detailDialog).getByRole("button", { name: "Revoke key" }));
 
+    // Privileged action: server-verified password step-up before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("stepUp.passwordLabel"), "operator-password");
+    await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+
     await waitFor(() => {
-      expect(revokeLicense).toHaveBeenCalledWith("lic-new-001", "tenant onboarding correction");
+      expect(revokeLicense).toHaveBeenCalledWith("lic-new-001", "tenant onboarding correction", {
+        reason_code: "tenant onboarding correction",
+        step_up_token: "stepup-test-token",
+      });
     });
     expect(await screen.findByText("Key lic-new-001 was revoked.")).toBeInTheDocument();
   });

@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
-import { useVendorConsole } from "../VendorConsoleContext";
 
 const CATEGORY_LABEL: Record<string, string> = {
   download: "Download",
@@ -17,7 +16,6 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 export function RolloutOpsPanel() {
   const { t } = useTranslation("vendorConsole");
-  const { openStepUp } = useVendorConsole();
   const [overview, setOverview] = useState<RolloutOverviewV1 | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -123,7 +121,8 @@ export function RolloutOpsPanel() {
                       type="button"
                       size="sm"
                       variant="secondary"
-                      onClick={() => openStepUp("rollout_pause")}
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("rollouts.cohorts.pause", "Pause stage")}
                     </Button>
@@ -131,7 +130,8 @@ export function RolloutOpsPanel() {
                       type="button"
                       size="sm"
                       variant="destructive"
-                      onClick={() => openStepUp("rollout_recall")}
+                      disabled
+                      title={t("stepUp.notAvailable")}
                     >
                       {t("rollouts.cohorts.recall", "Recall")}
                     </Button>

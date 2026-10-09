@@ -49,7 +49,7 @@
     },
     "stepUpLab": {
       "title": "Step-up (operator lab)",
-      "body": "Dangerous actions require fresh step-up. Server endpoints must re-validate; this is UX only.",
+      "body": "Privileged actions require a server-issued step-up: you re-enter your password and the control API grants a 5-minute window. Open one here before a batch of actions.",
       "trigger": "Trigger step-up",
       "fresh": "Step-up window active",
       "stale": "No active step-up window"
@@ -396,7 +396,7 @@
       "intro": "Privileged actions require reason codes and step-up; high-blast-radius may require dual approval on the server.",
       "guards": {
         "title": "Privileged-action safeguards",
-        "body": "Client hints only — VPS enforces RBAC, step-up window, and audit append.",
+        "body": "The control API enforces an audit reason code and a password step-up on privileged routes. Per-operator roles are not implemented yet (all operators have full access).",
         "stepUpExport": "Step-up: compliance export",
         "stepUpRecall": "Step-up: rollout recall"
       },
@@ -412,10 +412,15 @@
   },
   "stepUp": {
     "title": "Confirm sensitive action",
-    "description": "Step-up required for: {{action}}. Enter MFA or elevated password (server validates).",
-    "codeLabel": "Confirmation code",
-    "placeholder": "6-digit TOTP",
+    "description": "Step-up required for: {{action}}. Re-enter your password; the server verifies it and issues a 5-minute confirmation.",
     "cancel": "Cancel",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "passwordLabel": "Your password",
+    "verifying": "Verifying…",
+    "errorInvalidPassword": "Incorrect password.",
+    "errorRateLimited": "Too many attempts. Wait a few minutes and try again.",
+    "errorGeneric": "Could not verify: {{message}}",
+    "notAvailable": "Not available yet: this action has no server endpoint (planned in the vendor console completion phase).",
+    "cancelled": "Action cancelled: confirmation was not completed."
   }
 }

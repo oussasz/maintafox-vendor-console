@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { getAccessToken } from "@/lib/auth-token";
+import { privilegedHeaders, type PrivilegedActionContext } from "@/services/license-control-service";
 import {
   AuditReadinessCheckItemV1Schema,
   DiagnosticBundleManifestV1Schema,
@@ -91,6 +92,7 @@ export async function createSupportIntervention(
     next_state?: "new" | "triaged" | "waiting_for_vendor" | "waiting_for_customer" | "resolved" | "closed";
     reason_code?: string;
   },
+  privileged: PrivilegedActionContext,
 ): Promise<{ ok: true; audit_record_id: string; state: string }> {
   const schema = z.object({
     ok: z.literal(true),
@@ -100,6 +102,7 @@ export async function createSupportIntervention(
   const res = await authFetch(`/api/v1/support/tickets/${encodeURIComponent(ticketId)}/interventions`, {
     method: "POST",
     body: JSON.stringify(input),
+    headers: privilegedHeaders(privileged),
   });
   return parseOrThrow(res, schema, "Support intervention");
 }

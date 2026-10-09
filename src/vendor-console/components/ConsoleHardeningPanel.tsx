@@ -11,11 +11,9 @@ import {
 } from "@/services/vendor-audit-support-service";
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
-import { useVendorConsole } from "../VendorConsoleContext";
 
 export function ConsoleHardeningPanel() {
   const { t } = useTranslation("vendorConsole");
-  const { openStepUp } = useVendorConsole();
   const [runbooks, setRunbooks] = useState<IncidentRunbookEntry[]>([]);
   const [readiness, setReadiness] = useState<ReadinessCheckItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,10 +59,10 @@ export function ConsoleHardeningPanel() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="secondary" onClick={() => openStepUp("compliance_export")}>
+          <Button type="button" size="sm" variant="secondary" disabled title={t("stepUp.notAvailable")}>
             {t("audit.harden.guards.stepUpExport", "Step-up: compliance export")}
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => openStepUp("rollout_recall")}>
+          <Button type="button" size="sm" variant="outline" disabled title={t("stepUp.notAvailable")}>
             {t("audit.harden.guards.stepUpRecall", "Step-up: rollout recall")}
           </Button>
           <Button type="button" size="sm" variant="outline" onClick={() => void load()}>

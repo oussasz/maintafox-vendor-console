@@ -49,7 +49,7 @@
     },
     "stepUpLab": {
       "title": "Rehaussement (labo opérateur)",
-      "body": "Les actions sensibles exigent une re-authentification récente. Le serveur doit re-valider.",
+      "body": "Les actions privilégiées exigent un rehaussement délivré par le serveur : vous ressaisissez votre mot de passe et l’API de contrôle ouvre une fenêtre de 5 minutes. Ouvrez-la ici avant une série d’actions.",
       "trigger": "Déclencher rehaussement",
       "fresh": "Fenêtre de rehaussement active",
       "stale": "Pas de fenêtre active"
@@ -396,7 +396,7 @@
       "intro": "Actions privilégiées : codes motif et rehaussement ; double approbation possible côté serveur.",
       "guards": {
         "title": "Garde-fous actions privilégiées",
-        "body": "Indications client — VPS impose RBAC, rehaussement et audit append-only.",
+        "body": "L’API de contrôle impose un code motif d’audit et un rehaussement par mot de passe sur les routes privilégiées. Les rôles par opérateur ne sont pas encore implémentés (tous les opérateurs ont un accès complet).",
         "stepUpExport": "Rehaussement : export conformité",
         "stepUpRecall": "Rehaussement : rappel déploiement"
       },
@@ -412,10 +412,15 @@
   },
   "stepUp": {
     "title": "Confirmer l'action sensible",
-    "description": "Rehaussement requis pour : {{action}}. Saisir MFA ou mot de passe élevé (validé côté serveur).",
-    "codeLabel": "Code de confirmation",
-    "placeholder": "TOTP à 6 chiffres",
+    "description": "Rehaussement requis pour : {{action}}. Saisissez à nouveau votre mot de passe ; le serveur le vérifie et délivre une confirmation valable 5 minutes.",
     "cancel": "Annuler",
-    "confirm": "Confirmer"
+    "confirm": "Confirmer",
+    "passwordLabel": "Votre mot de passe",
+    "verifying": "Vérification…",
+    "errorInvalidPassword": "Mot de passe incorrect.",
+    "errorRateLimited": "Trop de tentatives. Patientez quelques minutes puis réessayez.",
+    "errorGeneric": "Vérification impossible : {{message}}",
+    "notAvailable": "Pas encore disponible : cette action n’a pas encore de point d’API serveur (prévu dans la phase de finalisation de la console).",
+    "cancelled": "Action annulée : la confirmation n’a pas été effectuée."
   }
 }

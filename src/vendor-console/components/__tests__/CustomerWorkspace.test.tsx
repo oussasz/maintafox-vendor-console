@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
+    // Like i18next: a string 2nd arg is the default value; an options object is not rendered.
+    t: (key: string, fallback?: unknown) => (typeof fallback === "string" ? fallback : key),
   }),
 }));
 
@@ -25,6 +26,7 @@ vi.mock("@/services/license-control-service", () => ({
   updateCohortUpdatePolicy: vi.fn(),
   rollbackCohortUpdatePolicy: vi.fn(),
   isDuplicateTenantSlugMessage: vi.fn(() => false),
+  requestStepUpToken: vi.fn(async () => ({ token: "stepup-test-token", expiresAtMs: Date.now() + 300_000 })),
 }));
 
 import {
@@ -39,6 +41,7 @@ import {
   updateTenantUpdatePolicy,
 } from "@/services/license-control-service";
 import { CustomerWorkspace } from "../CustomerWorkspace";
+import { renderWithConsole } from "./renderWithConsole";
 
 const coreEdition = {
   id: "core",
@@ -140,7 +143,7 @@ describe("CustomerWorkspace", () => {
   it("renders API-backed list and allows row selection", async () => {
     vi.mocked(listTenants).mockResolvedValue([tenantOne, tenantTwo]);
 
-    render(<CustomerWorkspace />);
+    renderWithConsole(<CustomerWorkspace />);
 
     await screen.findByText("Acme Corp");
     const acmeRow = screen.getByText("acme").closest("tr");
@@ -157,7 +160,7 @@ describe("CustomerWorkspace", () => {
       .mockRejectedValueOnce(new Error("Tenant fetch failed (500)"))
       .mockResolvedValueOnce([]);
 
-    render(<CustomerWorkspace />);
+    renderWithConsole(<CustomerWorkspace />);
 
     await screen.findByText("Tenant fetch failed (500)");
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -172,7 +175,7 @@ describe("CustomerWorkspace", () => {
     vi.mocked(listTenants).mockResolvedValueOnce([tenantOne]).mockResolvedValueOnce([tenantOne, tenantTwo]);
     vi.mocked(createTenant).mockResolvedValue(tenantTwo);
 
-    render(<CustomerWorkspace />);
+    renderWithConsole(<CustomerWorkspace />);
     await screen.findByText("Acme Corp");
 
     await userEvent.click(screen.getByRole("button", { name: "Add customer/company" }));
@@ -216,7 +219,7 @@ describe("CustomerWorkspace", () => {
     vi.mocked(listTenants).mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
     vi.mocked(createTenant).mockReturnValue(createPromise);
 
-    render(<CustomerWorkspace />);
+    renderWithConsole(<CustomerWorkspace />);
     await screen.findByText("No customers found.");
 
     await userEvent.click(screen.getByRole("button", { name: "Add customer/company" }));

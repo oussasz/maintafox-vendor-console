@@ -287,8 +287,29 @@ async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
-function privilegedHeaders(input?: PrivilegedActionContext): Record<string, string> {
-  if (!input) return {};
+const StepUpResponseSchema = z.object({
+  step_up_token: z.string().min(1),
+  token_type: z.literal("StepUp"),
+  expires_in: z.number().int().positive(),
+});
+export type StepUpGrant = { token: string; expiresAtMs: number };
+
+/**
+ * Re-verify the signed-in operator's password and obtain a short-lived step-up token
+ * (POST /api/v1/auth/step-up). Required by every privileged action (X-Step-Up-Token).
+ */
+export async function requestStepUpToken(password: string): Promise<StepUpGrant> {
+  const res = await authFetch("/api/v1/auth/step-up", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+  await throwIfNotOk(res);
+  const parsed = StepUpResponseSchema.parse(await res.json());
+  return { token: parsed.step_up_token, expiresAtMs: Date.now() + parsed.expires_in * 1000 };
+}
+
+/** Headers for routes guarded server-side by requirePrivilegedAction (reason + step-up). */
+export function privilegedHeaders(input: PrivilegedActionContext): Record<string, string> {
   return {
     "X-Operator-Reason": input.reason_code,
     "X-Step-Up-Token": input.step_up_token,
@@ -443,12 +464,17 @@ export async function updateLicense(
   return LicenseSchema.parse(await res.json());
 }
 
-export async function revokeLicense(licenseId: string, reason?: string): Promise<void> {
+export async function revokeLicense(
+  licenseId: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
   const res = await authFetch(`/api/v1/licenses/${encodeURIComponent(licenseId)}/revoke`, {
     method: "POST",
     body: JSON.stringify({ reason }),
     headers: {
       "Idempotency-Key": idempotencyKey("revoke-license"),
+      ...privilegedHeaders(privileged),
     },
   });
   await throwIfNotOk(res);
@@ -519,10 +545,12 @@ export async function updateTenantOfflinePolicy(
     trust_revocation_disconnects_immediately: boolean;
     reconnect_requires_fresh_heartbeat: boolean;
   },
+  privileged: PrivilegedActionContext,
 ): Promise<OfflinePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/offline-policy`, {
     method: "PUT",
     body: JSON.stringify(input),
+    headers: privilegedHeaders(privileged),
   });
   await throwIfNotOk(res);
   return OfflinePolicySchema.parse(await res.json());
@@ -541,7 +569,7 @@ export async function updateTenantUpdatePolicy(
     force_update_mode?: "off" | "required" | "emergency" | "inherit";
     force_update_reason?: string | null;
   },
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<TenantUpdatePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy`, {
     method: "PUT",
@@ -554,7 +582,7 @@ export async function updateTenantUpdatePolicy(
 
 export async function rollbackTenantUpdatePolicy(
   tenantId: string,
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<TenantUpdatePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/rollback`, {
     method: "POST",
@@ -584,7 +612,7 @@ export async function updateCohortUpdatePolicy(
     force_update_mode?: "off" | "required" | "emergency";
     force_update_reason?: string | null;
   },
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<CohortUpdatePolicy> {
   const res = await authFetch(
     `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy`,
@@ -601,7 +629,7 @@ export async function updateCohortUpdatePolicy(
 export async function rollbackCohortUpdatePolicy(
   channel: "stable" | "pilot" | "internal",
   cohortLabel: string,
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<CohortUpdatePolicy> {
   const res = await authFetch(
     `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/rollback`,

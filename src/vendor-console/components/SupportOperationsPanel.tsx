@@ -19,6 +19,7 @@ import {
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
+import { useVendorConsole } from "../VendorConsoleContext";
 
 const COMPLIANCE_EXPORT_LABELS: Record<
   "entitlement_history" | "machine_state_timeline" | "rollout_actions" | "support_resolution_chronology",
@@ -32,6 +33,7 @@ const COMPLIANCE_EXPORT_LABELS: Record<
 
 export function SupportOperationsPanel() {
   const { t } = useTranslation("vendorConsole");
+  const { requireStepUp } = useVendorConsole();
   const { can } = usePermissions();
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [bundle, setBundle] = useState<DiagnosticBundle | null>(null);
@@ -80,6 +82,9 @@ export function SupportOperationsPanel() {
         note,
         next_state: nextState,
         reason_code: "operator_action",
+      }, {
+        reason_code: "support-intervention",
+        step_up_token: await requireStepUp("support intervention"),
       });
       setNoteDraft((prev) => ({ ...prev, [ticket.ticket_id]: "" }));
       await load();

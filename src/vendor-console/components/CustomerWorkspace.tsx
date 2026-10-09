@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { BulkEntitlementOperationRequestV1 } from "@shared/ipc-types";
 
 import { channelPolicyConsistent } from "@/services/customer-entitlement-machine-contracts";
+import { useVendorConsole } from "../VendorConsoleContext";
 import {
   createTenant,
   deleteTenant,
@@ -128,7 +129,7 @@ export function CustomerWorkspace() {
   const [cohortPolicyMode, setCohortPolicyMode] = useState<"off" | "required" | "emergency">("off");
   const [cohortPolicyReason, setCohortPolicyReason] = useState("");
   const [operatorReasonCode, setOperatorReasonCode] = useState("");
-  const [stepUpToken, setStepUpToken] = useState("");
+  const { requireStepUp } = useVendorConsole();
   const [bulkPreviewJson, setBulkPreviewJson] = useState<string | null>(null);
 
   const consistent = channelPolicyConsistent(channel, rolloutChannel);
@@ -358,7 +359,8 @@ export function CustomerWorkspace() {
     }
   };
 
-  const canRunPrivilegedPolicyAction = operatorReasonCode.trim().length > 0 && stepUpToken.trim().length > 0;
+  // Server requires X-Operator-Reason (min 4 chars); the step-up password prompt opens on click.
+  const canRunPrivilegedPolicyAction = operatorReasonCode.trim().length >= 4;
   const listHasNoRows = !loadingTenants && !tenantError && tenants.length === 0;
   const noVisibleRows = !loadingTenants && !tenantError && tenants.length > 0 && visibleTenants.length === 0;
 
@@ -657,16 +659,6 @@ export function CustomerWorkspace() {
                   placeholder="INC-2026-042"
                 />
               </div>
-              <div>
-                <Label htmlFor="step-up-token">Step-up token (header)</Label>
-                <Input
-                  id="step-up-token"
-                  value={stepUpToken}
-                  onChange={(e) => setStepUpToken(e.target.value)}
-                  className="mt-1"
-                  placeholder="stepup-approval-token"
-                />
-              </div>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-md border border-surface-border p-3">
@@ -730,7 +722,7 @@ export function CustomerWorkspace() {
                             },
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: stepUpToken.trim(),
+                              step_up_token: await requireStepUp("update policy change"),
                             },
                           );
                           setTenantPolicyVersion(updated.force_min_app_version ?? "");
@@ -757,7 +749,7 @@ export function CustomerWorkspace() {
                         try {
                           const rolledBack = await rollbackTenantUpdatePolicy(selectedTenant.id, {
                             reason_code: operatorReasonCode.trim(),
-                            step_up_token: stepUpToken.trim(),
+                            step_up_token: await requireStepUp("update policy change"),
                           });
                           setTenantPolicyVersion(rolledBack.force_min_app_version ?? "");
                           setTenantPolicyMode(rolledBack.force_update_mode);
@@ -838,7 +830,7 @@ export function CustomerWorkspace() {
                             },
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: stepUpToken.trim(),
+                              step_up_token: await requireStepUp("update policy change"),
                             },
                           );
                           setCohortPolicyVersion(updated.force_min_app_version ?? "");
@@ -868,7 +860,7 @@ export function CustomerWorkspace() {
                             selectedTenant.rollout_cohort,
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: stepUpToken.trim(),
+                              step_up_token: await requireStepUp("update policy change"),
                             },
                           );
                           setCohortPolicyVersion(rolledBack.force_min_app_version ?? "");

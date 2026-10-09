@@ -10,7 +10,7 @@ import { isStepUpFresh, useVendorConsole } from "../VendorConsoleContext";
 export function VendorConsoleHomePage() {
   const { t } = useTranslation("vendorConsole");
   const { can } = usePermissions();
-  const { tenantSearch, openStepUp, stepUpValidUntilMs } = useVendorConsole();
+  const { tenantSearch, requireStepUp, stepUpValidUntilMs } = useVendorConsole();
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -101,7 +101,7 @@ export function VendorConsoleHomePage() {
           )}
         </p>
         <div className="mt-3 flex items-center gap-3">
-          <Button type="button" size="sm" variant="secondary" onClick={() => openStepUp("mass_machine_revoke")}>
+          <Button type="button" size="sm" variant="secondary" onClick={() => void requireStepUp("operator step-up window").catch(() => undefined)}>
             {t("home.stepUpLab.trigger", "Trigger step-up")}
           </Button>
           <span className="text-xs text-text-muted" aria-live="polite">

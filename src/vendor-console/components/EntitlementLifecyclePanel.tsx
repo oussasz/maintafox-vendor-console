@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { useVendorConsole } from "../VendorConsoleContext";
 import {
   issueLicense,
   listEditions,
@@ -137,6 +138,7 @@ type EntitlementLifecyclePanelProps = {
 export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHandle, EntitlementLifecyclePanelProps>(
   function EntitlementLifecyclePanel({ hideSectionToolbar = false, onCapabilitiesChange }, ref) {
   const { t } = useTranslation("vendorConsole");
+  const { requireStepUp } = useVendorConsole();
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [licenses, setLicenses] = useState<ControlLicense[]>([]);
@@ -825,7 +827,11 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 setMutationError(null);
                 setMutationSuccess(null);
                 try {
-                  await revokeLicense(target.id, revokeReason.trim() || "Revoked by operator from list");
+                  const reason = revokeReason.trim() || "Revoked by operator from list";
+                  await revokeLicense(target.id, reason, {
+                    reason_code: reason,
+                    step_up_token: await requireStepUp("license revoke"),
+                  });
                   await loadLicenses(target.tenant_id, target.id);
                   setMutationSuccess(`Key ${target.id} was revoked.`);
                   setDeleteConfirmLicense(null);
@@ -1129,7 +1135,11 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                     setMutationError(null);
                     setMutationSuccess(null);
                     try {
-                      await revokeLicense(selectedLicense.id, revokeReason.trim() || "Revoked by operator");
+                      const reason = revokeReason.trim() || "Revoked by operator";
+                      await revokeLicense(selectedLicense.id, reason, {
+                        reason_code: reason,
+                        step_up_token: await requireStepUp("license revoke"),
+                      });
                       await loadLicenses(selectedLicense.tenant_id, selectedLicense.id);
                       setMutationSuccess(`Key ${selectedLicense.id} was revoked.`);
                     } catch (err) {
