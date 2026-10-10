@@ -158,6 +158,7 @@ The script:
 |--------|----------------|
 | `502` / `nginx` errors | `docker compose logs edge`, `docker compose logs api` |
 | CORS errors in browser | `CORS_ORIGIN` in `.env` must include `https://console.maintafox.systems` |
+| Desktop activation "Failed to fetch" / `network_unreachable` | `DESKTOP_APP_ORIGINS` in `.env` must include the installed app origin (`http://tauri.localhost` on Windows) |
 | Login always fails | API logs; DB seeded? `docker compose logs api` |
 | Wrong host | DNS A records for **both** subdomains → same VPS IP |
 | Immediate “Access denied” without login | Stale/invalid `localStorage` token was treated as auth. Redeploy SPA with auth-before-authz fix; clear site data or open incognito. Confirm `VITE_ADMIN_API_BASE_URL=https://api.maintafox.systems` at **image build** time. |
@@ -169,6 +170,7 @@ The script:
 Confirm env in `.env` before rebuild:
 
 - `CORS_ORIGIN=https://console.maintafox.systems`
+- `DESKTOP_APP_ORIGINS=http://tauri.localhost,https://tauri.localhost,tauri://localhost`
 - `VITE_ADMIN_API_BASE_URL=https://api.maintafox.systems` (baked into SPA at build)
 
 ```bash

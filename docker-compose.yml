@@ -73,6 +73,7 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://console.maintafox.systems}
+      DESKTOP_APP_ORIGINS: ${DESKTOP_APP_ORIGINS:-}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?set SEED_ADMIN_EMAIL in .env}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
       DATA_DIR: /data

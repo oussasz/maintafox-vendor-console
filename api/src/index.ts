@@ -105,6 +105,60 @@ function parseCorsOrigins(raw: string): string[] {
   }
   return list;
 }
+
+/**
+ * Desktop (Tauri webview) origins, allowed ONLY on device routes (activation + sync).
+ * Windows WebView2 serves the installed app from `http://tauri.localhost` (or
+ * `https://tauri.localhost` with `useHttpsScheme`); macOS/Linux use `tauri://localhost`.
+ * Optional: unset/empty means no desktop origin is allowed (logged at startup).
+ * Each entry must be an exact `scheme://host[:port]` origin — no wildcard, path or `null`.
+ */
+function parseDesktopAppOrigins(raw: string | undefined): string[] {
+  const list = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  for (const origin of list) {
+    if (!/^[a-z][a-z0-9+.-]*:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(origin)) {
+      fatal(
+        `DESKTOP_APP_ORIGINS entry "${origin}" is not an exact origin (expected scheme://host[:port], no wildcard or path).`,
+      );
+    }
+  }
+  return list;
+}
+
+const CONSOLE_CORS_ORIGINS = parseCorsOrigins(CORS_ORIGIN);
+const DESKTOP_APP_ORIGINS = parseDesktopAppOrigins(process.env.DESKTOP_APP_ORIGINS);
+if (DESKTOP_APP_ORIGINS.length === 0) {
+  console.warn(
+    "DESKTOP_APP_ORIGINS is not set: installed desktop apps cannot call activation/sync routes from their webview.",
+  );
+}
+
+/** Routes the desktop app calls with a device token (or none, for activation preview/claim). */
+function isDeviceRoute(path: string): boolean {
+  const p = path.toLowerCase();
+  return p.startsWith("/api/v1/activation/") || p.startsWith("/api/v1/sync/");
+}
+
+/**
+ * Admin/console routes: only CORS_ORIGIN (credentialed). Device routes additionally accept
+ * DESKTOP_APP_ORIGINS, without credentials — the desktop authenticates with a Bearer header.
+ */
+const corsOptionsDelegate: cors.CorsOptionsDelegate<express.Request> = (req, callback) => {
+  const origin = req.header("Origin");
+  if (
+    origin &&
+    !CONSOLE_CORS_ORIGINS.includes(origin) &&
+    DESKTOP_APP_ORIGINS.includes(origin) &&
+    isDeviceRoute(req.path)
+  ) {
+    callback(null, { origin, credentials: false });
+    return;
+  }
+  callback(null, { origin: CONSOLE_CORS_ORIGINS, credentials: true });
+};
 const DB_PATH = join(DATA_DIR, "control-plane.db");
 /** Only read when the users table is empty (first boot); see seedAdminIfEmpty. */
 const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL?.trim();
@@ -1224,12 +1278,7 @@ const deviceRateLimiter = rateLimit({
   },
   handler: rateLimitedResponse,
 });
-app.use(
-  cors({
-    origin: parseCorsOrigins(CORS_ORIGIN),
-    credentials: true,
-  }),
-);
+app.use(cors(corsOptionsDelegate));
 app.use((req, res, next) => {
   const requestId = req.header("X-Request-Id")?.trim() || newId("req");
   const startedAt = Date.now();

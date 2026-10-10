@@ -5,6 +5,7 @@
  *  - privileged actions require a real, operator-bound step-up token
  *  - login is rate limited; oversize sync batches are rejected
  *  - the API refuses to boot without required secrets
+ *  - desktop app origins get CORS only on device routes, never on admin routes
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -33,6 +34,7 @@ const BASE_ENV = {
   SEED_BEHAVIOR: "safe",
   NODE_ENV: "production",
   CORS_ORIGIN: "http://localhost:5174",
+  DESKTOP_APP_ORIGINS: "http://tauri.localhost,tauri://localhost",
   DATABASE_URL: "",
 };
 
@@ -68,9 +70,43 @@ async function assertRefusesToBoot(missingVar) {
   assert.match(output, new RegExp(missingVar), `boot failure must name ${missingVar}`);
 }
 
+/** Boot with an invalid DESKTOP_APP_ORIGINS value and assert startup is refused. */
+async function assertRejectsDesktopOrigins(value) {
+  const env = { ...BASE_ENV, PORT: String(port + 1), DESKTOP_APP_ORIGINS: value };
+  const proc = spawn(process.execPath, ["dist/index.js"], { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
+  let output = "";
+  proc.stdout.on("data", (b) => (output += String(b)));
+  proc.stderr.on("data", (b) => (output += String(b)));
+  const timer = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  const [code] = await once(proc, "exit");
+  clearTimeout(timer);
+  assert.notEqual(code, 0, `API must refuse DESKTOP_APP_ORIGINS=${value}; output:
+${output}`);
+  assert.match(output, /DESKTOP_APP_ORIGINS/, "boot failure must name DESKTOP_APP_ORIGINS");
+}
+
+/** CORS preflight; returns the Access-Control-Allow-Origin / -Credentials response headers. */
+async function preflight(path, origin) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: origin,
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type,accept,authorization",
+    },
+  });
+  return {
+    allowOrigin: res.headers.get("access-control-allow-origin"),
+    allowCredentials: res.headers.get("access-control-allow-credentials"),
+  };
+}
+
 async function run() {
   for (const v of ["ENTITLEMENT_SIGNING_PRIVATE_KEY", "CORS_ORIGIN", "DATA_DIR"]) {
     await assertRefusesToBoot(v);
+  }
+  for (const bad of ["*", "http://*.localhost", "http://tauri.localhost/app", "null"]) {
+    await assertRejectsDesktopOrigins(bad);
   }
 
   const server = spawn(process.execPath, ["dist/index.js"], {
@@ -190,7 +226,28 @@ async function run() {
     });
     assert.equal(oversize.status, 400, `outbox_batch > 1000 must be rejected (got ${oversize.status})`);
 
-    // 5) Login brute force is rate limited (limit 10 / 15 min per IP; one success already used).
+    // 5) CORS: desktop app origins reach device routes only; admin routes stay console-only.
+    const desktopOrigin = "http://tauri.localhost";
+    for (const path of ["/api/v1/activation/preview", "/api/v1/activation/claim", "/api/v1/sync/exchange"]) {
+      const h = await preflight(path, desktopOrigin);
+      assert.equal(h.allowOrigin, desktopOrigin, `desktop origin must get CORS on ${path}`);
+      assert.notEqual(h.allowCredentials, "true", `desktop CORS on ${path} must not allow credentials`);
+    }
+    const macOrigin = await preflight("/api/v1/activation/preview", "tauri://localhost");
+    assert.equal(macOrigin.allowOrigin, "tauri://localhost", "every listed desktop origin must be accepted");
+    for (const path of ["/api/v1/auth/login", "/api/v1/tenants", "/api/v1/licenses", "/api/v1/auth/step-up"]) {
+      const h = await preflight(path, desktopOrigin);
+      assert.equal(h.allowOrigin, null, `desktop origin must NOT get CORS on admin route ${path}`);
+    }
+    const unlisted = await preflight("/api/v1/activation/preview", "https://tauri.localhost");
+    assert.equal(unlisted.allowOrigin, null, "an origin absent from DESKTOP_APP_ORIGINS must be refused");
+    const consoleOnAdmin = await preflight("/api/v1/tenants", "http://localhost:5174");
+    assert.equal(consoleOnAdmin.allowOrigin, "http://localhost:5174", "console origin keeps CORS on admin routes");
+    assert.equal(consoleOnAdmin.allowCredentials, "true", "console CORS stays credentialed");
+    const consoleOnDevice = await preflight("/api/v1/activation/preview", "http://localhost:5174");
+    assert.equal(consoleOnDevice.allowOrigin, "http://localhost:5174", "CORS_ORIGIN still applies to device routes");
+
+    // 6) Login brute force is rate limited (limit 10 / 15 min per IP; one success already used).
     let lastStatus = 0;
     for (let i = 0; i < 10; i += 1) {
       const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
