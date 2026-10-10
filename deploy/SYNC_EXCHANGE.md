@@ -2,21 +2,29 @@
 
 ## What is live
 
-- `POST /api/v1/sync/exchange` — validation, request idempotency, ingress persist, **cross-machine fan-out**, checkpoint freeze on permanent rejects.
+- `POST /api/v1/sync/exchange` with `protocol_version: "v1"` (this document) or `"v2"`
+  (**`deploy/SYNC_PROTOCOL_V2.md`**: conflicts, tombstones, signed per-device checkpoints,
+  snapshot, per-user scope). v1 is kept for desktops that are not updated yet.
+- v1: validation, request idempotency (per tenant), ingress persist, **cross-machine fan-out**,
+  checkpoint freeze on permanent rejects. Since Phase 2.1 the v1 exchange is one Postgres
+  transaction, its device cursor advances only with the stored response, and a device whose
+  recent rows are all its own is no longer starved. v1 writes also update the v2 current state.
 - `POST /api/v1/sync/media/presign-put` / `presign-get` — TenantMedia via MinIO/S3 (optional).
-- Sync store: **Postgres** when `DATABASE_URL` is set; **SQLite** fallback for local `pnpm api:start` without Postgres.
+- Store: **Postgres only** (`DATABASE_URL` is required). The SQLite fallback was removed.
 
-Code: `api/src/sync/`, `api/src/storage/object-store.ts`, migration `api/migrations/001_sync_mirror.sql`.
+Code: `api/src/sync/`, `api/src/storage/object-store.ts`, migrations `api/migrations/`.
 
 ## Local verification (no Docker)
 
 ```bash
 cd api
-pnpm run build
-pnpm run test:sync-exchange-ab
+pnpm run test:sync-exchange-ab   # v1: machine A push -> machine B inbound
+pnpm run test:sync-v2            # v2 protocol suite
+pnpm run test:all                # every API suite
 ```
 
-Uses SQLite sync fallback. Proves machine A push → machine B inbound.
+The scripts start a throwaway embedded PostgreSQL 16 (dev dependency `embedded-postgres`), or
+use `TEST_DATABASE_ADMIN_URL` (e.g. a docker postgres in CI) when it is set.
 
 ## Compose (Postgres + MinIO)
 

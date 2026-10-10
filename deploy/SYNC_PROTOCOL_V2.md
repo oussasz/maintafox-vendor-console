@@ -83,7 +83,9 @@ required on every item (use `null` explicitly for a create).
    same entity, row version and payload hash**, the item is acknowledged again with
    `"duplicate": true` and nothing changes. The same key with different content is rejected with
    `item_idempotency_key_reused`. A key repeated inside one batch is rejected with
-   `duplicate_item_in_batch`.
+   `duplicate_item_in_batch`. An item whose `row_version` and payload hash already equal the
+   server's current state is also acknowledged as `duplicate` (covers a retry whose log row was
+   compacted); its `server_seq` is the state's.
 3. Conflict check against the server current state of `(tenant, entity_type, entity_sync_id)`:
    - entity unknown on the server → applied (whatever `base_row_version` is).
    - entity known and `base_row_version` is `null` → **conflict** (create over an existing row).
@@ -265,6 +267,17 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 | `SYNC_IDEMPOTENCY_RETENTION_DAYS` | Required integer 1..3650. |
 | `SYNC_RETENTION_INTERVAL_MINUTES` | Required integer 5..1440. |
 
+## 10. Server storage notes (not part of the wire contract)
+
+- The log is `sync_mirror_ingress` (`id` = `server_seq`); the current state is
+  `sync_entity_state` with `payload_raw` (byte-exact text, what is delivered and hashed) and
+  `payload_json` (JSONB copy for queries, NULL only if Postgres cannot store the JSON, e.g. a
+  ` ` escape).
+- Conflicts are logged in `sync_conflict_log`, device positions in `sync_device_checkpoint`,
+  reported users in `sync_device_user`, media manifests in `sync_media_manifest`.
+
 ## Changelog
 
 - 2026-10-10: first version.
+- 2026-10-10: §3.1 rule 2 also acknowledges an item equal to the current state as `duplicate`
+  (additive; implemented with the first server release).
