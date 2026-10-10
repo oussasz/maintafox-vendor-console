@@ -10,6 +10,8 @@ import {
   getTenantOfflinePolicy,
   listTenantActivations,
   listTenants,
+  reinstateMachine,
+  revokeMachine,
   updateTenantOfflinePolicy,
   type ActivationRow,
   type ControlTenant,
@@ -41,6 +43,7 @@ export function MachineActivationPanel() {
   }>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimBusy, setClaimBusy] = useState(false);
+  const [machineBusyId, setMachineBusyId] = useState<string | null>(null);
   const selectedTenant = useMemo(
     () => tenants.find((tenant) => tenant.id === selectedTenantId) ?? null,
     [tenants, selectedTenantId],
@@ -89,6 +92,38 @@ export function MachineActivationPanel() {
   useEffect(() => {
     void loadRowsAndPolicy(selectedTenantId);
   }, [selectedTenantId]);
+
+  const runMachineAction = async (row: ActivationRow, action: "revoke" | "reinstate") => {
+    const confirmText =
+      action === "revoke"
+        ? t(
+            "machines.revokeConfirm",
+            "Revoke this device? It is blocked within minutes and cannot reactivate itself with the licence key.",
+          )
+        : t("machines.reinstateConfirm", "Reinstate this device? It needs a free slot on its licence.");
+    if (!window.confirm(`${confirmText}\n\n${row.machine_id}`)) return;
+    setMachineBusyId(row.machine_id);
+    setLiveError(null);
+    setLiveSuccess(null);
+    try {
+      const privileged = {
+        reason_code: action === "revoke" ? "machine-revoke" : "machine-reinstate",
+        step_up_token: await requireStepUp(action === "revoke" ? "machine revoke" : "machine reinstate"),
+      };
+      if (action === "revoke") {
+        await revokeMachine(row.tenant_id, row.machine_id, "revoked from vendor console", privileged);
+        setLiveSuccess(t("machines.revoked", "Device revoked."));
+      } else {
+        await reinstateMachine(row.tenant_id, row.machine_id, "reinstated from vendor console", privileged);
+        setLiveSuccess(t("machines.reinstated", "Device reinstated."));
+      }
+      await loadRowsAndPolicy(row.tenant_id);
+    } catch (err) {
+      setLiveError(err instanceof Error ? err.message : "Machine action failed");
+    } finally {
+      setMachineBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -350,15 +385,35 @@ export function MachineActivationPanel() {
                     >
                       {t("machines.action.rebind", "Rebind")}
                     </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled
-                      title={t("stepUp.notAvailable")}
-                    >
-                      {t("machines.action.softSuspend", "Soft suspend")}
-                    </Button>
+                    {row.trusted_device ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        disabled={machineBusyId !== null}
+                        onClick={() => void runMachineAction(row, "revoke")}
+                      >
+                        {machineBusyId === row.machine_id
+                          ? t("machines.working", "Working…")
+                          : t("machines.action.revoke", "Revoke")}
+                      </Button>
+                    ) : row.revocation_kind === "machine" ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={machineBusyId !== null}
+                        onClick={() => void runMachineAction(row, "reinstate")}
+                      >
+                        {machineBusyId === row.machine_id
+                          ? t("machines.working", "Working…")
+                          : t("machines.action.reinstate", "Reinstate")}
+                      </Button>
+                    ) : (
+                      <span className="self-center text-xs text-text-muted">
+                        {t("machines.licenceRevoked", "Licence revoked")}
+                      </span>
+                    )}
                     <Button
                       type="button"
                       size="sm"

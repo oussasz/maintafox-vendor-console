@@ -190,10 +190,17 @@
     "action": {
       "slotRelease": "Slot release",
       "rebind": "Rebind",
-      "softSuspend": "Soft suspend",
-      "policyRefresh": "Policy refresh"
+      "policyRefresh": "Policy refresh",
+      "revoke": "Revoke",
+      "reinstate": "Reinstate"
     },
-    "fingerprintHint": "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn."
+    "fingerprintHint": "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn.",
+    "revokeConfirm": "Revoke this device? It is blocked within minutes and cannot reactivate itself with the licence key.",
+    "reinstateConfirm": "Reinstate this device? It needs a free slot on its licence.",
+    "revoked": "Device revoked.",
+    "reinstated": "Device reinstated.",
+    "working": "Working…",
+    "licenceRevoked": "Licence revoked"
   },
   "sync": {
     "title": "Sync operations",

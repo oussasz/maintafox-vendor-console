@@ -13,6 +13,7 @@
     "dev": "node --watch dist/index.js",
     "test:auth-boundaries": "pnpm run build && node scripts/auth-boundaries.integration.mjs",
     "test:license-lifecycle": "pnpm run build && node scripts/license-issuance-lifecycle.integration.mjs",
+    "test:machine-revocation": "pnpm run build && node scripts/machine-revocation-lifecycle.integration.mjs",
     "test:edition-catalog": "pnpm run build && node scripts/edition-catalog-store.mjs && node scripts/edition-catalog.integration.mjs",
     "test:legacy-tenant-schema": "pnpm run build && node scripts/legacy-tenant-schema.integration.mjs",
     "test:force-update": "pnpm run build && node scripts/force-update-governance.integration.mjs",

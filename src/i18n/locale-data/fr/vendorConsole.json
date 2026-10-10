@@ -190,10 +190,17 @@
     "action": {
       "slotRelease": "Libérer créneau",
       "rebind": "Réattacher",
-      "softSuspend": "Suspension légère",
-      "policyRefresh": "Rafraîchir politique"
+      "policyRefresh": "Rafraîchir politique",
+      "revoke": "Révoquer",
+      "reinstate": "Rétablir"
     },
-    "fingerprintHint": "Empreinte et seuils de réattachement côté serveur pour limiter le churn."
+    "fingerprintHint": "Empreinte et seuils de réattachement côté serveur pour limiter le churn.",
+    "revokeConfirm": "Révoquer cet appareil ? Il est bloqué en quelques minutes et ne peut pas se réactiver avec la clé de licence.",
+    "reinstateConfirm": "Rétablir cet appareil ? Un emplacement libre est nécessaire sur sa licence.",
+    "revoked": "Appareil révoqué.",
+    "reinstated": "Appareil rétabli.",
+    "working": "En cours…",
+    "licenceRevoked": "Licence révoquée"
   },
   "sync": {
     "title": "Synchronisation",

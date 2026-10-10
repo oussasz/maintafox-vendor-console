@@ -49,6 +49,7 @@ import {
 } from "./storage/object-store.js";
 import { openSyncStore, runSyncExchange, type SyncStore } from "./sync/index.js";
 import {
+  DEVICE_TOKEN_ROTATE_AFTER_SECONDS,
   STEP_UP_TTL_SECONDS,
   VENDOR_ADMIN_TTL_SECONDS,
   signDeviceActivationToken,
@@ -317,6 +318,14 @@ function ensureColumn(table: string, column: string, alterSql: string): void {
   }
 }
 
+// Why an activation was revoked: 'machine' (an operator revoked this device; only an operator can
+// reinstate it) or 'license' (the whole licence was revoked). NULL on legacy rows = licence-level,
+// since the licence revoke was the only revocation path before this column existed.
+ensureColumn(
+  "machine_activations",
+  "revocation_kind",
+  "ALTER TABLE machine_activations ADD COLUMN revocation_kind TEXT NULL CHECK (revocation_kind IN ('machine', 'license'))",
+);
 ensureColumn("tenants", "rollout_cohort", "ALTER TABLE tenants ADD COLUMN rollout_cohort TEXT NOT NULL DEFAULT 'stable-main'");
 ensureColumn("tenants", "update_channel", "ALTER TABLE tenants ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
 ensureColumn("tenants", "force_update_mode", "ALTER TABLE tenants ADD COLUMN force_update_mode TEXT NOT NULL DEFAULT 'inherit'");
@@ -653,7 +662,14 @@ function observeAuthAttempt(durationMs: number, success: boolean): void {
 }
 
 function observeActivationOutcome(
-  reason: "ok" | "invalid_body" | "license_not_found" | "license_revoked" | "license_expired" | "slot_limit_reached",
+  reason:
+    | "ok"
+    | "invalid_body"
+    | "license_not_found"
+    | "license_revoked"
+    | "license_expired"
+    | "slot_limit_reached"
+    | "activation_revoked",
 ): void {
   if (reason === "ok") {
     observabilityWindow.activation_success_total += 1;
@@ -1462,8 +1478,19 @@ type ActivationAuthContext = {
   machineFingerprint: string;
   /** Raw bearer token (echoed by policy-refresh for desktop claim schema). */
   token: string;
+  /** Token issue time, seconds since epoch. */
+  tokenIssuedAt: number;
 };
 
+/** `last_seen_at` is written at most this often per device (the sync heartbeat runs every ~15 s). */
+const LAST_SEEN_TOUCH_INTERVAL_MS = 60_000;
+
+/**
+ * Device requests are accepted only while the token is the one most recently issued to this
+ * machine and the machine, its licence and its tenant are all still valid. Denials:
+ * 401 missing_token | invalid_token | token_superseded;
+ * 403 tenant_inactive | license_revoked | license_expired | activation_revoked.
+ */
 function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer ")) {
@@ -1478,19 +1505,71 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
   }
   const row = db
     .prepare(
-      `SELECT revoked_at FROM machine_activations
-       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
+      `SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
+              l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
+              t.is_active AS tenant_is_active
+       FROM machine_activations a
+       JOIN license_keys l ON l.id = a.license_id
+       JOIN tenants t ON t.id = a.tenant_id
+       WHERE a.tenant_id = ? AND a.license_id = ? AND a.machine_fingerprint = ?`,
     )
-    .get(claims.tenantId, claims.licenseId, claims.machineFingerprint) as { revoked_at: string | null } | undefined;
-  if (!row || row.revoked_at) {
-    res.status(403).json({ error: "activation_revoked" });
+    .get(claims.tenantId, claims.licenseId, claims.machineFingerprint) as
+    | {
+        id: string;
+        revoked_at: string | null;
+        activation_token: string;
+        last_seen_at: string;
+        license_revoked_at: string | null;
+        license_expires_at: string | null;
+        tenant_is_active: number;
+      }
+    | undefined;
+  const deny = (status: number, error: string) => {
+    structuredLog("activation_auth_denied", {
+      status,
+      reason: error,
+      tenant_id: claims.tenantId,
+      license_id: claims.licenseId,
+      machine_fingerprint: claims.machineFingerprint,
+      path: req.path,
+    });
+    res.status(status).json({ error });
+  };
+  if (!row) {
+    deny(403, "activation_revoked");
     return;
+  }
+  if (row.activation_token !== token) {
+    deny(401, "token_superseded");
+    return;
+  }
+  if (row.tenant_is_active !== 1) {
+    deny(403, "tenant_inactive");
+    return;
+  }
+  if (row.license_revoked_at) {
+    deny(403, "license_revoked");
+    return;
+  }
+  if (row.license_expires_at && new Date(row.license_expires_at) <= new Date()) {
+    deny(403, "license_expired");
+    return;
+  }
+  if (row.revoked_at) {
+    deny(403, "activation_revoked");
+    return;
+  }
+  const nowMs = Date.now();
+  const lastSeenMs = Date.parse(row.last_seen_at);
+  if (!Number.isFinite(lastSeenMs) || nowMs - lastSeenMs >= LAST_SEEN_TOUCH_INTERVAL_MS) {
+    db.prepare("UPDATE machine_activations SET last_seen_at = ? WHERE id = ?").run(new Date(nowMs).toISOString(), row.id);
   }
   (req as express.Request & { activation?: ActivationAuthContext }).activation = {
     tenantId: claims.tenantId,
     licenseId: claims.licenseId,
     machineFingerprint: claims.machineFingerprint,
     token,
+    tokenIssuedAt: claims.issuedAt,
   };
   next();
 }
@@ -3201,9 +3280,117 @@ app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, (req, res) => {
         parsed.data.reason ?? "revoked by operator",
         licenseId,
       );
-      db.prepare("UPDATE machine_activations SET revoked_at = ? WHERE license_id = ? AND revoked_at IS NULL").run(now, licenseId);
+      db.prepare(
+        "UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'license' WHERE license_id = ? AND revoked_at IS NULL",
+      ).run(now, licenseId);
     }
     return { status: 200, body: { ok: true, revoked_at: now, audit_record_id: guard.auditRecordId } };
+  });
+});
+
+const MachineActionBody = z.object({
+  reason: z.string().min(2).max(256).optional(),
+}).strict();
+
+type MachineActivationRow = {
+  id: string;
+  license_id: string;
+  revoked_at: string | null;
+  revocation_kind: string | null;
+};
+
+function loadMachineActivation(tenantId: string, machineFingerprint: string): MachineActivationRow | undefined {
+  return db
+    .prepare(
+      `SELECT id, license_id, revoked_at, revocation_kind
+       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
+    )
+    .get(tenantId, machineFingerprint) as MachineActivationRow | undefined;
+}
+
+/**
+ * Revokes one device. Its next request (sync heartbeat, policy refresh) is refused with
+ * `activation_revoked`, its slot is freed, and re-entering the licence key does not undo it.
+ */
+app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMiddleware, (req, res) => {
+  const parsed = MachineActionBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const { tenantId, machineFingerprint } = req.params;
+  runIdempotent(req, res, () => {
+    const guard = requirePrivilegedAction(req, {
+      action_code: "machine_revoke",
+      action_category: "entitlement",
+      scope_tenant_id: tenantId,
+      entity_refs: { tenant_id: tenantId, machine_id: machineFingerprint },
+      payload: { reason: parsed.data.reason ?? "revoked by operator" },
+    });
+    if (!guard.ok) {
+      return { status: guard.status, body: guard.body };
+    }
+    const row = loadMachineActivation(tenantId, machineFingerprint);
+    if (!row) {
+      return { status: 404, body: { error: "activation_not_found" } };
+    }
+    if (row.revoked_at) {
+      return {
+        status: 200,
+        body: { ok: true, revoked_at: row.revoked_at, revocation_kind: row.revocation_kind ?? "license", audit_record_id: guard.auditRecordId },
+      };
+    }
+    const now = new Date().toISOString();
+    db.prepare("UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'machine' WHERE id = ?").run(now, row.id);
+    structuredLog("machine_activation_revoked", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
+    return { status: 200, body: { ok: true, revoked_at: now, revocation_kind: "machine", audit_record_id: guard.auditRecordId } };
+  });
+});
+
+/**
+ * Reinstates a device revoked with the route above. A device revoked because its licence was
+ * revoked cannot be reinstated here (issue a new licence instead). Needs a free slot.
+ */
+app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/reinstate", authMiddleware, (req, res) => {
+  const parsed = MachineActionBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendValidationError(res, parsed, "body");
+    return;
+  }
+  const { tenantId, machineFingerprint } = req.params;
+  runIdempotent(req, res, () => {
+    const guard = requirePrivilegedAction(req, {
+      action_code: "machine_reinstate",
+      action_category: "entitlement",
+      scope_tenant_id: tenantId,
+      entity_refs: { tenant_id: tenantId, machine_id: machineFingerprint },
+      payload: { reason: parsed.data.reason ?? "reinstated by operator" },
+    });
+    if (!guard.ok) {
+      return { status: guard.status, body: guard.body };
+    }
+    const row = loadMachineActivation(tenantId, machineFingerprint);
+    if (!row) {
+      return { status: 404, body: { error: "activation_not_found" } };
+    }
+    if (!row.revoked_at) {
+      return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
+    }
+    if (row.revocation_kind !== "machine") {
+      return { status: 409, body: { error: "license_revoked", message: "The licence itself is revoked; issue a new licence." } };
+    }
+    const lic = db
+      .prepare("SELECT max_machines, revoked_at FROM license_keys WHERE id = ?")
+      .get(row.license_id) as { max_machines: number; revoked_at: string | null } | undefined;
+    if (!lic || lic.revoked_at) {
+      return { status: 409, body: { error: "license_revoked" } };
+    }
+    if (countActiveActivations(row.license_id) >= lic.max_machines) {
+      return { status: 409, body: { error: "slot_limit_reached", max_machines: lic.max_machines } };
+    }
+    db.prepare("UPDATE machine_activations SET revoked_at = NULL, revocation_kind = NULL WHERE id = ?").run(row.id);
+    structuredLog("machine_activation_reinstated", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
+    return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
   });
 });
 
@@ -3289,7 +3476,7 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, (req, res) => {
   const effectiveLimit = withPagination ? limit : 10_000;
   const rows = db
     .prepare(
-      `SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, l.update_channel
+      `SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind, l.update_channel
        FROM machine_activations a
        JOIN license_keys l ON l.id = a.license_id
        WHERE a.tenant_id = ?
@@ -3300,6 +3487,7 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, (req, res) => {
       last_seen_at: string;
       app_version: string | null;
       revoked_at: string | null;
+      revocation_kind: string | null;
       update_channel: string;
     }>;
   const filtered = cursor
@@ -3321,6 +3509,8 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, (req, res) => {
       last_heartbeat_rfc3339: row.last_seen_at,
       app_version: row.app_version,
       trusted_device: row.revoked_at == null,
+      // 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked, null = active.
+      revocation_kind: row.revoked_at ? (row.revocation_kind ?? "license") : null,
       activation_source: "license_claim",
       anomaly_flags: row.revoked_at ? ["revoked"] : [],
       heartbeat_freshness,
@@ -4460,11 +4650,39 @@ function validateLicenseForActivation(
 
   const existing = db
     .prepare(
-      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
+      `SELECT id, machine_fingerprint, license_id, revoked_at, revocation_kind
+       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
     )
-    .get(lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
+    .get(lic.tenant_id, input.machine_fingerprint) as
+    | {
+        id: string;
+        machine_fingerprint: string;
+        license_id: string;
+        revoked_at: string | null;
+        revocation_kind: string | null;
+      }
+    | undefined;
 
-  if (!existing) {
+  // An operator-revoked machine stays revoked until an operator reinstates it: presenting the
+  // licence key again (preview or claim) must not undo the revocation.
+  if (existing?.revoked_at && existing.revocation_kind === "machine") {
+    return {
+      ok: false,
+      failure: {
+        status: 403,
+        body: {
+          error: "activation_revoked",
+          message: "This device was revoked by the vendor. Ask your administrator to have it reinstated.",
+        },
+        reason: "activation_revoked",
+      },
+    };
+  }
+
+  // A device already holds a slot only while it is active on this same licence; a revoked device or
+  // one bound to another licence needs a free slot like a new one.
+  const holdsSlot = existing != null && existing.revoked_at == null && existing.license_id === lic.id;
+  if (!holdsSlot) {
     const activeCount = countActiveActivations(lic.id);
     if (activeCount >= lic.max_machines) {
       return {
@@ -4560,18 +4778,20 @@ app.post("/api/v1/activation/claim", activationRateLimiter, (req, res) => {
     machineFingerprint: input.machine_fingerprint,
   });
 
+  // Operator-revoked machines were already refused by validateLicenseForActivation.
   const existing = db
-    .prepare(
-      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
-    )
+    .prepare("SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?")
     .get(validated.lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
 
   if (existing) {
+    // Rebind to the licence being claimed (e.g. after a licence replacement) so the device lookup
+    // in activationAuthMiddleware matches the token's license_id.
     db.prepare(
       `UPDATE machine_activations
-       SET machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?, revoked_at = NULL
+       SET license_id = ?, machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?,
+           revoked_at = NULL, revocation_kind = NULL
        WHERE id = ?`,
-    ).run(input.machine_label ?? null, input.app_version ?? null, activationToken, nowIso, existing.id);
+    ).run(validated.lic.id, input.machine_label ?? null, input.app_version ?? null, activationToken, nowIso, existing.id);
   } else {
     db.prepare(
       `INSERT INTO machine_activations
@@ -4655,11 +4875,32 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRa
     includeEnvelope: true,
     bumpLineage: true,
   });
+  // Rotate an ageing device token: the new one is stored, so the old one stops working at once
+  // (activationAuthMiddleware compares against the stored token).
+  let activationToken = activation.token;
+  const tokenAgeSeconds = Math.floor(Date.now() / 1000) - activation.tokenIssuedAt;
+  if (tokenAgeSeconds >= DEVICE_TOKEN_ROTATE_AFTER_SECONDS) {
+    activationToken = signDeviceActivationToken(JWT_SECRET, {
+      tenantId: activation.tenantId,
+      licenseId: activation.licenseId,
+      machineFingerprint: activation.machineFingerprint,
+    });
+    db.prepare(
+      `UPDATE machine_activations SET activation_token = ?
+       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
+    ).run(activationToken, activation.tenantId, activation.licenseId, activation.machineFingerprint);
+    structuredLog("activation_token_rotated", {
+      tenant_id: activation.tenantId,
+      license_id: activation.licenseId,
+      machine_fingerprint: activation.machineFingerprint,
+      previous_token_age_seconds: tokenAgeSeconds,
+    });
+  }
   res.json({
     ...summary,
     activated_device_count: countActiveActivations(licRow.id),
-    // Echo the still-valid activation token so desktop Zod claim schema accepts the payload.
-    activation_token: activation.token,
+    // Always present: the desktop stores it as its bearer token (rotated when ageing).
+    activation_token: activationToken,
   });
 });
 

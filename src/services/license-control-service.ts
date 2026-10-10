@@ -126,6 +126,8 @@ const ActivationRowSchema = z.object({
   last_heartbeat_rfc3339: z.string().nullable(),
   app_version: z.string().nullable().optional(),
   trusted_device: z.boolean(),
+  /** 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked, null = active. */
+  revocation_kind: z.enum(["machine", "license"]).nullable().optional(),
   activation_source: z.string(),
   anomaly_flags: z.array(z.string()),
   heartbeat_freshness: z.enum(["live", "stale", "unknown"]),
@@ -477,6 +479,51 @@ export async function revokeLicense(
       ...privilegedHeaders(privileged),
     },
   });
+  await throwIfNotOk(res);
+}
+
+/**
+ * Revoke one device: its next request is refused (`activation_revoked`), its slot is freed, and
+ * re-entering the licence key on that device does not undo it.
+ */
+export async function revokeMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/revoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+      headers: {
+        "Idempotency-Key": idempotencyKey("revoke-machine"),
+        ...privilegedHeaders(privileged),
+      },
+    },
+  );
+  await throwIfNotOk(res);
+}
+
+/** Reinstate a device revoked with `revokeMachine` (needs a free slot on its licence). */
+export async function reinstateMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/reinstate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+      headers: {
+        "Idempotency-Key": idempotencyKey("reinstate-machine"),
+        ...privilegedHeaders(privileged),
+      },
+    },
+  );
   await throwIfNotOk(res);
 }
 

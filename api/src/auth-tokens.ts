@@ -27,6 +27,12 @@ export type DeviceActivationClaims = {
   machineFingerprint: string;
 };
 
+/** Verified device token claims plus its issue time (seconds since epoch, from `iat`). */
+export type VerifiedDeviceActivationClaims = DeviceActivationClaims & { issuedAt: number };
+
+/** A device token older than this is replaced (and the old one invalidated) on policy refresh. */
+export const DEVICE_TOKEN_ROTATE_AFTER_SECONDS = 7 * 24 * 3600;
+
 export type StepUpClaims = { userId: number; jti: string };
 
 export function signVendorAdminToken(secret: string, user: { id: number; email: string }): string {
@@ -75,7 +81,10 @@ export function signDeviceActivationToken(secret: string, claims: DeviceActivati
 }
 
 /** Returns claims, or null when the token is invalid, expired, or not a device activation token. */
-export function verifyDeviceActivationToken(secret: string, token: string): DeviceActivationClaims | null {
+export function verifyDeviceActivationToken(
+  secret: string,
+  token: string,
+): VerifiedDeviceActivationClaims | null {
   try {
     const payload = jwt.verify(token, secret, {
       algorithms: ["HS256"],
@@ -87,6 +96,7 @@ export function verifyDeviceActivationToken(secret: string, token: string): Devi
       typeof payload.tenant_id !== "string" ||
       typeof payload.license_id !== "string" ||
       typeof payload.machine_fingerprint !== "string" ||
+      typeof payload.iat !== "number" ||
       !payload.tenant_id ||
       !payload.license_id ||
       !payload.machine_fingerprint
@@ -97,6 +107,7 @@ export function verifyDeviceActivationToken(secret: string, token: string): Devi
       tenantId: payload.tenant_id,
       licenseId: payload.license_id,
       machineFingerprint: payload.machine_fingerprint,
+      issuedAt: payload.iat,
     };
   } catch {
     return null;
