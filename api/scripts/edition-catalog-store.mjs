@@ -24,9 +24,10 @@ import {
   updateEdition,
 } from "../dist/edition-catalog-store.js";
 import { buildSignedEntitlementEnvelope } from "../dist/entitlement-signer.js";
+import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 
-// The signer has no built-in secret; tests must configure one explicitly.
-process.env.ENTITLEMENT_ISSUER_SECRET_V1 = "integration_test_entitlement_secret_min_32_chars_0001";
+// The signer has no built-in key; tests configure the TEST-ONLY key explicitly.
+Object.assign(process.env, TEST_ENTITLEMENT_SIGNING_ENV);
 
 const db = new Database(":memory:");
 db.pragma("foreign_keys = ON");

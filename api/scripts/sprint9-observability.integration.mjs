@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 
 const dataDir = mkdtempSync(join(tmpdir(), "mfx-obsv-api-"));
 const port = 33118;
@@ -36,7 +37,7 @@ async function run() {
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
       SEED_ADMIN_EMAIL: "admin@maintafox.systems",
-      ENTITLEMENT_ISSUER_SECRET_V1: "integration_test_entitlement_secret_min_32_chars_0001",
+      ...TEST_ENTITLEMENT_SIGNING_ENV,
       SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       REQUIRE_PRIVILEGED_REASON: "1",

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 
 const dataDir = mkdtempSync(join(tmpdir(), "mfx-auth-boundaries-"));
 const port = 33141;
@@ -28,7 +29,7 @@ const BASE_ENV = {
   JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
   SEED_ADMIN_PASSWORD: ADMIN_PASSWORD,
   SEED_ADMIN_EMAIL: ADMIN_EMAIL,
-  ENTITLEMENT_ISSUER_SECRET_V1: "integration_test_entitlement_secret_min_32_chars_0001",
+  ...TEST_ENTITLEMENT_SIGNING_ENV,
   SEED_BEHAVIOR: "safe",
   NODE_ENV: "production",
   CORS_ORIGIN: "http://localhost:5174",
@@ -68,7 +69,7 @@ async function assertRefusesToBoot(missingVar) {
 }
 
 async function run() {
-  for (const v of ["ENTITLEMENT_ISSUER_SECRET_V1", "CORS_ORIGIN", "DATA_DIR"]) {
+  for (const v of ["ENTITLEMENT_SIGNING_PRIVATE_KEY", "CORS_ORIGIN", "DATA_DIR"]) {
     await assertRefusesToBoot(v);
   }
 

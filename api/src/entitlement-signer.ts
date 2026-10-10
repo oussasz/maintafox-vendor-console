@@ -1,8 +1,11 @@
 /**
- * Signs entitlement envelopes using the same canonical payload + SHA256 scheme
- * as desktop `entitlements/queries.rs` (issuer maintafox-vps / key-v1).
+ * Signs entitlement envelopes with Ed25519 over the canonical payload that desktop
+ * `entitlements/queries.rs::canonical_payload` rebuilds byte-for-byte.
+ *
+ * The private key exists only in the control-plane environment; desktops embed the matching
+ * public keys (by key_id), so a licence cannot be forged from anything shipped in the binary.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 import {
   capabilitiesJsonForEdition,
@@ -11,21 +14,49 @@ import {
   policyJsonForEdition,
 } from "./edition-catalog.js";
 
-export const ENTITLEMENT_SIGNATURE_ALG_V1 = "sha256:issuer-key-v1";
+export const ENTITLEMENT_SIGNATURE_ALG = "ed25519:v2";
 export const ENTITLEMENT_ISSUER = "maintafox-vps";
-export const ENTITLEMENT_KEY_ID_V1 = "key-v1";
+
+export type EntitlementSigningKey = { keyId: string; privateKey: KeyObject };
+
+const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
 /**
- * Symmetric v1 signing secret. There is deliberately no built-in fallback: the previous default
- * was a literal also compiled into the desktop binary, which made envelopes forgeable.
- * Interim scheme only — master plan Phase 1.1 replaces it with Ed25519 (private key server-side).
+ * Parses a signing key from base64-encoded PKCS#8 DER (single line, fits in .env).
+ * Generate with `node scripts/generate-entitlement-signing-key.mjs`.
  */
-export function issuerSecretV1(): string {
-  const fromEnv = process.env.ENTITLEMENT_ISSUER_SECRET_V1?.trim();
-  if (!fromEnv || fromEnv.length < 32) {
-    throw new Error("ENTITLEMENT_ISSUER_SECRET_V1 is not configured (min 32 characters).");
+export function parseEntitlementSigningKey(keyId: string, privateKeyPkcs8Base64: string): EntitlementSigningKey {
+  if (!KEY_ID_PATTERN.test(keyId)) {
+    throw new Error("ENTITLEMENT_SIGNING_KEY_ID must be 3-64 chars of [a-z0-9._-].");
   }
-  return fromEnv;
+  let privateKey: KeyObject;
+  try {
+    privateKey = createPrivateKey({
+      key: Buffer.from(privateKeyPkcs8Base64, "base64"),
+      format: "der",
+      type: "pkcs8",
+    });
+  } catch (err) {
+    throw new Error(`ENTITLEMENT_SIGNING_PRIVATE_KEY is not a valid base64 PKCS#8 key: ${(err as Error).message}`);
+  }
+  if (privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error(`ENTITLEMENT_SIGNING_PRIVATE_KEY must be an Ed25519 key (got ${privateKey.asymmetricKeyType}).`);
+  }
+  return { keyId, privateKey };
+}
+
+let cachedKey: EntitlementSigningKey | null = null;
+
+/** Loads (once) the signing key from ENTITLEMENT_SIGNING_KEY_ID + ENTITLEMENT_SIGNING_PRIVATE_KEY. */
+export function loadEntitlementSigningKey(): EntitlementSigningKey {
+  if (cachedKey) return cachedKey;
+  const keyId = process.env.ENTITLEMENT_SIGNING_KEY_ID?.trim();
+  const material = process.env.ENTITLEMENT_SIGNING_PRIVATE_KEY?.trim();
+  if (!keyId || !material) {
+    throw new Error("ENTITLEMENT_SIGNING_KEY_ID and ENTITLEMENT_SIGNING_PRIVATE_KEY are required.");
+  }
+  cachedKey = parseEntitlementSigningKey(keyId, material);
+  return cachedKey;
 }
 
 export type EntitlementEnvelopePayload = {
@@ -78,10 +109,15 @@ export function payloadHash(input: UnsignedEnvelope): string {
   return createHash("sha256").update(canonicalPayload(input)).digest("hex");
 }
 
-export function signEnvelope(input: UnsignedEnvelope, secret = issuerSecretV1()): string {
-  const hash = payloadHash(input);
-  const material = `${input.issuer}:${input.key_id}:${hash}:${secret}`;
-  return createHash("sha256").update(material).digest("hex");
+/** Ed25519 signature (hex, 64 bytes) over the UTF-8 canonical payload. */
+export function signEnvelope(
+  input: UnsignedEnvelope,
+  key: EntitlementSigningKey = loadEntitlementSigningKey(),
+): string {
+  if (input.key_id !== key.keyId) {
+    throw new Error(`Envelope key_id '${input.key_id}' does not match signing key '${key.keyId}'.`);
+  }
+  return cryptoSign(null, Buffer.from(canonicalPayload(input), "utf8"), key.privateKey).toString("hex");
 }
 
 export function capabilitiesDigest(capabilitiesJson: string): string {
@@ -118,14 +154,15 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
     }
     capabilitiesJson = capabilitiesJsonForEdition(tier);
   }
+  const signingKey = loadEntitlementSigningKey();
   const now = input.issuedAt ?? new Date().toISOString();
   const unsigned: UnsignedEnvelope = {
     envelope_id: `env_${randomBytes(8).toString("hex")}`,
     previous_envelope_id: input.previousEnvelopeId ?? null,
     lineage_version: input.lineageVersion,
     issuer: ENTITLEMENT_ISSUER,
-    key_id: ENTITLEMENT_KEY_ID_V1,
-    signature_alg: ENTITLEMENT_SIGNATURE_ALG_V1,
+    key_id: signingKey.keyId,
+    signature_alg: ENTITLEMENT_SIGNATURE_ALG,
     tier,
     state: input.state ?? "active",
     channel: input.channel,
@@ -140,7 +177,7 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
   };
   return {
     ...unsigned,
-    signature: signEnvelope(unsigned),
+    signature: signEnvelope(unsigned, signingKey),
   };
 }
 

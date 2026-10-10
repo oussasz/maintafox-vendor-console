@@ -10,7 +10,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -39,7 +39,7 @@ import {
   addHoursIso,
   buildSignedEntitlementEnvelope,
   capabilitiesDigest,
-  issuerSecretV1,
+  loadEntitlementSigningKey,
   type EntitlementEnvelopePayload,
 } from "./entitlement-signer.js";
 import {
@@ -59,28 +59,35 @@ import {
   verifyVendorAdminToken,
 } from "./auth-tokens.js";
 
+/**
+ * Startup failure: write synchronously (stderr is an async pipe on Windows, so console.error
+ * followed by process.exit can drop the message) and exit non-zero.
+ */
+function fatal(message: string): never {
+  writeSync(2, `FATAL: ${message}
+`);
+  process.exit(1);
+}
+
 /** Required configuration: the process refuses to start rather than run on a hidden default. */
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
-    console.error(`FATAL: environment variable ${name} is required (see .env.example).`);
-    process.exit(1);
+    fatal(`environment variable ${name} is required (see .env.example).`);
   }
   return value;
 }
 
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
 if (!JWT_SECRET_RAW || JWT_SECRET_RAW.length < 32) {
-  console.error("FATAL: Set JWT_SECRET (min 32 characters) in the environment.");
-  process.exit(1);
+  fatal("Set JWT_SECRET (min 32 characters) in the environment.");
 }
 const JWT_SECRET: string = JWT_SECRET_RAW;
 
 try {
-  issuerSecretV1();
+  loadEntitlementSigningKey();
 } catch (err) {
-  console.error(`FATAL: ${(err as Error).message}`);
-  process.exit(1);
+  fatal((err as Error).message);
 }
 
 const CORS_ORIGIN = requireEnv("CORS_ORIGIN");
@@ -93,8 +100,7 @@ function parseCorsOrigins(raw: string): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (list.length === 0) {
-    console.error("FATAL: CORS_ORIGIN must list at least one origin.");
-    process.exit(1);
+    fatal("CORS_ORIGIN must list at least one origin.");
   }
   return list;
 }

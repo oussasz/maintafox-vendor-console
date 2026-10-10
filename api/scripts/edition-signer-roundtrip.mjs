@@ -1,9 +1,9 @@
 /**
- * Round-trip check: edition catalog + signer produce digests/signatures
- * matching the desktop canonical payload algorithm.
+ * Round-trip check: edition catalog + Ed25519 signer produce envelopes whose signature verifies
+ * against the public key over the canonical payload the desktop rebuilds; tampering is detected.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createPublicKey, verify } from "node:crypto";
 
 import {
   capabilitiesJsonForEdition,
@@ -14,14 +14,16 @@ import {
   buildSignedEntitlementEnvelope,
   canonicalPayload,
   ENTITLEMENT_ISSUER,
-  ENTITLEMENT_KEY_ID_V1,
-  payloadHash,
-  signEnvelope,
+  ENTITLEMENT_SIGNATURE_ALG,
 } from "../dist/entitlement-signer.js";
+import {
+  TEST_ENTITLEMENT_KEY_ID,
+  TEST_ENTITLEMENT_PUBLIC_KEY_HEX,
+  TEST_ENTITLEMENT_SIGNING_ENV,
+} from "./lib/test-signing-key.mjs";
 
-// The signer has no built-in secret; tests must configure one explicitly.
-const secret = "integration_test_entitlement_secret_min_32_chars_0001";
-process.env.ENTITLEMENT_ISSUER_SECRET_V1 = secret;
+// The signer has no built-in key; tests configure the TEST-ONLY key explicitly.
+Object.assign(process.env, TEST_ENTITLEMENT_SIGNING_ENV);
 
 const catalog = listFactoryEditionCatalog();
 assert.equal(catalog.length, 4);
@@ -46,22 +48,28 @@ const envelope = buildSignedEntitlementEnvelope({
 });
 
 assert.equal(envelope.issuer, ENTITLEMENT_ISSUER);
-assert.equal(envelope.key_id, ENTITLEMENT_KEY_ID_V1);
+assert.equal(envelope.key_id, TEST_ENTITLEMENT_KEY_ID);
+assert.equal(envelope.signature_alg, ENTITLEMENT_SIGNATURE_ALG);
 assert.equal(envelope.tier, "core");
 assert.equal(envelope.lineage_version, 1);
 assert.equal(envelope.previous_envelope_id, null);
+assert.match(envelope.signature, /^[0-9a-f]{128}$/, "Ed25519 signature is 64 bytes hex");
 
+// Verify with the PUBLIC key only (what the desktop holds). SPKI = 12-byte header + raw key.
+const spki = Buffer.concat([
+  Buffer.from("302a300506032b6570032100", "hex"),
+  Buffer.from(TEST_ENTITLEMENT_PUBLIC_KEY_HEX, "hex"),
+]);
+const publicKey = createPublicKey({ key: spki, format: "der", type: "spki" });
 const { signature, ...unsigned } = envelope;
-const expected = signEnvelope(unsigned, secret);
-assert.equal(signature, expected);
+const canonical = Buffer.from(canonicalPayload(unsigned), "utf8");
+assert.equal(verify(null, canonical, publicKey, Buffer.from(signature, "hex")), true, "signature must verify");
 
-const hash = payloadHash(unsigned);
-const material = `${unsigned.issuer}:${unsigned.key_id}:${hash}:${secret}`;
-const manual = createHash("sha256").update(material).digest("hex");
-assert.equal(signature, manual);
+// Any field change must invalidate the signature.
+const tampered = Buffer.from(canonicalPayload({ ...unsigned, machine_slots: 99 }), "utf8");
+assert.equal(verify(null, tampered, publicKey, Buffer.from(signature, "hex")), false, "tampering must be detected");
 
-const canonical = canonicalPayload(unsigned);
-assert.ok(canonical.includes('"previous_envelope_id":null'));
-assert.ok(canonical.includes('"capabilities_json":'));
+assert.ok(canonicalPayload(unsigned).includes('"previous_envelope_id":null'));
+assert.ok(canonicalPayload(unsigned).includes('"capabilities_json":'));
 
-console.log("edition-signer round-trip ok");
+console.log("edition-signer round-trip ok (Ed25519)");
