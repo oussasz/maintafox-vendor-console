@@ -12,6 +12,9 @@
  * - The SQLite file is opened read-only and never modified (rollback = keep using it).
  * - SQLite sync fallback tables (only present when the API ran without DATABASE_URL) are refused
  *   unless --discard-sqlite-sync-fallback is given: live sync data is already in Postgres.
+ * - Tables no API version uses any more are refused unless each one is named with
+ *   --archive-legacy-table <name>; their rows are then copied verbatim (one JSON object per row)
+ *   into legacy_sqlite_archive and counted like the other tables.
  */
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
@@ -54,9 +57,12 @@ const SQLITE_SYNC_FALLBACK_TABLES = [
 ];
 
 const LEGACY_ATTRIBUTES_COLUMN = "legacy_attributes_json";
+const LEGACY_ARCHIVE_TABLE = "legacy_sqlite_archive";
 const INSERT_BATCH_ROWS = 500;
+/** Table names are interpolated into SQL, so only plain identifiers are accepted. */
+const TABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-type Args = { sqlitePath: string; dryRun: boolean; discardSyncFallback: boolean };
+type Args = { sqlitePath: string; dryRun: boolean; discardSyncFallback: boolean; archiveLegacyTables: string[] };
 
 class ImportRefused extends Error {}
 
@@ -64,6 +70,7 @@ function parseArgs(argv: string[]): Args {
   let sqlitePath: string | null = null;
   let dryRun = false;
   let discardSyncFallback = false;
+  const archiveLegacyTables: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--sqlite") {
@@ -73,6 +80,16 @@ function parseArgs(argv: string[]): Args {
       dryRun = true;
     } else if (a === "--discard-sqlite-sync-fallback") {
       discardSyncFallback = true;
+    } else if (a === "--archive-legacy-table") {
+      const name = argv[i + 1] ?? "";
+      i += 1;
+      if (!TABLE_NAME_PATTERN.test(name)) {
+        throw new ImportRefused(`--archive-legacy-table needs a table name, got '${name}'`);
+      }
+      if (archiveLegacyTables.includes(name)) {
+        throw new ImportRefused(`--archive-legacy-table ${name} given twice`);
+      }
+      archiveLegacyTables.push(name);
     } else {
       throw new ImportRefused(`unknown argument '${a}'`);
     }
@@ -80,7 +97,7 @@ function parseArgs(argv: string[]): Args {
   if (!sqlitePath) {
     throw new ImportRefused("--sqlite <path to control-plane.db> is required");
   }
-  return { sqlitePath: resolve(sqlitePath), dryRun, discardSyncFallback };
+  return { sqlitePath: resolve(sqlitePath), dryRun, discardSyncFallback, archiveLegacyTables };
 }
 
 function fileSha256(path: string): Promise<string> {
@@ -199,6 +216,39 @@ async function copyTable(
   };
 }
 
+type ArchiveReport = { source_rows: number; archived_rows: number };
+
+/** Copies every row of a legacy-only table into legacy_sqlite_archive as one JSON object per row. */
+async function archiveTable(src: SqliteDatabase.Database, db: Database, table: string): Promise<ArchiveReport> {
+  const sourceCount = sqliteCount(src, table);
+  // Plain SELECT (no ORDER BY rowid) so WITHOUT ROWID tables are archived too.
+  const rows = src.prepare(`SELECT * FROM ${table}`).iterate() as IterableIterator<Record<string, unknown>>;
+  let batch: Array<[number, string]> = [];
+  let rowNumber = 0;
+  let archived = 0;
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const params: SqlParam[] = [];
+    const tuples = batch.map(([n, json]) => {
+      params.push(table, n, json);
+      return `($${params.length - 2}, $${params.length - 1}, $${params.length})`;
+    });
+    const result = await db.query(
+      `INSERT INTO ${LEGACY_ARCHIVE_TABLE} (source_table, source_row_number, row_json) VALUES ${tuples.join(", ")}`,
+      params,
+    );
+    archived += result.rowCount ?? 0;
+    batch = [];
+  };
+  for (const row of rows) {
+    rowNumber += 1;
+    batch.push([rowNumber, JSON.stringify(row)]);
+    if (batch.length >= INSERT_BATCH_ROWS) await flush();
+  }
+  await flush();
+  return { source_rows: sourceCount, archived_rows: archived };
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const databaseUrl = process.env["DATABASE_URL"]?.trim();
@@ -226,9 +276,19 @@ async function main(): Promise<void> {
 
     const tables = sqliteTables(src);
     const known = new Set<string>([...CONTROL_PLANE_TABLES, ...SQLITE_SYNC_FALLBACK_TABLES]);
-    const unknown = [...tables].filter((t) => !known.has(t));
+    for (const t of args.archiveLegacyTables) {
+      if (known.has(t)) {
+        throw new ImportRefused(`--archive-legacy-table ${t}: ${t} is a table this import copies or handles itself`);
+      }
+      if (!tables.has(t)) {
+        throw new ImportRefused(`--archive-legacy-table ${t}: the SQLite file has no table ${t}`);
+      }
+    }
+    const unknown = [...tables].filter((t) => !known.has(t) && !args.archiveLegacyTables.includes(t));
     if (unknown.length > 0) {
-      throw new ImportRefused(`SQLite contains tables this import does not know: ${unknown.join(", ")}`);
+      throw new ImportRefused(
+        `SQLite contains tables this import does not know: ${unknown.join(", ")}. If no API version uses them any more, name each one with --archive-legacy-table <name> to keep its rows in ${LEGACY_ARCHIVE_TABLE}.`,
+      );
     }
     const syncFallbackRows: Record<string, number> = {};
     for (const t of SQLITE_SYNC_FALLBACK_TABLES) {
@@ -265,7 +325,7 @@ async function main(): Promise<void> {
             `the SQLite control plane was already imported on ${marker.imported_at.toISOString()} from ${marker.source_path}; refusing to run twice`,
           );
         }
-        for (const t of CONTROL_PLANE_TABLES) {
+        for (const t of [...CONTROL_PLANE_TABLES, LEGACY_ARCHIVE_TABLE]) {
           const c = (await db.get<{ c: number }>(`SELECT COUNT(*) AS c FROM ${t}`))!.c;
           if (c > 0) {
             throw new ImportRefused(
@@ -290,6 +350,18 @@ async function main(): Promise<void> {
           const r = tableReports[t]!;
           if (target !== r.source_rows || r.copied_rows !== r.source_rows) {
             mismatches.push(`${t}: source ${r.source_rows}, copied ${r.copied_rows}, target ${target}`);
+          }
+        }
+        const archiveReports: Record<string, ArchiveReport> = {};
+        for (const t of args.archiveLegacyTables) {
+          const r = await archiveTable(src, db, t);
+          archiveReports[t] = r;
+          const target = (await db.get<{ c: number }>(
+            `SELECT COUNT(*)::int AS c FROM ${LEGACY_ARCHIVE_TABLE} WHERE source_table = $1`,
+            t,
+          ))!.c;
+          if (target !== r.source_rows || r.archived_rows !== r.source_rows) {
+            mismatches.push(`${t} (archive): source ${r.source_rows}, archived ${r.archived_rows}, target ${target}`);
           }
         }
         if (mismatches.length > 0) {
@@ -322,6 +394,7 @@ async function main(): Promise<void> {
           source_sha256: sourceSha256,
           migrations_applied_now: migrations.applied,
           tables: tableReports,
+          legacy_tables_archived: archiveReports,
           audit_chain: { source: sourceAudit, target: targetAudit },
           sqlite_sync_fallback_rows_left_behind: syncFallbackRows,
         };

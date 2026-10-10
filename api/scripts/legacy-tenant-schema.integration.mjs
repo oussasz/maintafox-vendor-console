@@ -75,7 +75,17 @@ function buildLegacySqlite(path) {
       idempotency_key TEXT NOT NULL, entity_type TEXT NOT NULL, entity_sync_id TEXT NOT NULL, operation TEXT NOT NULL,
       row_version INTEGER NOT NULL, payload_json TEXT NOT NULL, payload_hash TEXT NOT NULL, machine_fingerprint TEXT NOT NULL,
       received_at_rfc3339 TEXT NOT NULL, UNIQUE(tenant_id, idempotency_key));
+    -- Leftovers of an earlier, never-released API build (the live VPS file has tables like these).
+    CREATE TABLE tenant_bootstrap_tokens (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+      invite_type TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL, used_at TEXT);
+    CREATE TABLE sync_mirror_outbox_idempotency (tenant_id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+      applied_at_rfc3339 TEXT NOT NULL, PRIMARY KEY (tenant_id, idempotency_key));
   `);
+  const insertToken = db.prepare(
+    "INSERT INTO tenant_bootstrap_tokens (id, tenant_id, token_hash, invite_type, expires_at, created_at, used_at) VALUES (?, 'tenant_legacy_1', ?, 'admin', '2026-07-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z', ?)",
+  );
+  insertToken.run("tok_1", sha256Hex("t1"), null);
+  insertToken.run("tok_2", sha256Hex("t2"), "2026-06-02T00:00:00.000Z");
   db.prepare("INSERT INTO users (email, password_hash) VALUES (?, ?)").run(ADMIN_EMAIL, bcrypt.hashSync(ADMIN_PASSWORD, 4));
   db.prepare(
     "INSERT INTO edition_catalog (id, label, capabilities_json, is_system, row_version, updated_at, updated_by) VALUES ('core', 'Core', '{}', 1, 1, NULL, 'system-seed')",
@@ -175,16 +185,34 @@ async function run() {
     // ── Import tool ─────────────────────────────────────────────────────────────────────────
     const databaseUrl = await testPg.createDatabase();
 
-    const noFlag = runImport(databaseUrl, sqlitePath);
+    const ARCHIVE = ["--archive-legacy-table", "tenant_bootstrap_tokens", "--archive-legacy-table", "sync_mirror_outbox_idempotency"];
+
+    const noArchive = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback"]);
+    assert.equal(noArchive.code, 1, "tables no API version knows must be refused unless named");
+    assert.match(noArchive.stderr, /does not know: tenant_bootstrap_tokens, sync_mirror_outbox_idempotency/);
+    assert.match(noArchive.stderr, /--archive-legacy-table/);
+
+    const archiveKnown = runImport(databaseUrl, sqlitePath, [...ARCHIVE, "--archive-legacy-table", "tenants"]);
+    assert.equal(archiveKnown.code, 1, "a table the import copies itself cannot be archived");
+    const archiveMissing = runImport(databaseUrl, sqlitePath, [...ARCHIVE, "--archive-legacy-table", "no_such_table"]);
+    assert.equal(archiveMissing.code, 1, "naming a table the file does not have is refused");
+    assert.match(archiveMissing.stderr, /has no table no_such_table/);
+
+    const noFlag = runImport(databaseUrl, sqlitePath, ARCHIVE);
     assert.equal(noFlag.code, 1, "sync fallback rows must be refused without the explicit flag");
     assert.match(noFlag.stderr, /--discard-sqlite-sync-fallback/);
 
-    const dry = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback", "--dry-run"]);
+    const dry = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback", ...ARCHIVE, "--dry-run"]);
     assert.equal(dry.code, 0, `dry run must succeed: ${dry.stderr}`);
     assert.equal(JSON.parse(dry.stdout).status, "dry_run_ok_rolled_back");
     assert.equal((await sql(databaseUrl, "SELECT COUNT(*)::int AS c FROM users"))[0].c, 0, "dry run must leave Postgres empty");
+    assert.equal(
+      (await sql(databaseUrl, "SELECT COUNT(*)::int AS c FROM legacy_sqlite_archive"))[0].c,
+      0,
+      "dry run must leave the archive empty",
+    );
 
-    const real = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback"]);
+    const real = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback", ...ARCHIVE]);
     assert.equal(real.code, 0, `import must succeed: ${real.stderr}`);
     const report = JSON.parse(real.stdout);
     assert.equal(report.status, "imported");
@@ -198,8 +226,26 @@ async function run() {
     const [legacyTwo] = await sql(databaseUrl, "SELECT legacy_attributes_json, edition FROM tenants WHERE id = 'tenant_legacy_2'");
     assert.equal(JSON.parse(legacyTwo.legacy_attributes_json).status_reason, "unpaid", "legacy values are kept");
     assert.equal(legacyTwo.edition, "core", "missing newer columns take the schema default");
+    assert.deepEqual(report.legacy_tables_archived, {
+      tenant_bootstrap_tokens: { source_rows: 2, archived_rows: 2 },
+      sync_mirror_outbox_idempotency: { source_rows: 0, archived_rows: 0 },
+    });
+    const archived = await sql(
+      databaseUrl,
+      "SELECT row_json FROM legacy_sqlite_archive WHERE source_table = 'tenant_bootstrap_tokens' ORDER BY source_row_number",
+    );
+    assert.deepEqual(
+      archived.map((r) => JSON.parse(r.row_json)),
+      [
+        { id: "tok_1", tenant_id: "tenant_legacy_1", token_hash: sha256Hex("t1"), invite_type: "admin",
+          expires_at: "2026-07-01T00:00:00.000Z", created_at: "2026-06-01T00:00:00.000Z", used_at: null },
+        { id: "tok_2", tenant_id: "tenant_legacy_1", token_hash: sha256Hex("t2"), invite_type: "admin",
+          expires_at: "2026-07-01T00:00:00.000Z", created_at: "2026-06-01T00:00:00.000Z", used_at: "2026-06-02T00:00:00.000Z" },
+      ],
+      "archived rows are kept verbatim",
+    );
 
-    const again = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback"]);
+    const again = runImport(databaseUrl, sqlitePath, ["--discard-sqlite-sync-fallback", ...ARCHIVE]);
     assert.equal(again.code, 1, "a second import must be refused");
     assert.match(again.stderr, /refusing to run twice/);
 
@@ -209,7 +255,7 @@ async function run() {
     const t = new Database(tamperedPath);
     t.prepare("UPDATE audit_records SET actor_id = 'someone_else' WHERE sequence = 2").run();
     t.close();
-    const tampered = runImport(await testPg.createDatabase(), tamperedPath, ["--discard-sqlite-sync-fallback"]);
+    const tampered = runImport(await testPg.createDatabase(), tamperedPath, ["--discard-sqlite-sync-fallback", ...ARCHIVE]);
     assert.equal(tampered.code, 1);
     assert.match(tampered.stderr, /audit hash chain is already invalid/);
 

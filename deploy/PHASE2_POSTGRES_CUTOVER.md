@@ -39,11 +39,20 @@ rollback copy.
    cannot reach `/api/v1/activation/*` and `/api/v1/sync/*` from its webview. Admin routes stay
    `CORS_ORIGIN`-only.
 
-3. Build the new API image without starting it:
+3. Keep a name for the image the old API runs, then build the new API image without starting it.
+   The build re-points `maintafox-control-api:local` at the new image, and on the first attempt
+   (2026-10-10) the old image could no longer be found by the ID the container reported. Without
+   this tag, "start the old API again" in the rollback starts the **new** code with the old `.env`,
+   which refuses to start (`SYNC_CHECKPOINT_SECRET is required`): the API was down for about five
+   minutes until the old image was rebuilt from the old folder.
 
    ```bash
+   docker tag maintafox-control-api:local maintafox-control-api:pre-pg-cutover   # BEFORE the build
    docker compose -p maintafox-vendor-console --env-file .env build api
    ```
+
+   Every rollback below starts with `docker tag maintafox-control-api:pre-pg-cutover maintafox-control-api:local`
+   and uses `up -d --no-build`.
 
 ## 2. Back up (start of the downtime)
 
@@ -84,8 +93,15 @@ one-time sync state backfill), and sync rows the old API writes afterwards would
    - `SQLite holds sync fallback data`: only if the API once ran without `DATABASE_URL`. Live
      sync data is in Postgres already; add `--discard-sqlite-sync-fallback` after checking the
      counts it prints.
-   - `columns unknown to the Postgres schema` / `tables this import does not know`: stop and
-     report it; do not force anything.
+   - `tables this import does not know`: check that no API version uses them (`git log --all -S<table> -- api`
+     in vendor-console and `grep -rl <table> /opt/maintafox-vendor-console*/api/src` on the VPS).
+     Only then add `--archive-legacy-table <table>` for each one, to the dry run and to the real
+     import. Their rows are copied verbatim into `legacy_sqlite_archive` and counted. The live VPS
+     file has five such tables from an uncommitted tenant-invite build, all rows written on 2026-04-17
+     between 16:04 and 16:51 UTC (a test session):
+     `provisioning_audit`, `tenant_bootstrap_tokens`, `tenant_admin_identities`, `bootstrap_audit`,
+     `sync_mirror_outbox_idempotency` (empty).
+   - `columns unknown to the Postgres schema`: stop and report it; do not force anything.
    - `audit hash chain is already invalid`: the SQLite ledger was altered; stop and investigate.
 
 2. Real import (same command without `--dry-run`):
@@ -140,8 +156,9 @@ old API again (if the dry run had already applied the migrations, run the "movin
 SQL below before the next attempt):
 
 ```bash
+docker tag maintafox-control-api:pre-pg-cutover maintafox-control-api:local
 cd /opt/maintafox-vendor-console        # still the old folder at this point
-docker compose -p maintafox-vendor-console --env-file .env up -d api
+docker compose -p maintafox-vendor-console --env-file .env up -d --no-build api
 ```
 
 **B. The new API is running but must be abandoned.** The SQLite file is unchanged, so the old
@@ -152,8 +169,9 @@ and re-enter them in the old console afterwards.
 
 ```bash
 cd /opt && mv maintafox-vendor-console maintafox-vendor-console.failed && mv maintafox-vendor-console.prev maintafox-vendor-console
+docker tag maintafox-control-api:pre-pg-cutover maintafox-control-api:local
 cd /opt/maintafox-vendor-console
-docker compose -p maintafox-vendor-console --env-file .env up -d --build api
+docker compose -p maintafox-vendor-console --env-file .env up -d --no-build api
 docker compose -p maintafox-vendor-console --env-file .env up -d --force-recreate edge
 ```
 
@@ -172,7 +190,7 @@ repeating steps 2-5, reset the control-plane copy and refresh the current state:
 
 ```sql
 BEGIN;
-TRUNCATE control_plane_sqlite_import, payment_orders, idempotency_keys, cohort_update_policy_history,
+TRUNCATE control_plane_sqlite_import, legacy_sqlite_archive, payment_orders, idempotency_keys, cohort_update_policy_history,
   tenant_update_policy_history, cohort_update_policies, incident_runbooks, offline_ticket_reconciliation,
   diagnostic_bundle_artifacts, diagnostic_bundles, support_ticket_interventions, support_tickets,
   audit_records, machine_activations, license_keys, tenants, edition_catalog, users;
@@ -203,6 +221,11 @@ COMMIT;
   Treat it like the other secrets.
 
 ## Known limits
+
+- `legacy_sqlite_archive` rows carry tenant ids inside `row_json` only, so a tenant purge does not
+  remove them. They are history from a build that was never released; delete them by hand
+  (`DELETE FROM legacy_sqlite_archive WHERE row_json::jsonb->>'tenant_id' = '<id>'`) when a
+  purged tenant appears there.
 
 - The import refuses unknown tables or columns instead of guessing. Only the tenants table has
   a known legacy shape; its extra columns are kept in `tenants.legacy_attributes_json`.
