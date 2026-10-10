@@ -10,23 +10,23 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { obtainStepUpToken } from "./lib/step-up.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-auth-boundaries-"));
+/** Set in run() once the test database exists. */
+let databaseUrl = "";
 const port = 33141;
 const baseUrl = `http://127.0.0.1:${port}`;
 const ADMIN_EMAIL = "admin@maintafox.systems";
 const ADMIN_PASSWORD = "AdminPassw0rd!";
 
-const BASE_ENV = {
+const baseEnv = () => ({
   ...process.env,
   PORT: String(port),
-  DATA_DIR: dataDir,
+  DATABASE_URL: databaseUrl,
+  ...TEST_SYNC_ENV,
   JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
   SEED_ADMIN_PASSWORD: ADMIN_PASSWORD,
   SEED_ADMIN_EMAIL: ADMIN_EMAIL,
@@ -35,8 +35,7 @@ const BASE_ENV = {
   NODE_ENV: "production",
   CORS_ORIGIN: "http://localhost:5174",
   DESKTOP_APP_ORIGINS: "http://tauri.localhost,tauri://localhost",
-  DATABASE_URL: "",
-};
+});
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,7 +56,7 @@ async function waitForHealth() {
 
 /** Boot with one required variable removed and assert the process exits non-zero. */
 async function assertRefusesToBoot(missingVar) {
-  const env = { ...BASE_ENV, PORT: String(port + 1) };
+  const env = { ...baseEnv(), PORT: String(port + 1) };
   env[missingVar] = "";
   const proc = spawn(process.execPath, ["dist/index.js"], { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -72,7 +71,7 @@ async function assertRefusesToBoot(missingVar) {
 
 /** Boot with an invalid DESKTOP_APP_ORIGINS value and assert startup is refused. */
 async function assertRejectsDesktopOrigins(value) {
-  const env = { ...BASE_ENV, PORT: String(port + 1), DESKTOP_APP_ORIGINS: value };
+  const env = { ...baseEnv(), PORT: String(port + 1), DESKTOP_APP_ORIGINS: value };
   const proc = spawn(process.execPath, ["dist/index.js"], { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   proc.stdout.on("data", (b) => (output += String(b)));
@@ -102,7 +101,17 @@ async function preflight(path, origin) {
 }
 
 async function run() {
-  for (const v of ["ENTITLEMENT_SIGNING_PRIVATE_KEY", "CORS_ORIGIN", "DATA_DIR"]) {
+  const testPg = await startTestPostgres();
+  databaseUrl = await testPg.createDatabase();
+  for (const v of [
+    "ENTITLEMENT_SIGNING_PRIVATE_KEY",
+    "CORS_ORIGIN",
+    "DATABASE_URL",
+    "SYNC_CHECKPOINT_SECRET",
+    "SYNC_INGRESS_RETENTION_DAYS",
+    "SYNC_IDEMPOTENCY_RETENTION_DAYS",
+    "SYNC_RETENTION_INTERVAL_MINUTES",
+  ]) {
     await assertRefusesToBoot(v);
   }
   for (const bad of ["*", "http://*.localhost", "http://tauri.localhost/app", "null"]) {
@@ -111,7 +120,7 @@ async function run() {
 
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
-    env: BASE_ENV,
+    env: baseEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let serverOutput = "";
@@ -266,7 +275,7 @@ async function run() {
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);
-    rmSync(dataDir, { recursive: true, force: true });
+    await testPg.stop();
   }
 }
 

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 export type SyncOperation = "create" | "update" | "delete" | "upsert" | "archive";
 
+// ── v1 wire types (unchanged for old desktops) ──────────────────────────────
+
 export type SyncOutboxItem = {
   idempotency_key: string;
   entity_type: string;
@@ -54,18 +56,109 @@ export type SyncExchangeResponse = {
   policy_metadata_json: string | null;
 };
 
-export type SyncIngressRow = {
-  id: number;
+// ── v2 wire types (deploy/SYNC_PROTOCOL_V2.md) ──────────────────────────────
+
+export type SyncOutboxItemV2 = SyncOutboxItem & {
+  base_row_version: number | null;
+  owner_user_sync_id?: string | null;
+};
+
+export type TenantConfigV2 = {
   tenant_id: string;
+  is_activated: boolean;
+  company_display_name: string | null;
+};
+
+export type MediaManifestEntryV2 = {
+  entity_sync_id: string;
+  content_sha256: string;
+  object_key: string;
+  byte_size: number;
+};
+
+export type SyncExchangeRequestV2 = {
+  protocol_version: "v2";
   idempotency_key: string;
+  checkpoint_token?: string | null;
+  current_user_sync_ids: string[];
+  device_class: "desktop" | "mobile";
+  tenant_config?: unknown;
+  media_manifest?: unknown[];
+  outbox_batch: SyncOutboxItemV2[];
+};
+
+export type SyncAckItemV2 = {
+  idempotency_key: string;
+  entity_type: string;
+  entity_sync_id: string;
+  operation: SyncOperation;
+  row_version: number;
+  server_seq: number;
+  duplicate: boolean;
+};
+
+export type SyncRejectedItemV2 = {
+  idempotency_key: string;
+  entity_type: string;
+  entity_sync_id: string;
+  operation: SyncOperation;
+  rejection_code: string;
+  rejection_message: string;
+};
+
+export type SyncConflictItemV2 = {
+  idempotency_key: string;
+  entity_type: string;
+  entity_sync_id: string;
+  local_row_version: number;
+  local_base_row_version: number | null;
+  server_row_version: number;
+  server_operation: SyncOperation;
+  server_payload_json: string;
+  server_payload_hash: string;
+  server_owner_user_sync_id: string | null;
+  server_deleted: boolean;
+};
+
+export type SyncInboundItemV2 = {
+  server_seq: number;
   entity_type: string;
   entity_sync_id: string;
   operation: SyncOperation;
   row_version: number;
   payload_json: string;
   payload_hash: string;
-  machine_fingerprint: string;
-  received_at_rfc3339: string;
+  owner_user_sync_id: string | null;
+  deleted: boolean;
+};
+
+export type SyncExchangeResponseV2 = {
+  protocol_version: "v2";
+  server_batch_id: string;
+  checkpoint_token: string;
+  acknowledged_items: SyncAckItemV2[];
+  rejected_items: SyncRejectedItemV2[];
+  conflict_items: SyncConflictItemV2[];
+  inbound_items: SyncInboundItemV2[];
+  has_more: boolean;
+  user_snapshot_required: string[];
+  policy_metadata_json: string | null;
+};
+
+export type SyncSnapshotRequestV2 = {
+  protocol_version: "v2";
+  page_token?: string | null;
+  page_size: number;
+  scope: "all" | "user";
+  current_user_sync_ids: string[];
+};
+
+export type SyncSnapshotResponseV2 = {
+  protocol_version: "v2";
+  items: SyncInboundItemV2[];
+  has_more: boolean;
+  next_page_token: string | null;
+  checkpoint_token: string | null;
 };
 
 export type ActivationSyncContext = {
@@ -74,37 +167,24 @@ export type ActivationSyncContext = {
   machineFingerprint: string;
 };
 
-export const SYNC_INBOUND_BATCH_LIMIT = 100;
+/** Request-level failure with an HTTP status and a stable `error` code (see the protocol doc). */
+export class SyncRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SyncRequestError";
+  }
+}
 
-/** Phase-1 + known desktop entity keys (forward-compatible: also allow snake_case identifiers). */
-export const SYNC_KNOWN_ENTITY_TYPES = new Set([
-  "equipment",
-  "equipment_meters",
-  "user_accounts",
-  "roles",
-  "user_role_assignments",
-  "user_scope_assignments",
-  "org_nodes",
-  "org_structure_models",
-  "org_node_types",
-  "personnel",
-  "teams",
-  "personnel_team_assignments",
-  "intervention_requests",
-  "work_orders",
-  "work_order_tasks",
-  "work_order_interveners",
-  "pm_plans",
-  "pm_plan_versions",
-  "pm_occurrences",
-  "articles",
-  "warehouses",
-  "stock_locations",
-  "inventory_transactions",
-  "stock_reservations",
-  "media_attachments",
-  "reference_values",
-]);
+/** Inbound items per exchange response (v1 and v2). */
+export const SYNC_INBOUND_BATCH_LIMIT = 100;
+/** Snapshot page size upper bound (request `page_size` must be 1..this). */
+export const SYNC_SNAPSHOT_MAX_PAGE_SIZE = 1000;
+/** Users a device may report per request. */
+export const SYNC_MAX_CURRENT_USERS = 100;
 
 export function sha256Hex(input: string): string {
   return createHash("sha256").update(input, "utf8").digest("hex");

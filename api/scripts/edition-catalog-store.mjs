@@ -1,8 +1,8 @@
 /**
- * Edition catalog store + Zod + repair (no HTTP server).
+ * Edition catalog store + Zod + repair (no HTTP server), against a real Postgres database
+ * migrated with the API's own migrations.
  */
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 
 import {
   CapabilitiesMapSchema,
@@ -15,7 +15,6 @@ import {
   EditionCatalogError,
   createEdition,
   deleteEdition,
-  ensureEditionCatalogSchema,
   ensureSystemEditionsPresent,
   listEditions,
   loadCapabilitiesJsonForSign,
@@ -23,29 +22,24 @@ import {
   seedEditionCatalogIfEmpty,
   updateEdition,
 } from "../dist/edition-catalog-store.js";
+import { openDatabase } from "../dist/db/database.js";
+import { runMigrations } from "../dist/db/migrate.js";
 import { buildSignedEntitlementEnvelope } from "../dist/entitlement-signer.js";
+import { startTestPostgres } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 
 // The signer has no built-in key; tests configure the TEST-ONLY key explicitly.
 Object.assign(process.env, TEST_ENTITLEMENT_SIGNING_ENV);
 
-const db = new Database(":memory:");
-db.pragma("foreign_keys = ON");
-db.exec(`
-  CREATE TABLE tenants (
-    id TEXT PRIMARY KEY,
-    slug TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    edition TEXT NOT NULL DEFAULT 'core',
-    is_active INTEGER NOT NULL DEFAULT 1
-  );
-`);
+const testPg = await startTestPostgres();
+const db = await openDatabase(await testPg.createDatabase(), "edition-catalog-store-test");
+try {
+await runMigrations(db, () => {});
 
-ensureEditionCatalogSchema(db);
-seedEditionCatalogIfEmpty(db);
-ensureSystemEditionsPresent(db);
+await seedEditionCatalogIfEmpty(db);
+await ensureSystemEditionsPresent(db);
 
-const seeded = listEditions(db);
+const seeded = await listEditions(db);
 assert.equal(seeded.length, 4);
 assert.ok(seeded.every((e) => e.is_system));
 
@@ -68,25 +62,23 @@ assert.equal(repaired.map.training, false);
 assert.equal(MODULE_CAPABILITY_KEYS.every((k) => typeof repaired.map[k] === "boolean"), true);
 
 // Persist a row with legacy JSON and run boot repair
-db.prepare(
-  `UPDATE edition_catalog SET capabilities_json = ? WHERE id = 'core'`,
-).run(legacy);
-const n = repairAllEditionCapabilities(db);
+await db.run(`UPDATE edition_catalog SET capabilities_json = ? WHERE id = 'core'`, legacy);
+const n = await repairAllEditionCapabilities(db);
 assert.ok(n >= 1);
-const coreAfter = loadCapabilitiesJsonForSign(db, "core");
+const coreAfter = await loadCapabilitiesJsonForSign(db, "core");
 assert.ok(coreAfter.capabilities_json.includes('"planning":false'));
 
 // Stale PATCH → version conflict
-const pro = listEditions(db).find((e) => e.id === "professional");
+const pro = (await listEditions(db)).find((e) => e.id === "professional");
 assert.ok(pro);
 const nextCaps = { ...pro.capabilities, permits: false, inspections: false };
-updateEdition(db, "professional", {
+await updateEdition(db, "professional", {
   capabilities: nextCaps,
   expected_row_version: pro.row_version,
   actorId: "test",
 });
 try {
-  updateEdition(db, "professional", {
+  await updateEdition(db, "professional", {
     capabilities: nextCaps,
     expected_row_version: pro.row_version,
     actorId: "test",
@@ -98,7 +90,7 @@ try {
 }
 
 // Sign snapshot uses DB map
-const snap = loadCapabilitiesJsonForSign(db, "professional");
+const snap = await loadCapabilitiesJsonForSign(db, "professional");
 assert.ok(snap.capabilities_json.includes('"permits":false'));
 const envelope = buildSignedEntitlementEnvelope({
   edition: "professional",
@@ -121,7 +113,7 @@ const customCaps = serializeCapabilitiesMap({
   pm: true,
 });
 const customMap = JSON.parse(customCaps);
-const created = createEdition(db, {
+const created = await createEdition(db, {
   id: "professional-ops",
   label: "Professional Ops",
   capabilities: customMap,
@@ -129,25 +121,29 @@ const created = createEdition(db, {
 });
 assert.equal(created.is_system, false);
 
-db.prepare(
+await db.run(
   `INSERT INTO tenants (id, slug, display_name, edition, is_active) VALUES (?, ?, ?, ?, 0)`,
-).run("t1", "inactive-tenant", "Inactive", "professional-ops");
+  "t1",
+  "inactive-tenant",
+  "Inactive",
+  "professional-ops",
+);
 
 try {
-  deleteEdition(db, "professional-ops");
+  await deleteEdition(db, "professional-ops");
   assert.fail("expected edition_in_use for inactive tenant");
 } catch (err) {
   assert.ok(err instanceof EditionCatalogError);
   assert.equal(err.code, "edition_in_use");
 }
 
-db.prepare(`DELETE FROM tenants WHERE id = ?`).run("t1");
-deleteEdition(db, "professional-ops");
-assert.equal(listEditions(db).some((e) => e.id === "professional-ops"), false);
+await db.run(`DELETE FROM tenants WHERE id = ?`, "t1");
+await deleteEdition(db, "professional-ops");
+assert.equal((await listEditions(db)).some((e) => e.id === "professional-ops"), false);
 
 // System editions cannot be deleted
 try {
-  deleteEdition(db, "core");
+  await deleteEdition(db, "core");
   assert.fail("expected system immutable");
 } catch (err) {
   assert.ok(err instanceof EditionCatalogError);
@@ -155,3 +151,7 @@ try {
 }
 
 console.log("edition-catalog store checks ok");
+} finally {
+  await db.close();
+  await testPg.stop();
+}

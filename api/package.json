@@ -18,6 +18,9 @@
     "test:legacy-tenant-schema": "pnpm run build && node scripts/legacy-tenant-schema.integration.mjs",
     "test:force-update": "pnpm run build && node scripts/force-update-governance.integration.mjs",
     "test:sync-exchange-ab": "pnpm run build && node scripts/sync-exchange-ab.integration.mjs",
+    "test:sync-v2": "pnpm run build && node scripts/sync-protocol-v2.integration.mjs",
+    "test:all": "pnpm run build && node scripts/edition-catalog-store.mjs && node scripts/edition-signer-roundtrip.mjs && node scripts/entitlement-ed25519-vector.mjs && node scripts/auth-boundaries.integration.mjs && node scripts/license-issuance-lifecycle.integration.mjs && node scripts/machine-revocation-lifecycle.integration.mjs && node scripts/edition-catalog.integration.mjs && node scripts/legacy-tenant-schema.integration.mjs && node scripts/force-update-governance.integration.mjs && node scripts/sprint9-observability.integration.mjs && node scripts/sync-exchange-ab.integration.mjs && node scripts/sync-protocol-v2.integration.mjs",
+    "migrate:sqlite-to-postgres": "node dist/tools/migrate-sqlite-to-postgres.js",
     "baseline:sprint9": "node scripts/sprint9-slo-baseline.mjs",
     "test:observability": "pnpm run build && node scripts/sprint9-observability.integration.mjs",
     "uat:sprint10": "node scripts/sprint10-uat-real-infra.mjs"
@@ -44,6 +47,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.10.0",
     "@types/pg": "^8.23.1",
+    "embedded-postgres": "16.13.0-beta.17",
     "typescript": "^5.7.0"
   }
 }

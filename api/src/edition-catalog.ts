@@ -2,7 +2,7 @@
  * Commercial edition presets → module-level capabilities.
  * Desktop enforces capabilities only; edition names are commercial metadata.
  *
- * Runtime SSOT is the `edition_catalog` SQLite table (see edition-catalog-store.ts).
+ * Runtime SSOT is the `edition_catalog` Postgres table (see edition-catalog-store.ts).
  * Functions here are **factory defaults** for seed + offline Desktop fallback alignment.
  *
  * When adding a new MODULE_CAPABILITY_KEYS entry:

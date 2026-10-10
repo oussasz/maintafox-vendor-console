@@ -1,5 +1,5 @@
 # Full stack: edge (nginx) + vendor console SPA + control API (JWT).
-# Optional: Postgres sync mirror + MinIO TenantMedia (DATABASE_URL / S3_*).
+# Postgres holds all control-API data (DATABASE_URL); MinIO holds TenantMedia (S3_*).
 #
 # DNS: console.maintafox.systems and api.maintafox.systems → this server's public IP.
 # First deploy: copy .env.example to .env and set JWT_SECRET + SEED_ADMIN_PASSWORD.
@@ -76,11 +76,14 @@ services:
       DESKTOP_APP_ORIGINS: ${DESKTOP_APP_ORIGINS:-}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?set SEED_ADMIN_EMAIL in .env}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
-      DATA_DIR: /data
       PORT: "3000"
       ENTITLEMENT_SIGNING_KEY_ID: ${ENTITLEMENT_SIGNING_KEY_ID:?set ENTITLEMENT_SIGNING_KEY_ID in .env}
       ENTITLEMENT_SIGNING_PRIVATE_KEY: ${ENTITLEMENT_SIGNING_PRIVATE_KEY:?set ENTITLEMENT_SIGNING_PRIVATE_KEY in .env}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      SYNC_CHECKPOINT_SECRET: ${SYNC_CHECKPOINT_SECRET:?set SYNC_CHECKPOINT_SECRET in .env}
+      SYNC_INGRESS_RETENTION_DAYS: ${SYNC_INGRESS_RETENTION_DAYS:?set SYNC_INGRESS_RETENTION_DAYS in .env}
+      SYNC_IDEMPOTENCY_RETENTION_DAYS: ${SYNC_IDEMPOTENCY_RETENTION_DAYS:?set SYNC_IDEMPOTENCY_RETENTION_DAYS in .env}
+      SYNC_RETENTION_INTERVAL_MINUTES: ${SYNC_RETENTION_INTERVAL_MINUTES:?set SYNC_RETENTION_INTERVAL_MINUTES in .env}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
@@ -94,6 +97,8 @@ services:
       SLICKPAY_WEBHOOK_URL: ${SLICKPAY_WEBHOOK_URL:-https://api.maintafox.systems/api/v1/webhooks/slickpay}
       SLICKPAY_DEFAULT_RETURN_URL: ${SLICKPAY_DEFAULT_RETURN_URL:-https://console.maintafox.systems/vendor-console/entitlements}
       SLICKPAY_EXTRA_SLOT_PRICE: ${SLICKPAY_EXTRA_SLOT_PRICE:-0}
+    # Holds the legacy SQLite control-plane.db, read only by the one-shot Postgres import
+    # (deploy/PHASE2_POSTGRES_CUTOVER.md). Keep it until the cutover is final.
     volumes:
       - control_api_data:/data
     expose:

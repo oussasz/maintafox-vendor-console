@@ -4,14 +4,12 @@
  */
 import bcrypt from "bcryptjs";
 import cors from "cors";
-import Database from "better-sqlite3";
 import "dotenv/config";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { writeSync } from "node:fs";
 import { z } from "zod";
 
 import {
@@ -26,7 +24,6 @@ import {
   createEdition,
   deleteEdition,
   editionExists,
-  ensureEditionCatalogSchema,
   ensureSystemEditionsPresent,
   getEdition,
   listEditions,
@@ -47,7 +44,30 @@ import {
   buildTenantMediaObjectKey,
   TenantMediaObjectStore,
 } from "./storage/object-store.js";
-import { openSyncStore, runSyncExchange, type SyncStore } from "./sync/index.js";
+import {
+  AUDIT_RECORD_COLUMNS,
+  auditRecordPreimage,
+  mapAuditRow,
+  verifyAuditChain,
+  type AuditEntityRefs,
+  type AuditRecordRow,
+} from "./audit-chain.js";
+import { openDatabase, type Database } from "./db/database.js";
+import { runMigrations } from "./db/migrate.js";
+import {
+  loadSyncConfig,
+  loadSyncEntityRegistry,
+  purgeTenantSyncData,
+  runSyncExchangeV1,
+  runSyncExchangeV2,
+  runSyncRetention,
+  runSyncSnapshotV2,
+  SyncRequestError,
+  SyncSnapshotBodyV2,
+  syncExchangeBodyV2,
+  type SyncConfig,
+  type SyncEntityRegistry,
+} from "./sync/index.js";
 import {
   DEVICE_TOKEN_ROTATE_AFTER_SECONDS,
   STEP_UP_TTL_SECONDS,
@@ -59,6 +79,35 @@ import {
   verifyStepUpToken,
   verifyVendorAdminToken,
 } from "./auth-tokens.js";
+
+/**
+ * Express 4 does not catch a rejected promise from an async handler (the request would hang and
+ * the rejection would be unhandled). Wrap every handler registered through the app's routing
+ * methods so a rejection reaches next(err) and the final error handler. Error handlers (4 args)
+ * are left as they are so Express still recognises them by arity.
+ */
+function forwardAsyncErrors(target: express.Express): void {
+  type Handler = (req: express.Request, res: express.Response, next: express.NextFunction) => unknown;
+  const wrap = (fn: unknown): unknown => {
+    if (typeof fn !== "function" || fn.length === 4) return fn;
+    const handler = fn as Handler;
+    return function asyncSafe(req: express.Request, res: express.Response, next: express.NextFunction) {
+      try {
+        const out = handler(req, res, next);
+        if (out && typeof (out as Promise<unknown>).catch === "function") {
+          (out as Promise<unknown>).catch(next);
+        }
+      } catch (err) {
+        next(err);
+      }
+    };
+  };
+  for (const method of ["use", "get", "post", "put", "patch", "delete"] as const) {
+    const original = (target[method] as (...args: unknown[]) => unknown).bind(target);
+    (target as unknown as Record<string, unknown>)[method] = (...args: unknown[]) =>
+      original(...args.map((a) => (Array.isArray(a) ? a.map(wrap) : wrap(a))));
+  }
+}
 
 /**
  * Startup failure: write synchronously (stderr is an async pipe on Windows, so console.error
@@ -92,7 +141,6 @@ try {
 }
 
 const CORS_ORIGIN = requireEnv("CORS_ORIGIN");
-const DATA_DIR = requireEnv("DATA_DIR");
 
 /** Comma-separated `CORS_ORIGIN` (e.g. console + Tauri dev); empty segments ignored. */
 function parseCorsOrigins(raw: string): string[] {
@@ -159,7 +207,6 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate<express.Request> = (req, cal
   }
   callback(null, { origin: CONSOLE_CORS_ORIGINS, credentials: true });
 };
-const DB_PATH = join(DATA_DIR, "control-plane.db");
 /** Only read when the users table is empty (first boot); see seedAdminIfEmpty. */
 const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL?.trim();
 const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
@@ -193,263 +240,33 @@ const VENDOR_PERMISSIONS = [
   requires_step_up: false,
 }));
 
-mkdirSync(DATA_DIR, { recursive: true });
-const db = new Database(DB_PATH);
-db.pragma("foreign_keys = ON");
+/** All API data lives in Postgres (versioned migrations in api/migrations). */
+const DATABASE_URL = requireEnv("DATABASE_URL");
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS tenants (
-    id TEXT PRIMARY KEY,
-    slug TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    force_min_app_version TEXT NULL,
-    force_update_mode TEXT NOT NULL DEFAULT 'inherit',
-    force_update_reason TEXT NULL,
-    rollout_cohort TEXT NOT NULL DEFAULT 'stable-main',
-    update_channel TEXT NOT NULL DEFAULT 'stable',
-    offline_grace_hours INTEGER NOT NULL DEFAULT 72,
-    trust_revocation_disconnects_immediately INTEGER NOT NULL DEFAULT 0,
-    reconnect_requires_fresh_heartbeat INTEGER NOT NULL DEFAULT 1,
-    is_initialized INTEGER NOT NULL DEFAULT 0,
-    has_demo_data INTEGER NOT NULL DEFAULT 0,
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS license_keys (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    license_key TEXT NOT NULL UNIQUE,
-    max_machines INTEGER NOT NULL DEFAULT 1,
-    update_channel TEXT NOT NULL DEFAULT 'stable',
-    issued_by_user_id INTEGER NULL,
-    expires_at TEXT NULL,
-    revoked_at TEXT NULL,
-    revoked_reason TEXT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY(tenant_id) REFERENCES tenants(id)
-  );
-  CREATE TABLE IF NOT EXISTS machine_activations (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    license_id TEXT NOT NULL,
-    machine_fingerprint TEXT NOT NULL,
-    machine_label TEXT NULL,
-    app_version TEXT NULL,
-    activation_token TEXT NOT NULL,
-    activated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    revoked_at TEXT NULL,
-    UNIQUE(tenant_id, machine_fingerprint),
-    FOREIGN KEY(tenant_id) REFERENCES tenants(id),
-    FOREIGN KEY(license_id) REFERENCES license_keys(id)
-  );
-  CREATE TABLE IF NOT EXISTS audit_records (
-    record_id TEXT PRIMARY KEY,
-    sequence INTEGER NOT NULL UNIQUE,
-    occurred_at_rfc3339 TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    action_code TEXT NOT NULL,
-    action_category TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    scope_tenant_id TEXT NULL,
-    before_snapshot_sha256 TEXT NULL,
-    after_snapshot_sha256 TEXT NULL,
-    payload_canonical_sha256 TEXT NOT NULL,
-    chain_prev_hash TEXT NULL,
-    record_integrity_sha256 TEXT NOT NULL,
-    reason_code TEXT NULL,
-    approval_correlation_id TEXT NULL,
-    entity_refs_json TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS support_tickets (
-    ticket_id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    state TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    affected_module TEXT NOT NULL,
-    sync_status_hint TEXT NOT NULL,
-    app_version_reported TEXT NOT NULL,
-    linked_incident_ids_json TEXT NOT NULL DEFAULT '[]',
-    sla_due_rfc3339 TEXT NULL,
-    created_at_rfc3339 TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS support_ticket_interventions (
-    intervention_id TEXT PRIMARY KEY,
-    ticket_id TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    action_code TEXT NOT NULL,
-    note TEXT NOT NULL,
-    from_state TEXT NOT NULL,
-    to_state TEXT NOT NULL,
-    reason_code TEXT NULL,
-    audit_record_id TEXT NOT NULL,
-    created_at_rfc3339 TEXT NOT NULL,
-    FOREIGN KEY(ticket_id) REFERENCES support_tickets(ticket_id),
-    FOREIGN KEY(audit_record_id) REFERENCES audit_records(record_id)
-  );
-  CREATE TABLE IF NOT EXISTS diagnostic_bundles (
-    bundle_id TEXT PRIMARY KEY,
-    created_at_rfc3339 TEXT NOT NULL,
-    redaction_profile TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS diagnostic_bundle_artifacts (
-    bundle_id TEXT NOT NULL,
-    logical_path TEXT NOT NULL,
-    sha256 TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    PRIMARY KEY(bundle_id, logical_path),
-    FOREIGN KEY(bundle_id) REFERENCES diagnostic_bundles(bundle_id)
-  );
-  CREATE TABLE IF NOT EXISTS offline_ticket_reconciliation (
-    desktop_queue_id TEXT PRIMARY KEY,
-    vendor_ticket_id TEXT NULL,
-    sync_state TEXT NOT NULL,
-    duplicate_of TEXT NULL
-  );
-  CREATE TABLE IF NOT EXISTS incident_runbooks (
-    runbook_id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    first_steps_json TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS cohort_update_policies (
-    id TEXT PRIMARY KEY,
-    channel TEXT NOT NULL,
-    cohort_label TEXT NOT NULL,
-    force_min_app_version TEXT NULL,
-    force_update_mode TEXT NOT NULL DEFAULT 'off',
-    force_update_reason TEXT NULL,
-    updated_at_rfc3339 TEXT NOT NULL,
-    updated_by_actor_id TEXT NULL,
-    UNIQUE(channel, cohort_label)
-  );
-  CREATE TABLE IF NOT EXISTS tenant_update_policy_history (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    previous_force_min_app_version TEXT NULL,
-    previous_force_update_mode TEXT NOT NULL,
-    previous_force_update_reason TEXT NULL,
-    changed_at_rfc3339 TEXT NOT NULL,
-    changed_by_actor_id TEXT NULL,
-    reason_code TEXT NULL
-  );
-  CREATE TABLE IF NOT EXISTS cohort_update_policy_history (
-    id TEXT PRIMARY KEY,
-    channel TEXT NOT NULL,
-    cohort_label TEXT NOT NULL,
-    previous_force_min_app_version TEXT NULL,
-    previous_force_update_mode TEXT NOT NULL,
-    previous_force_update_reason TEXT NULL,
-    changed_at_rfc3339 TEXT NOT NULL,
-    changed_by_actor_id TEXT NULL,
-    reason_code TEXT NULL
-  );
-  CREATE TABLE IF NOT EXISTS idempotency_keys (
-    idempotency_key TEXT PRIMARY KEY,
-    actor_id TEXT NOT NULL,
-    method TEXT NOT NULL,
-    path TEXT NOT NULL,
-    request_hash TEXT NOT NULL,
-    response_status INTEGER NOT NULL,
-    response_json TEXT NOT NULL,
-    created_at_rfc3339 TEXT NOT NULL
-  );
-`);
-
-// Sync exchange schema is owned by SyncStore (SQLite fallback or Postgres via DATABASE_URL).
-
-
-function ensureColumn(table: string, column: string, alterSql: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === column)) {
-    db.exec(alterSql);
-  }
+let syncConfig: SyncConfig;
+let syncEntityRegistry: SyncEntityRegistry;
+try {
+  syncConfig = loadSyncConfig();
+  syncEntityRegistry = loadSyncEntityRegistry();
+} catch (err) {
+  fatal((err as Error).message);
 }
 
-// Why an activation was revoked: 'machine' (an operator revoked this device; only an operator can
-// reinstate it) or 'license' (the whole licence was revoked). NULL on legacy rows = licence-level,
-// since the licence revoke was the only revocation path before this column existed.
-ensureColumn(
-  "machine_activations",
-  "revocation_kind",
-  "ALTER TABLE machine_activations ADD COLUMN revocation_kind TEXT NULL CHECK (revocation_kind IN ('machine', 'license'))",
-);
-ensureColumn("tenants", "rollout_cohort", "ALTER TABLE tenants ADD COLUMN rollout_cohort TEXT NOT NULL DEFAULT 'stable-main'");
-ensureColumn("tenants", "update_channel", "ALTER TABLE tenants ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
-ensureColumn("tenants", "force_update_mode", "ALTER TABLE tenants ADD COLUMN force_update_mode TEXT NOT NULL DEFAULT 'inherit'");
-ensureColumn("tenants", "force_update_reason", "ALTER TABLE tenants ADD COLUMN force_update_reason TEXT NULL");
-ensureColumn("tenants", "is_active", "ALTER TABLE tenants ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
-ensureColumn(
-  "tenants",
-  "created_at",
-  "ALTER TABLE tenants ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'",
-);
-ensureColumn("tenants", "offline_grace_hours", "ALTER TABLE tenants ADD COLUMN offline_grace_hours INTEGER NOT NULL DEFAULT 72");
-ensureColumn(
-  "tenants",
-  "trust_revocation_disconnects_immediately",
-  "ALTER TABLE tenants ADD COLUMN trust_revocation_disconnects_immediately INTEGER NOT NULL DEFAULT 0",
-);
-ensureColumn(
-  "tenants",
-  "reconnect_requires_fresh_heartbeat",
-  "ALTER TABLE tenants ADD COLUMN reconnect_requires_fresh_heartbeat INTEGER NOT NULL DEFAULT 1",
-);
-ensureColumn("tenants", "is_initialized", "ALTER TABLE tenants ADD COLUMN is_initialized INTEGER NOT NULL DEFAULT 0");
-ensureColumn("tenants", "has_demo_data", "ALTER TABLE tenants ADD COLUMN has_demo_data INTEGER NOT NULL DEFAULT 0");
-ensureColumn(
-  "tenants",
-  "bootstrap_completed_at",
-  "ALTER TABLE tenants ADD COLUMN bootstrap_completed_at TEXT NULL",
-);
-ensureColumn(
-  "tenants",
-  "bootstrap_method",
-  "ALTER TABLE tenants ADD COLUMN bootstrap_method TEXT NULL",
-);
-ensureColumn("license_keys", "update_channel", "ALTER TABLE license_keys ADD COLUMN update_channel TEXT NOT NULL DEFAULT 'stable'");
-ensureColumn("tenants", "edition", "ALTER TABLE tenants ADD COLUMN edition TEXT NOT NULL DEFAULT 'core'");
-ensureColumn(
-  "tenants",
-  "entitlement_lineage",
-  "ALTER TABLE tenants ADD COLUMN entitlement_lineage INTEGER NOT NULL DEFAULT 0",
-);
+let db: Database;
+try {
+  db = await openDatabase(DATABASE_URL, "maintafox-control-api");
+  const migrations = await runMigrations(db, structuredLog);
+  structuredLog("schema_migrations_ready", {
+    applied_now: migrations.applied,
+    previously_applied: migrations.alreadyApplied,
+  });
+} catch (err) {
+  fatal(`database startup failed: ${(err as Error).message}`);
+}
 
-ensureEditionCatalogSchema(db);
-seedEditionCatalogIfEmpty(db);
-ensureSystemEditionsPresent(db);
-repairAllEditionCapabilities(db);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS payment_orders (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    license_id TEXT NULL,
-    plan TEXT NOT NULL,
-    amount REAL NOT NULL,
-    extra_slots INTEGER NOT NULL DEFAULT 0,
-    total_amount REAL NOT NULL,
-    currency TEXT NOT NULL DEFAULT 'DZD',
-    status TEXT NOT NULL DEFAULT 'pending',
-    slickpay_invoice_id TEXT NULL,
-    slickpay_payment_url TEXT NULL,
-    user_info_json TEXT NULL,
-    meta_json TEXT NOT NULL DEFAULT '{}',
-    paid_at TEXT NULL,
-    error_message TEXT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY(tenant_id) REFERENCES tenants(id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_payment_orders_tenant ON payment_orders(tenant_id);
-  CREATE INDEX IF NOT EXISTS idx_payment_orders_invoice ON payment_orders(slickpay_invoice_id);
-`);
+await seedEditionCatalogIfEmpty(db);
+await ensureSystemEditionsPresent(db);
+await repairAllEditionCapabilities(db);
 
 /** Any catalog edition id (system or custom). Existence checked against DB on write. */
 const EditionIdSchema = z.string().min(2).max(64);
@@ -469,40 +286,10 @@ type TenantInsertInput = {
   reconnect_requires_fresh_heartbeat?: boolean;
 };
 
-let tenantColumnsCache: Set<string> | null = null;
-
-function tenantTableColumns(): Set<string> {
-  if (!tenantColumnsCache) {
-    const cols = db.prepare("PRAGMA table_info(tenants)").all() as Array<{ name: string }>;
-    tenantColumnsCache = new Set(cols.map((c) => c.name));
-  }
-  return tenantColumnsCache;
-}
-
-/** Backfill legacy VPS columns that predate the current control-plane schema. */
-function migrateLegacyTenantColumns(): void {
-  const cols = tenantTableColumns();
-  if (cols.has("rollout_channel") && cols.has("update_channel")) {
-    db.prepare(
-      `UPDATE tenants SET rollout_channel = update_channel WHERE rollout_channel IS NULL OR rollout_channel = ''`,
-    ).run();
-  }
-  if (cols.has("policy_defaults_json")) {
-    db.prepare(
-      `UPDATE tenants SET policy_defaults_json = '{}' WHERE policy_defaults_json IS NULL OR policy_defaults_json = ''`,
-    ).run();
-  }
-  if (cols.has("status")) {
-    db.prepare(`UPDATE tenants SET status = 'active' WHERE status IS NULL OR status = ''`).run();
-  }
-  if (cols.has("updated_at") && cols.has("created_at")) {
-    db.prepare(`UPDATE tenants SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''`).run();
-  }
-}
-
+/** Postgres unique_violation on tenants.slug. */
 function isTenantSlugUniqueViolation(err: unknown): boolean {
-  const msg = String(err).toLowerCase();
-  return msg.includes("unique") && msg.includes("slug");
+  const e = err as { code?: string; constraint?: string } | null;
+  return e?.code === "23505" && e.constraint === "tenants_slug_key";
 }
 
 function tenantWriteFailure(err: unknown): { status: number; body: { error: string; message: string } } {
@@ -516,55 +303,35 @@ function tenantWriteFailure(err: unknown): { status: number; body: { error: stri
   return { status: 500, body: { error: "tenant_write_failed", message: String(err) } };
 }
 
-function insertTenantRow(input: TenantInsertInput): void {
-  const cols = tenantTableColumns();
-  const now = new Date().toISOString();
-  const updateChannel = input.update_channel ?? "stable";
+async function insertTenantRow(input: TenantInsertInput): Promise<void> {
   const editionRaw = input.edition?.trim() || "core";
-  if (!editionExists(db, editionRaw)) {
+  if (!(await editionExists(db, editionRaw))) {
     throw new EditionCatalogError("edition_not_found", `Edition '${editionRaw}' not found`);
   }
-  const edition = editionRaw;
-  const values: Record<string, unknown> = {
-    id: input.id,
-    slug: input.slug,
-    display_name: input.display_name,
-    force_min_app_version: input.force_min_app_version ?? null,
-    force_update_mode: input.force_update_mode ?? "inherit",
-    force_update_reason: input.force_update_reason ?? null,
-    rollout_cohort: input.rollout_cohort ?? "stable-main",
-    update_channel: updateChannel,
-    edition,
-    entitlement_lineage: 0,
-    offline_grace_hours: input.offline_grace_hours ?? 72,
-    trust_revocation_disconnects_immediately: input.trust_revocation_disconnects_immediately ? 1 : 0,
-    reconnect_requires_fresh_heartbeat: (input.reconnect_requires_fresh_heartbeat ?? true) ? 1 : 0,
-    is_initialized: 0,
-    has_demo_data: 0,
-    is_active: 1,
-    created_at: now,
-  };
-  if (cols.has("rollout_channel")) {
-    values.rollout_channel = updateChannel;
-  }
-  if (cols.has("policy_defaults_json")) {
-    values.policy_defaults_json = "{}";
-  }
-  if (cols.has("status")) {
-    values.status = "active";
-  }
-  if (cols.has("updated_at")) {
-    values.updated_at = now;
-  }
-
-  const insertCols = Object.keys(values).filter((k) => cols.has(k));
-  const placeholders = insertCols.map(() => "?").join(", ");
-  db.prepare(`INSERT INTO tenants (${insertCols.join(", ")}) VALUES (${placeholders})`).run(
-    ...insertCols.map((k) => values[k]),
-  );
+  // Savepoint: callers inside a transaction catch the slug unique violation (409) and go on.
+  await db.savepoint(() => db.run(
+    `INSERT INTO tenants
+       (id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort,
+        update_channel, edition, entitlement_lineage, offline_grace_hours, trust_revocation_disconnects_immediately,
+        reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, 0, 1, ?)`,
+    input.id,
+    input.slug,
+    input.display_name,
+    input.force_min_app_version ?? null,
+    input.force_update_mode ?? "inherit",
+    input.force_update_reason ?? null,
+    input.rollout_cohort ?? "stable-main",
+    input.update_channel ?? "stable",
+    editionRaw,
+    input.offline_grace_hours ?? 72,
+    input.trust_revocation_disconnects_immediately ? 1 : 0,
+    (input.reconnect_requires_fresh_heartbeat ?? true) ? 1 : 0,
+    new Date().toISOString(),
+  ));
 }
 
-function updateTenantRow(
+async function updateTenantRow(
   tenantId: string,
   input: {
     slug: string;
@@ -574,37 +341,28 @@ function updateTenantRow(
     edition: string;
     bumpEntitlementLineage?: boolean;
   },
-): void {
-  if (!editionExists(db, input.edition)) {
+): Promise<void> {
+  if (!(await editionExists(db, input.edition))) {
     throw new EditionCatalogError("edition_not_found", `Edition '${input.edition}' not found`);
   }
-  const cols = tenantTableColumns();
-  const assignments = ["slug = ?", "display_name = ?", "rollout_cohort = ?", "update_channel = ?"];
-  const params: unknown[] = [input.slug, input.display_name, input.rollout_cohort, input.update_channel];
-  if (cols.has("edition")) {
-    assignments.push("edition = ?");
-    params.push(input.edition);
-  }
-  if (input.bumpEntitlementLineage && cols.has("entitlement_lineage")) {
-    assignments.push("entitlement_lineage = entitlement_lineage + 1");
-  }
-  if (cols.has("rollout_channel")) {
-    assignments.push("rollout_channel = ?");
-    params.push(input.update_channel);
-  }
-  if (cols.has("updated_at")) {
-    assignments.push("updated_at = ?");
-    params.push(new Date().toISOString());
-  }
-  params.push(tenantId);
-  db.prepare(`UPDATE tenants SET ${assignments.join(", ")} WHERE id = ?`).run(...params);
+  await db.savepoint(() => db.run(
+    `UPDATE tenants
+     SET slug = ?, display_name = ?, rollout_cohort = ?, update_channel = ?, edition = ?,
+         entitlement_lineage = entitlement_lineage + ?
+     WHERE id = ?`,
+    input.slug,
+    input.display_name,
+    input.rollout_cohort,
+    input.update_channel,
+    input.edition,
+    input.bumpEntitlementLineage ? 1 : 0,
+    tenantId,
+  ));
 }
 
-migrateLegacyTenantColumns();
-
-function seedAdminIfEmpty(): void {
+async function seedAdminIfEmpty(): Promise<void> {
   if (SEED_BEHAVIOR === "disabled") return;
-  const row = db.prepare("SELECT id FROM users LIMIT 1").get();
+  const row = await db.get("SELECT id FROM users LIMIT 1");
   if (row) return;
   if (!SEED_ADMIN_EMAIL || !SEED_ADMIN_PASSWORD || SEED_ADMIN_PASSWORD.length < 8) {
     console.warn(
@@ -614,7 +372,7 @@ function seedAdminIfEmpty(): void {
     return;
   }
   const hash = bcrypt.hashSync(SEED_ADMIN_PASSWORD, 12);
-  db.prepare("INSERT INTO users (email, password_hash) VALUES (?, ?)").run(SEED_ADMIN_EMAIL, hash);
+  await db.run("INSERT INTO users (email, password_hash) VALUES (?, ?)", SEED_ADMIN_EMAIL, hash);
   console.info(`Seeded admin user: ${SEED_ADMIN_EMAIL}`);
 }
 
@@ -622,10 +380,10 @@ function shouldSeedDomainData(): boolean {
   return SEED_BEHAVIOR === "full";
 }
 
-seedAdminIfEmpty();
+await seedAdminIfEmpty();
 if (shouldSeedDomainData()) {
-  seedTenantIfEmpty();
-  seedAuditSupportIfEmpty();
+  await seedTenantIfEmpty();
+  await seedAuditSupportIfEmpty();
 } else {
   console.info(`Seed behavior '${SEED_BEHAVIOR}' active: domain bootstrap seeds are skipped.`);
 }
@@ -764,62 +522,7 @@ function resolveForceUpdatePolicy(input: {
   };
 }
 
-type AuditEntityRefs = {
-  tenant_id?: string;
-  entitlement_id?: string;
-  machine_id?: string;
-  sync_batch_id?: string;
-  release_id?: string;
-  incident_id?: string;
-  support_ticket_id?: string;
-};
-
-function auditRecordPreimage(input: {
-  record_id: string;
-  sequence: number;
-  occurred_at_rfc3339: string;
-  actor_id: string;
-  action_code: string;
-  action_category: string;
-  correlation_id: string;
-  scope_tenant_id: string | null;
-  before_snapshot_sha256: string | null;
-  after_snapshot_sha256: string | null;
-  payload_canonical_sha256: string;
-  chain_prev_hash: string | null;
-  reason_code: string | null;
-  approval_correlation_id: string | null;
-  entity_refs: AuditEntityRefs;
-}): string {
-  const refs = input.entity_refs;
-  const o = (v?: string | null) => v ?? "";
-  return [
-    "audit_v1",
-    input.record_id,
-    String(input.sequence),
-    input.occurred_at_rfc3339,
-    input.actor_id,
-    input.action_code,
-    input.action_category,
-    input.correlation_id,
-    o(input.scope_tenant_id),
-    o(input.before_snapshot_sha256),
-    o(input.after_snapshot_sha256),
-    input.payload_canonical_sha256,
-    o(input.chain_prev_hash),
-    o(input.reason_code),
-    o(input.approval_correlation_id),
-    o(refs.tenant_id),
-    o(refs.entitlement_id),
-    o(refs.machine_id),
-    o(refs.sync_batch_id),
-    o(refs.release_id),
-    o(refs.incident_id),
-    o(refs.support_ticket_id),
-  ].join("|");
-}
-
-function appendAuditRecord(input: {
+async function appendAuditRecord(input: {
   actor_id: string;
   action_code: string;
   action_category: string;
@@ -829,84 +532,78 @@ function appendAuditRecord(input: {
   approval_correlation_id?: string | null;
   entity_refs?: AuditEntityRefs;
   payload?: unknown;
-}): string {
-  const prev = db
-    .prepare("SELECT sequence, record_integrity_sha256 FROM audit_records ORDER BY sequence DESC LIMIT 1")
-    .get() as { sequence: number; record_integrity_sha256: string } | undefined;
-  const sequence = (prev?.sequence ?? 0) + 1;
-  const now = new Date().toISOString();
-  const recordId = newId("audit");
-  const entityRefs = input.entity_refs ?? {};
-  const payloadCanonical = JSON.stringify(input.payload ?? {});
-  const payloadSha = sha256Hex(payloadCanonical);
-  const preimage = auditRecordPreimage({
-    record_id: recordId,
-    sequence,
-    occurred_at_rfc3339: now,
-    actor_id: input.actor_id,
-    action_code: input.action_code,
-    action_category: input.action_category,
-    correlation_id: input.correlation_id,
-    scope_tenant_id: input.scope_tenant_id ?? null,
-    before_snapshot_sha256: null,
-    after_snapshot_sha256: null,
-    payload_canonical_sha256: payloadSha,
-    chain_prev_hash: prev?.record_integrity_sha256 ?? null,
-    reason_code: input.reason_code ?? null,
-    approval_correlation_id: input.approval_correlation_id ?? null,
-    entity_refs: entityRefs,
+}): Promise<string> {
+  // The hash chain needs a gap-free sequence: serialize appends (joins the caller's transaction).
+  return db.tx(async () => {
+    await db.lockXact("audit-chain", "append");
+    const prev = await db.get("SELECT sequence, record_integrity_sha256 FROM audit_records ORDER BY sequence DESC LIMIT 1") as { sequence: number; record_integrity_sha256: string } | undefined;
+    const sequence = (prev?.sequence ?? 0) + 1;
+    const now = new Date().toISOString();
+    const recordId = newId("audit");
+    const entityRefs = input.entity_refs ?? {};
+    const payloadCanonical = JSON.stringify(input.payload ?? {});
+    const payloadSha = sha256Hex(payloadCanonical);
+    const preimage = auditRecordPreimage({
+      record_id: recordId,
+      sequence,
+      occurred_at_rfc3339: now,
+      actor_id: input.actor_id,
+      action_code: input.action_code,
+      action_category: input.action_category,
+      correlation_id: input.correlation_id,
+      scope_tenant_id: input.scope_tenant_id ?? null,
+      before_snapshot_sha256: null,
+      after_snapshot_sha256: null,
+      payload_canonical_sha256: payloadSha,
+      chain_prev_hash: prev?.record_integrity_sha256 ?? null,
+      reason_code: input.reason_code ?? null,
+      approval_correlation_id: input.approval_correlation_id ?? null,
+      entity_refs: entityRefs,
+    });
+    const integrity = sha256Hex(preimage);
+    await db.run(`INSERT INTO audit_records
+        (record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
+         correlation_id, scope_tenant_id, before_snapshot_sha256, after_snapshot_sha256,
+         payload_canonical_sha256, chain_prev_hash, record_integrity_sha256, reason_code,
+         approval_correlation_id, entity_refs_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, recordId,
+      sequence,
+      now,
+      input.actor_id,
+      input.action_code,
+      input.action_category,
+      input.correlation_id,
+      input.scope_tenant_id ?? null,
+      null,
+      null,
+      payloadSha,
+      prev?.record_integrity_sha256 ?? null,
+      integrity,
+      input.reason_code ?? null,
+      input.approval_correlation_id ?? null,
+      JSON.stringify(entityRefs));
+    return recordId;
   });
-  const integrity = sha256Hex(preimage);
-  db.prepare(
-    `INSERT INTO audit_records
-      (record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
-       correlation_id, scope_tenant_id, before_snapshot_sha256, after_snapshot_sha256,
-       payload_canonical_sha256, chain_prev_hash, record_integrity_sha256, reason_code,
-       approval_correlation_id, entity_refs_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    recordId,
-    sequence,
-    now,
-    input.actor_id,
-    input.action_code,
-    input.action_category,
-    input.correlation_id,
-    input.scope_tenant_id ?? null,
-    null,
-    null,
-    payloadSha,
-    prev?.record_integrity_sha256 ?? null,
-    integrity,
-    input.reason_code ?? null,
-    input.approval_correlation_id ?? null,
-    JSON.stringify(entityRefs),
-  );
-  return recordId;
 }
 
-function seedTenantIfEmpty(): void {
-  const row = db.prepare("SELECT id FROM tenants LIMIT 1").get();
+async function seedTenantIfEmpty(): Promise<void> {
+  const row = await db.get("SELECT id FROM tenants LIMIT 1");
   if (row) return;
-  db.prepare("INSERT INTO tenants (id, slug, display_name) VALUES (?, ?, ?)")
-    .run(newId("tenant"), "default", "Default tenant");
+  await db.run("INSERT INTO tenants (id, slug, display_name) VALUES (?, ?, ?)", newId("tenant"), "default", "Default tenant");
   console.info("Seeded default tenant");
 }
 
-function seedAuditSupportIfEmpty(): void {
-  const ticketRow = db.prepare("SELECT ticket_id FROM support_tickets LIMIT 1").get();
+async function seedAuditSupportIfEmpty(): Promise<void> {
+  const ticketRow = await db.get("SELECT ticket_id FROM support_tickets LIMIT 1");
   if (!ticketRow) {
-    const tenant = db.prepare("SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1").get() as
+    const tenant = await db.get("SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1") as
       | { id: string }
       | undefined;
     if (tenant) {
-      db.prepare(
-        `INSERT INTO support_tickets
+      await db.run(`INSERT INTO support_tickets
           (ticket_id, tenant_id, state, severity, affected_module, sync_status_hint,
            app_version_reported, linked_incident_ids_json, sla_due_rfc3339, created_at_rfc3339)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        "sup_seed_001",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "sup_seed_001",
         tenant.id,
         "triaged",
         "warn",
@@ -915,17 +612,16 @@ function seedAuditSupportIfEmpty(): void {
         "0.1.0-dev",
         JSON.stringify(["inc_seed_sync_01"]),
         new Date(Date.now() + 24 * 3600_000).toISOString(),
-        new Date().toISOString(),
-      );
+        new Date().toISOString());
     }
   }
 
-  const auditRow = db.prepare("SELECT record_id FROM audit_records LIMIT 1").get();
+  const auditRow = await db.get("SELECT record_id FROM audit_records LIMIT 1");
   if (!auditRow) {
-    const tenant = db.prepare("SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1").get() as
+    const tenant = await db.get("SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1") as
       | { id: string }
       | undefined;
-    appendAuditRecord({
+    await appendAuditRecord({
       actor_id: "system_seed",
       action_code: "support_ticket_seed",
       action_category: "support_intervention",
@@ -937,17 +633,12 @@ function seedAuditSupportIfEmpty(): void {
     });
   }
 
-  const bundleRow = db.prepare("SELECT bundle_id FROM diagnostic_bundles LIMIT 1").get();
+  const bundleRow = await db.get("SELECT bundle_id FROM diagnostic_bundles LIMIT 1");
   if (!bundleRow) {
     const bundleId = "bundle_seed_001";
-    db.prepare(
-      "INSERT INTO diagnostic_bundles (bundle_id, created_at_rfc3339, redaction_profile) VALUES (?, ?, ?)",
-    ).run(bundleId, new Date().toISOString(), "pii_strict_v2");
-    db.prepare(
-      `INSERT INTO diagnostic_bundle_artifacts (bundle_id, logical_path, sha256, kind)
-       VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`,
-    ).run(
-      bundleId,
+    await db.run("INSERT INTO diagnostic_bundles (bundle_id, created_at_rfc3339, redaction_profile) VALUES (?, ?, ?)", bundleId, new Date().toISOString(), "pii_strict_v2");
+    await db.run(`INSERT INTO diagnostic_bundle_artifacts (bundle_id, logical_path, sha256, kind)
+       VALUES (?, ?, ?, ?), (?, ?, ?, ?), (?, ?, ?, ?)`, bundleId,
       "logs/desktop.log",
       sha256Hex("seed-log"),
       "text_log",
@@ -958,28 +649,23 @@ function seedAuditSupportIfEmpty(): void {
       bundleId,
       "release/metadata.json",
       sha256Hex("seed-release"),
-      "release_meta",
-    );
+      "release_meta");
   }
 
-  const offlineRow = db.prepare("SELECT desktop_queue_id FROM offline_ticket_reconciliation LIMIT 1").get();
+  const offlineRow = await db.get("SELECT desktop_queue_id FROM offline_ticket_reconciliation LIMIT 1");
   if (!offlineRow) {
-    db.prepare(
-      `INSERT INTO offline_ticket_reconciliation (desktop_queue_id, vendor_ticket_id, sync_state, duplicate_of)
-       VALUES (?, ?, ?, ?), (?, ?, ?, ?)`,
-    ).run(
-      "dq_seed_01",
+    await db.run(`INSERT INTO offline_ticket_reconciliation (desktop_queue_id, vendor_ticket_id, sync_state, duplicate_of)
+       VALUES (?, ?, ?, ?), (?, ?, ?, ?)`, "dq_seed_01",
       "sup_seed_001",
       "merged",
       null,
       "dq_seed_02",
       null,
       "pending_upload",
-      "sup_seed_001",
-    );
+      "sup_seed_001");
   }
 
-  const runbookRow = db.prepare("SELECT runbook_id FROM incident_runbooks LIMIT 1").get();
+  const runbookRow = await db.get("SELECT runbook_id FROM incident_runbooks LIMIT 1");
   if (!runbookRow) {
     const runbooks = [
       {
@@ -1013,11 +699,14 @@ function seedAuditSupportIfEmpty(): void {
         first_steps: ["Validate readiness", "Create intervention ticket", "Append audit evidence"],
       },
     ];
-    const insert = db.prepare(
-      `INSERT INTO incident_runbooks (runbook_id, title, summary, first_steps_json) VALUES (?, ?, ?, ?)`,
-    );
     for (const rb of runbooks) {
-      insert.run(rb.runbook_id, rb.title, rb.summary, JSON.stringify(rb.first_steps));
+      await db.run(
+        `INSERT INTO incident_runbooks (runbook_id, title, summary, first_steps_json) VALUES (?, ?, ?, ?)`,
+        rb.runbook_id,
+        rb.title,
+        rb.summary,
+        JSON.stringify(rb.first_steps),
+      );
     }
   }
 }
@@ -1151,6 +840,9 @@ const SyncExchangeBody = z.object({
   tenant_config: z.unknown().optional(),
 });
 
+/** Sync protocol v2 request (deploy/SYNC_PROTOCOL_V2.md); same batch cap as v1. */
+const SyncExchangeBodyV2 = syncExchangeBodyV2(SYNC_MAX_OUTBOX_BATCH);
+
 const SyncMediaPresignPutBody = z
   .object({
     parent_entity_type: z.string().min(1).max(128),
@@ -1215,6 +907,7 @@ const SupportInterventionBody = z.object({
 }).strict();
 
 const app = express();
+forwardAsyncErrors(app);
 // Deployment topology: internet → nginx edge (deploy/nginx-edge.conf) → this API, which is only
 // `expose`d inside the compose network. Trusting exactly one hop makes req.ip the real client
 // address (last X-Forwarded-For entry appended by nginx) without trusting client-supplied entries.
@@ -1302,7 +995,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/health", (_req, res) => {
+app.get("/health", async (_req, res) => {
   res.json({
     status: "ok",
     seed_behavior: SEED_BEHAVIOR,
@@ -1313,7 +1006,7 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.get("/api/v1/ops/observability/slo", authMiddleware, (_req, res) => {
+app.get("/api/v1/ops/observability/slo", authMiddleware, async (_req, res) => {
   const uptimeSeconds = Math.max(0, Math.round((Date.now() - new Date(observabilityWindow.started_at_rfc3339).getTime()) / 1000));
   const requestTotal = observabilityWindow.request_total;
   const request5xx = observabilityWindow.request_5xx_total;
@@ -1326,29 +1019,17 @@ app.get("/api/v1/ops/observability/slo", authMiddleware, (_req, res) => {
   const activationFailure = observabilityWindow.activation_failure_total;
   const activationTotal = activationSuccess + activationFailure;
   const activationSuccessRate = activationTotal > 0 ? Number(((activationSuccess / activationTotal) * 100).toFixed(3)) : 100;
-  const staleRow = db
-    .prepare(
-      `SELECT COUNT(*) as c
+  const staleRow = await db.get(`SELECT COUNT(*) as c
        FROM machine_activations
        WHERE revoked_at IS NULL
-         AND datetime(last_seen_at) < datetime('now', '-5 minutes')`,
-    )
-    .get() as { c: number };
-  const totalMachinesRow = db
-    .prepare("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NULL")
-    .get() as { c: number };
-  const revokedMachinesRow = db
-    .prepare("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NOT NULL")
-    .get() as { c: number };
-  const channelMismatchRow = db
-    .prepare(
-      `SELECT COUNT(*) as c
+         AND last_seen_at::timestamptz < now() - interval '5 minutes'`) as { c: number };
+  const totalMachinesRow = await db.get("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NULL") as { c: number };
+  const revokedMachinesRow = await db.get("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NOT NULL") as { c: number };
+  const channelMismatchRow = await db.get(`SELECT COUNT(*) as c
        FROM machine_activations a
        JOIN license_keys l ON l.id = a.license_id
        JOIN tenants t ON t.id = a.tenant_id
-       WHERE l.update_channel != t.update_channel`,
-    )
-    .get() as { c: number };
+       WHERE l.update_channel != t.update_channel`) as { c: number };
   const staleMachines = staleRow.c;
   const totalMachines = totalMachinesRow.c;
   const deadLetterTotal = revokedMachinesRow.c + channelMismatchRow.c;
@@ -1424,7 +1105,7 @@ app.get("/api/v1/ops/observability/slo", authMiddleware, (_req, res) => {
   });
 });
 
-app.post("/api/v1/auth/login", loginRateLimiter, (req, res) => {
+app.post("/api/v1/auth/login", loginRateLimiter, async (req, res) => {
   const startedAt = Date.now();
   const parsed = LoginBody.safeParse(req.body);
   if (!parsed.success) {
@@ -1438,7 +1119,7 @@ app.post("/api/v1/auth/login", loginRateLimiter, (req, res) => {
     return;
   }
   const { email, password } = parsed.data;
-  const user = db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(email) as
+  const user = await db.get("SELECT id, email, password_hash FROM users WHERE lower(email) = lower(?)", email) as
     | { id: number; email: string; password_hash: string }
     | undefined;
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
@@ -1470,7 +1151,7 @@ app.post("/api/v1/auth/login", loginRateLimiter, (req, res) => {
  * step-up tokens are rejected by audience/kind) and re-checks that the operator still exists, so a
  * deleted operator's unexpired token stops working immediately.
  */
-function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
+async function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer ")) {
     res.status(401).json({ error: "missing_token" });
@@ -1481,7 +1162,7 @@ function authMiddleware(req: express.Request, res: express.Response, next: expre
     res.status(401).json({ error: "invalid_token" });
     return;
   }
-  const operator = db.prepare("SELECT id FROM users WHERE id = ?").get(claims.userId) as { id: number } | undefined;
+  const operator = await db.get("SELECT id FROM users WHERE id = ?", claims.userId) as { id: number } | undefined;
   if (!operator) {
     res.status(401).json({ error: "invalid_token" });
     return;
@@ -1504,7 +1185,7 @@ app.post("/api/v1/auth/step-up", authMiddleware, stepUpRateLimiter, async (req, 
     return;
   }
   const userId = Number((req as AuthRequest).userId);
-  const user = db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(userId) as
+  const user = await db.get("SELECT id, password_hash FROM users WHERE id = ?", userId) as
     | { id: number; password_hash: string }
     | undefined;
   if (!user || !(await bcrypt.compare(parsed.data.password, user.password_hash))) {
@@ -1540,7 +1221,7 @@ const LAST_SEEN_TOUCH_INTERVAL_MS = 60_000;
  * 401 missing_token | invalid_token | token_superseded;
  * 403 tenant_inactive | license_revoked | license_expired | activation_revoked.
  */
-function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
+async function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
   const h = req.headers.authorization;
   if (!h?.startsWith("Bearer ")) {
     res.status(401).json({ error: "missing_token" });
@@ -1552,17 +1233,13 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
     res.status(401).json({ error: "invalid_token" });
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
+  const row = await db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
               l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
               t.is_active AS tenant_is_active
        FROM machine_activations a
        JOIN license_keys l ON l.id = a.license_id
        JOIN tenants t ON t.id = a.tenant_id
-       WHERE a.tenant_id = ? AND a.license_id = ? AND a.machine_fingerprint = ?`,
-    )
-    .get(claims.tenantId, claims.licenseId, claims.machineFingerprint) as
+       WHERE a.tenant_id = ? AND a.license_id = ? AND a.machine_fingerprint = ?`, claims.tenantId, claims.licenseId, claims.machineFingerprint) as
     | {
         id: string;
         revoked_at: string | null;
@@ -1611,7 +1288,7 @@ function activationAuthMiddleware(req: express.Request, res: express.Response, n
   const nowMs = Date.now();
   const lastSeenMs = Date.parse(row.last_seen_at);
   if (!Number.isFinite(lastSeenMs) || nowMs - lastSeenMs >= LAST_SEEN_TOUCH_INTERVAL_MS) {
-    db.prepare("UPDATE machine_activations SET last_seen_at = ? WHERE id = ?").run(new Date(nowMs).toISOString(), row.id);
+    await db.run("UPDATE machine_activations SET last_seen_at = ? WHERE id = ?", new Date(nowMs).toISOString(), row.id);
   }
   (req as express.Request & { activation?: ActivationAuthContext }).activation = {
     tenantId: claims.tenantId,
@@ -1670,14 +1347,19 @@ function resolveActorId(req: express.Request): string {
   return `user_${(req as AuthRequest).userId ?? "anonymous"}`;
 }
 
-function runIdempotent(
+/**
+ * Runs a mutating operation in one transaction. With an Idempotency-Key header the stored response
+ * is replayed for the same request (409 for a different one); the key lookup, the operation and
+ * the stored response commit together, and concurrent requests with the same key are serialized.
+ */
+async function runIdempotent(
   req: express.Request,
   res: express.Response,
-  operation: () => IdempotentResponse,
-): void {
+  operation: () => Promise<IdempotentResponse>,
+): Promise<void> {
   const idemHeader = req.header("Idempotency-Key")?.trim();
   if (!idemHeader) {
-    const out = operation();
+    const out = await db.tx(operation);
     res.status(out.status).json(out.body);
     return;
   }
@@ -1690,48 +1372,47 @@ function runIdempotent(
     }),
   );
   const scopedKey = `${actorId}:${req.method}:${req.path}:${idemHeader}`;
-  const existing = db
-    .prepare(
+  const outcome = await db.tx(async (): Promise<
+    { kind: "conflict" } | { kind: "replay" | "fresh"; status: number; body: unknown }
+  > => {
+    await db.lockXact("admin-idempotency", scopedKey);
+    const existing = await db.get<{ request_hash: string; response_status: number; response_json: string }>(
       `SELECT request_hash, response_status, response_json
        FROM idempotency_keys
        WHERE idempotency_key = ?`,
-    )
-    .get(scopedKey) as
-    | {
-        request_hash: string;
-        response_status: number;
-        response_json: string;
+      scopedKey,
+    );
+    if (existing) {
+      if (existing.request_hash !== requestHash) {
+        return { kind: "conflict" };
       }
-    | undefined;
-  if (existing) {
-    if (existing.request_hash !== requestHash) {
-      res.status(409).json({ error: "idempotency_key_conflict" });
-      return;
+      return { kind: "replay", status: existing.response_status, body: JSON.parse(existing.response_json) };
     }
-    res.setHeader("X-Idempotent-Replay", "true");
-    res.status(existing.response_status).json(JSON.parse(existing.response_json));
+    const out = await operation();
+    await db.run(
+      `INSERT INTO idempotency_keys
+        (idempotency_key, actor_id, method, path, request_hash, response_status, response_json, created_at_rfc3339)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      scopedKey,
+      actorId,
+      req.method,
+      req.path,
+      requestHash,
+      out.status,
+      JSON.stringify(out.body),
+      new Date().toISOString(),
+    );
+    return { kind: "fresh", status: out.status, body: out.body };
+  });
+  if (outcome.kind === "conflict") {
+    res.status(409).json({ error: "idempotency_key_conflict" });
     return;
   }
-  const out = operation();
-  db.prepare(
-    `INSERT INTO idempotency_keys
-      (idempotency_key, actor_id, method, path, request_hash, response_status, response_json, created_at_rfc3339)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    scopedKey,
-    actorId,
-    req.method,
-    req.path,
-    requestHash,
-    out.status,
-    JSON.stringify(out.body),
-    new Date().toISOString(),
-  );
-  res.setHeader("X-Idempotent-Replay", "false");
-  res.status(out.status).json(out.body);
+  res.setHeader("X-Idempotent-Replay", outcome.kind === "replay" ? "true" : "false");
+  res.status(outcome.status).json(outcome.body);
 }
 
-function requirePrivilegedAction(
+async function requirePrivilegedAction(
   req: express.Request,
   input: {
     action_code: string;
@@ -1740,7 +1421,7 @@ function requirePrivilegedAction(
     entity_refs?: AuditEntityRefs;
     payload?: unknown;
   },
-): { ok: true; reasonCode: string | null; auditRecordId: string } | { ok: false; status: number; body: unknown } {
+): Promise<{ ok: true; reasonCode: string | null; auditRecordId: string } | { ok: false; status: number; body: unknown }> {
   const reasonCode = req.header("X-Operator-Reason")?.trim() ?? null;
   const stepUpToken = req.header("X-Step-Up-Token")?.trim() ?? null;
   if (!reasonCode || reasonCode.length < PRIVILEGED_REASON_MIN_LENGTH) {
@@ -1766,7 +1447,7 @@ function requirePrivilegedAction(
       body: { error: "privileged_action_guard_failed", reason: "invalid_or_expired_step_up_token" },
     };
   }
-  const auditRecordId = appendAuditRecord({
+  const auditRecordId = await appendAuditRecord({
     actor_id: resolveActorId(req),
     action_code: input.action_code,
     action_category: input.action_category,
@@ -1783,7 +1464,7 @@ function requirePrivilegedAction(
   return { ok: true, reasonCode, auditRecordId };
 }
 
-app.get("/api/v1/me/permissions", authMiddleware, (_req, res) => {
+app.get("/api/v1/me/permissions", authMiddleware, async (_req, res) => {
   res.json(VENDOR_PERMISSIONS);
 });
 
@@ -1822,11 +1503,11 @@ function editionCatalogHttpError(err: unknown, res: express.Response): boolean {
   return true;
 }
 
-app.get("/api/v1/editions", authMiddleware, (_req, res) => {
-  res.json({ items: listEditions(db) });
+app.get("/api/v1/editions", authMiddleware, async (_req, res) => {
+  res.json({ items: await listEditions(db) });
 });
 
-app.post("/api/v1/editions", authMiddleware, (req, res) => {
+app.post("/api/v1/editions", authMiddleware, async (req, res) => {
   const parsed = CreateEditionBody.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
@@ -1842,7 +1523,7 @@ app.post("/api/v1/editions", authMiddleware, (req, res) => {
   try {
     let capabilities = parsed.data.capabilities;
     if (parsed.data.clone_from) {
-      const source = getEdition(db, parsed.data.clone_from);
+      const source = await getEdition(db, parsed.data.clone_from);
       if (!source) {
         res.status(400).json({ error: "edition_not_found", message: `clone_from '${parsed.data.clone_from}' not found` });
         return;
@@ -1851,13 +1532,13 @@ app.post("/api/v1/editions", authMiddleware, (req, res) => {
       void source;
       capabilities = parsed.data.capabilities;
     }
-    const created = createEdition(db, {
+    const created = await createEdition(db, {
       id: parsed.data.id,
       label: parsed.data.label,
       capabilities,
       actorId: resolveActorId(req),
     });
-    appendAuditRecord({
+    await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: "edition_catalog_create",
       action_category: "entitlement",
@@ -1871,7 +1552,7 @@ app.post("/api/v1/editions", authMiddleware, (req, res) => {
   }
 });
 
-app.patch("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
+app.patch("/api/v1/editions/:editionId", authMiddleware, async (req, res) => {
   const editionId = req.params.editionId;
   const parsed = UpdateEditionBody.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -1885,13 +1566,13 @@ app.patch("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
     if (Number.isFinite(n)) expected = n;
   }
   try {
-    const updated = updateEdition(db, editionId, {
+    const updated = await updateEdition(db, editionId, {
       label: parsed.data.label,
       capabilities: parsed.data.capabilities,
       expected_row_version: expected,
       actorId: resolveActorId(req),
     });
-    appendAuditRecord({
+    await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: "edition_catalog_update",
       action_category: "entitlement",
@@ -1909,11 +1590,11 @@ app.patch("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
   }
 });
 
-app.delete("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
+app.delete("/api/v1/editions/:editionId", authMiddleware, async (req, res) => {
   const editionId = req.params.editionId;
   try {
-    deleteEdition(db, editionId);
-    appendAuditRecord({
+    await deleteEdition(db, editionId);
+    await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: "edition_catalog_delete",
       action_category: "entitlement",
@@ -1927,37 +1608,29 @@ app.delete("/api/v1/editions/:editionId", authMiddleware, (req, res) => {
   }
 });
 
-app.get("/api/v1/tenants", authMiddleware, (req, res) => {
+app.get("/api/v1/tenants", authMiddleware, async (req, res) => {
   const { cursor, limit, withPagination } = parsePagination(req.query);
   const effectiveLimit = withPagination ? limit : 10_000;
   const pageSize = effectiveLimit + 1;
   let rows: Array<Record<string, unknown>>;
   if (cursor) {
     const [cursorCreatedAt, cursorId] = cursor.split("|");
-    rows = db
-      .prepare(
-        `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+    rows = await db.all(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                 COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
                 reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
          WHERE (created_at < ?) OR (created_at = ? AND id < ?)
          ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      )
-      .all(cursorCreatedAt, cursorCreatedAt, cursorId ?? "", pageSize) as Array<Record<string, unknown>>;
+         LIMIT ?`, cursorCreatedAt, cursorCreatedAt, cursorId ?? "", pageSize) as Array<Record<string, unknown>>;
   } else {
-    rows = db
-      .prepare(
-        `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+    rows = await db.all(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                 COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                 offline_grace_hours, trust_revocation_disconnects_immediately,
                 reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
          FROM tenants
          ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      )
-      .all(pageSize) as Array<Record<string, unknown>>;
+         LIMIT ?`, pageSize) as Array<Record<string, unknown>>;
   }
   const items = rows.slice(0, effectiveLimit);
   const hasMore = rows.length > effectiveLimit;
@@ -1971,21 +1644,21 @@ app.get("/api/v1/tenants", authMiddleware, (req, res) => {
   res.json(items);
 });
 
-app.post("/api/v1/tenants", authMiddleware, (req, res) => {
+app.post("/api/v1/tenants", authMiddleware, async (req, res) => {
   const parsed = CreateTenantBody.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
+  await runIdempotent(req, res, async () => {
     const input = parsed.data;
     const id = newId("tenant");
     const edition = (input.edition?.trim() || "core");
-    if (!editionExists(db, edition)) {
+    if (!await editionExists(db, edition)) {
       return { status: 400, body: { error: "edition_not_found", message: `Edition '${edition}' not found` } };
     }
     try {
-      insertTenantRow({
+      await insertTenantRow({
         id,
         slug: input.slug,
         display_name: input.display_name,
@@ -2025,20 +1698,16 @@ app.post("/api/v1/tenants", authMiddleware, (req, res) => {
   });
 });
 
-app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
+app.patch("/api/v1/tenants/:tenantId", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
   const parsed = UpdateTenantBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT id, slug, display_name, rollout_cohort, update_channel,
+  const row = await db.get(`SELECT id, slug, display_name, rollout_cohort, update_channel,
               COALESCE(edition, 'core') AS edition
-       FROM tenants WHERE id = ?`,
-    )
-    .get(tenantId) as
+       FROM tenants WHERE id = ?`, tenantId) as
     | {
         id: string;
         slug: string;
@@ -2059,13 +1728,13 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
   const nextChannel = input.update_channel ?? row.update_channel;
   const prevEdition = row.edition || "core";
   const nextEdition = input.edition != null ? input.edition.trim() : prevEdition;
-  if (!editionExists(db, nextEdition)) {
+  if (!await editionExists(db, nextEdition)) {
     res.status(400).json({ error: "edition_not_found", message: `Edition '${nextEdition}' not found` });
     return;
   }
   const editionChanged = nextEdition !== prevEdition;
   try {
-    updateTenantRow(tenantId, {
+    await updateTenantRow(tenantId, {
       slug: nextSlug,
       display_name: nextDisplay,
       rollout_cohort: nextCohort,
@@ -2078,60 +1747,48 @@ app.patch("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
     res.status(failure.status).json(failure.body);
     return;
   }
-  const out = db
-    .prepare(
-      `SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
+  const out = await db.get(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
               COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
               offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat, is_active, created_at
-       FROM tenants WHERE id = ?`,
-    )
-    .get(tenantId) as Record<string, unknown>;
+       FROM tenants WHERE id = ?`, tenantId) as Record<string, unknown>;
   res.json(out);
 });
 
-app.delete("/api/v1/tenants/:tenantId", authMiddleware, (req, res) => {
+app.delete("/api/v1/tenants/:tenantId", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
-  const exists = db.prepare(`SELECT id FROM tenants WHERE id = ?`).get(tenantId) as { id: string } | undefined;
+  const exists = await db.get(`SELECT id FROM tenants WHERE id = ?`, tenantId) as { id: string } | undefined;
   if (!exists) {
     res.status(404).json({ error: "tenant_not_found" });
     return;
   }
-  const del = db.transaction(() => {
-    db.prepare(
-      `DELETE FROM support_ticket_interventions WHERE ticket_id IN (SELECT ticket_id FROM support_tickets WHERE tenant_id = ?)`,
-    ).run(tenantId);
-    db.prepare(`DELETE FROM support_tickets WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`DELETE FROM machine_activations WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`DELETE FROM license_keys WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`DELETE FROM tenant_sync_state WHERE tenant_id = ?`).run(tenantId);
-    db.prepare(`DELETE FROM sync_mirror_ingress WHERE tenant_id = ?`).run(tenantId);
-    try {
-      db.prepare(`DELETE FROM sync_exchange_idempotency WHERE tenant_id = ?`).run(tenantId);
-      db.prepare(`DELETE FROM sync_device_cursor WHERE tenant_id = ?`).run(tenantId);
-      db.prepare(`DELETE FROM sync_rejection_log WHERE tenant_id = ?`).run(tenantId);
-    } catch {
-      // Tables may not exist yet on very old DBs before first exchange boot.
-    }
-    db.prepare(`DELETE FROM tenants WHERE id = ?`).run(tenantId);
-  });
+  let syncRowsDeleted: Record<string, number>;
   try {
-    del();
+    syncRowsDeleted = await db.tx(async () => {
+      await db.run(
+        `DELETE FROM support_ticket_interventions WHERE ticket_id IN (SELECT ticket_id FROM support_tickets WHERE tenant_id = ?)`,
+        tenantId,
+      );
+      await db.run(`DELETE FROM support_tickets WHERE tenant_id = ?`, tenantId);
+      await db.run(`DELETE FROM machine_activations WHERE tenant_id = ?`, tenantId);
+      await db.run(`DELETE FROM license_keys WHERE tenant_id = ?`, tenantId);
+      await db.run(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`, tenantId);
+      // Every sync table (v1 log/cursors and v2 state/checkpoints), under the tenant sync lock.
+      const purged = await purgeTenantSyncData(db, tenantId);
+      await db.run(`DELETE FROM tenants WHERE id = ?`, tenantId);
+      return purged;
+    });
   } catch (err) {
     res.status(500).json({ error: "tenant_delete_failed", message: String(err) });
     return;
   }
+  structuredLog("tenant_deleted", { tenant_id: tenantId, sync_rows_deleted: syncRowsDeleted });
   res.status(204).send();
 });
 
-app.get("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) => {
-  const row = db
-    .prepare(
-      `SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
+app.get("/api/v1/tenants/:tenantId/update-policy", authMiddleware, async (req, res) => {
+  const row = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
        FROM tenants
-       WHERE id = ?`,
-    )
-    .get(req.params.tenantId) as
+       WHERE id = ?`, req.params.tenantId) as
     | {
         tenant_id: string;
         update_channel: string;
@@ -2148,20 +1805,16 @@ app.get("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) =>
   res.json(row);
 });
 
-app.put("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) => {
+app.put("/api/v1/tenants/:tenantId/update-policy", authMiddleware, async (req, res) => {
   const parsed = TenantUpdatePolicyBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
-    const current = db
-      .prepare(
-        `SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
+  await runIdempotent(req, res, async () => {
+    const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
          FROM tenants
-         WHERE id = ?`,
-      )
-      .get(req.params.tenantId) as
+         WHERE id = ?`, req.params.tenantId) as
       | {
           tenant_id: string;
           update_channel: string;
@@ -2174,7 +1827,7 @@ app.put("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) =>
     if (!current) {
       return { status: 404, body: { error: "tenant_not_found" } };
     }
-    const guard = requirePrivilegedAction(req, {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "tenant_update_policy_set",
       action_category: "rollout_intervention",
       scope_tenant_id: current.tenant_id,
@@ -2190,29 +1843,23 @@ app.put("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) =>
       },
     });
     if (!guard.ok) return { status: guard.status, body: guard.body };
-    db.prepare(
-      `INSERT INTO tenant_update_policy_history
+    await db.run(`INSERT INTO tenant_update_policy_history
        (id, tenant_id, previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason,
         changed_at_rfc3339, changed_by_actor_id, reason_code)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      newId("tph"),
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, newId("tph"),
       current.tenant_id,
       current.force_min_app_version,
       current.force_update_mode,
       current.force_update_reason,
       new Date().toISOString(),
       resolveActorId(req),
-      guard.reasonCode,
-    );
+      guard.reasonCode);
     const nextMinVersion = parsed.data.force_min_app_version ?? current.force_min_app_version;
     const nextMode = parsed.data.force_update_mode ?? current.force_update_mode;
     const nextReason = parsed.data.force_update_reason ?? current.force_update_reason;
-    db.prepare(
-      `UPDATE tenants
+    await db.run(`UPDATE tenants
        SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?
-       WHERE id = ?`,
-    ).run(nextMinVersion, nextMode, nextReason, current.tenant_id);
+       WHERE id = ?`, nextMinVersion, nextMode, nextReason, current.tenant_id);
     return {
       status: 200,
       body: {
@@ -2228,15 +1875,11 @@ app.put("/api/v1/tenants/:tenantId/update-policy", authMiddleware, (req, res) =>
   });
 });
 
-app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, (req, res) => {
-  runIdempotent(req, res, () => {
-    const current = db
-      .prepare(
-        `SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
+app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, async (req, res) => {
+  await runIdempotent(req, res, async () => {
+    const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
          FROM tenants
-         WHERE id = ?`,
-      )
-      .get(req.params.tenantId) as
+         WHERE id = ?`, req.params.tenantId) as
       | {
           tenant_id: string;
           update_channel: string;
@@ -2249,15 +1892,11 @@ app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, (re
     if (!current) {
       return { status: 404, body: { error: "tenant_not_found" } };
     }
-    const previous = db
-      .prepare(
-        `SELECT previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason
+    const previous = await db.get(`SELECT previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason
          FROM tenant_update_policy_history
          WHERE tenant_id = ?
          ORDER BY changed_at_rfc3339 DESC
-         LIMIT 1`,
-      )
-      .get(current.tenant_id) as
+         LIMIT 1`, current.tenant_id) as
       | {
           previous_force_min_app_version: string | null;
           previous_force_update_mode: ForceUpdateMode;
@@ -2267,7 +1906,7 @@ app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, (re
     if (!previous) {
       return { status: 409, body: { error: "no_policy_history" } };
     }
-    const guard = requirePrivilegedAction(req, {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "tenant_update_policy_rollback",
       action_category: "rollout_intervention",
       scope_tenant_id: current.tenant_id,
@@ -2275,16 +1914,12 @@ app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, (re
       payload: { rollback_to_previous: true },
     });
     if (!guard.ok) return { status: guard.status, body: guard.body };
-    db.prepare(
-      `UPDATE tenants
+    await db.run(`UPDATE tenants
        SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?
-       WHERE id = ?`,
-    ).run(
-      previous.previous_force_min_app_version,
+       WHERE id = ?`, previous.previous_force_min_app_version,
       previous.previous_force_update_mode,
       previous.previous_force_update_reason,
-      current.tenant_id,
-    );
+      current.tenant_id);
     return {
       status: 200,
       body: {
@@ -2300,20 +1935,16 @@ app.post("/api/v1/tenants/:tenantId/update-policy/rollback", authMiddleware, (re
   });
 });
 
-app.get("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, res) => {
+app.get("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, async (req, res) => {
   const channel = req.params.channel;
   const cohort = req.params.cohort;
   if (!["stable", "pilot", "internal"].includes(channel)) {
     res.status(400).json({ error: "invalid_channel" });
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason
+  const row = await db.get(`SELECT channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason
        FROM cohort_update_policies
-       WHERE channel = ? AND cohort_label = ?`,
-    )
-    .get(channel, cohort) as
+       WHERE channel = ? AND cohort_label = ?`, channel, cohort) as
     | {
         channel: string;
         cohort_label: string;
@@ -2335,25 +1966,21 @@ app.get("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, 
   res.json(row);
 });
 
-app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, res) => {
+app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, async (req, res) => {
   const parsed = UpdatePolicyBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
+  await runIdempotent(req, res, async () => {
     const channel = req.params.channel;
     const cohort = req.params.cohort;
     if (!["stable", "pilot", "internal"].includes(channel)) {
       return { status: 400, body: { error: "invalid_channel" } };
     }
-    const current = db
-      .prepare(
-        `SELECT id, channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason
+    const current = await db.get(`SELECT id, channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason
          FROM cohort_update_policies
-         WHERE channel = ? AND cohort_label = ?`,
-      )
-      .get(channel, cohort) as
+         WHERE channel = ? AND cohort_label = ?`, channel, cohort) as
       | {
           id: string;
           channel: string;
@@ -2363,7 +1990,7 @@ app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, 
           force_update_reason: string | null;
         }
       | undefined;
-    const guard = requirePrivilegedAction(req, {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "cohort_update_policy_set",
       action_category: "rollout_intervention",
       entity_refs: { release_id: `${channel}:${cohort}` },
@@ -2378,13 +2005,10 @@ app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, 
     const prevMin = current?.force_min_app_version ?? null;
     const prevMode = current?.force_update_mode ?? "off";
     const prevReason = current?.force_update_reason ?? null;
-    db.prepare(
-      `INSERT INTO cohort_update_policy_history
+    await db.run(`INSERT INTO cohort_update_policy_history
        (id, channel, cohort_label, previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason,
         changed_at_rfc3339, changed_by_actor_id, reason_code)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      newId("cph"),
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, newId("cph"),
       channel,
       cohort,
       prevMin,
@@ -2392,24 +2016,19 @@ app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, 
       prevReason,
       new Date().toISOString(),
       resolveActorId(req),
-      guard.reasonCode,
-    );
+      guard.reasonCode);
     const nextMinVersion = parsed.data.force_min_app_version ?? prevMin;
     const nextMode = parsed.data.force_update_mode ?? prevMode;
     const nextReason = parsed.data.force_update_reason ?? prevReason;
     if (current) {
-      db.prepare(
-        `UPDATE cohort_update_policies
+      await db.run(`UPDATE cohort_update_policies
          SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?,
              updated_at_rfc3339 = ?, updated_by_actor_id = ?
-         WHERE id = ?`,
-      ).run(nextMinVersion, nextMode, nextReason, new Date().toISOString(), resolveActorId(req), current.id);
+         WHERE id = ?`, nextMinVersion, nextMode, nextReason, new Date().toISOString(), resolveActorId(req), current.id);
     } else {
-      db.prepare(
-        `INSERT INTO cohort_update_policies
+      await db.run(`INSERT INTO cohort_update_policies
          (id, channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason, updated_at_rfc3339, updated_by_actor_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(newId("cup"), channel, cohort, nextMinVersion, nextMode, nextReason, new Date().toISOString(), resolveActorId(req));
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, newId("cup"), channel, cohort, nextMinVersion, nextMode, nextReason, new Date().toISOString(), resolveActorId(req));
     }
     return {
       status: 200,
@@ -2425,22 +2044,18 @@ app.put("/api/v1/cohorts/:channel/:cohort/update-policy", authMiddleware, (req, 
   });
 });
 
-app.post("/api/v1/cohorts/:channel/:cohort/update-policy/rollback", authMiddleware, (req, res) => {
-  runIdempotent(req, res, () => {
+app.post("/api/v1/cohorts/:channel/:cohort/update-policy/rollback", authMiddleware, async (req, res) => {
+  await runIdempotent(req, res, async () => {
     const channel = req.params.channel;
     const cohort = req.params.cohort;
     if (!["stable", "pilot", "internal"].includes(channel)) {
       return { status: 400, body: { error: "invalid_channel" } };
     }
-    const previous = db
-      .prepare(
-        `SELECT previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason
+    const previous = await db.get(`SELECT previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason
          FROM cohort_update_policy_history
          WHERE channel = ? AND cohort_label = ?
          ORDER BY changed_at_rfc3339 DESC
-         LIMIT 1`,
-      )
-      .get(channel, cohort) as
+         LIMIT 1`, channel, cohort) as
       | {
           previous_force_min_app_version: string | null;
           previous_force_update_mode: Exclude<ForceUpdateMode, "inherit">;
@@ -2450,45 +2065,35 @@ app.post("/api/v1/cohorts/:channel/:cohort/update-policy/rollback", authMiddlewa
     if (!previous) {
       return { status: 409, body: { error: "no_policy_history" } };
     }
-    const guard = requirePrivilegedAction(req, {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "cohort_update_policy_rollback",
       action_category: "rollout_intervention",
       entity_refs: { release_id: `${channel}:${cohort}` },
       payload: { rollback_to_previous: true },
     });
     if (!guard.ok) return { status: guard.status, body: guard.body };
-    const existing = db
-      .prepare("SELECT id FROM cohort_update_policies WHERE channel = ? AND cohort_label = ?")
-      .get(channel, cohort) as { id: string } | undefined;
+    const existing = await db.get("SELECT id FROM cohort_update_policies WHERE channel = ? AND cohort_label = ?", channel, cohort) as { id: string } | undefined;
     if (existing) {
-      db.prepare(
-        `UPDATE cohort_update_policies
+      await db.run(`UPDATE cohort_update_policies
          SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?,
              updated_at_rfc3339 = ?, updated_by_actor_id = ?
-         WHERE id = ?`,
-      ).run(
-        previous.previous_force_min_app_version,
+         WHERE id = ?`, previous.previous_force_min_app_version,
         previous.previous_force_update_mode,
         previous.previous_force_update_reason,
         new Date().toISOString(),
         resolveActorId(req),
-        existing.id,
-      );
+        existing.id);
     } else {
-      db.prepare(
-        `INSERT INTO cohort_update_policies
+      await db.run(`INSERT INTO cohort_update_policies
          (id, channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason, updated_at_rfc3339, updated_by_actor_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        newId("cup"),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, newId("cup"),
         channel,
         cohort,
         previous.previous_force_min_app_version,
         previous.previous_force_update_mode,
         previous.previous_force_update_reason,
         new Date().toISOString(),
-        resolveActorId(req),
-      );
+        resolveActorId(req));
     }
     return {
       status: 200,
@@ -2504,19 +2109,15 @@ app.post("/api/v1/cohorts/:channel/:cohort/update-policy/rollback", authMiddlewa
   });
 });
 
-app.post("/api/v1/licenses", authMiddleware, (req, res) => {
+app.post("/api/v1/licenses", authMiddleware, async (req, res) => {
   const parsed = CreateLicenseBody.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
+  await runIdempotent(req, res, async () => {
     const input = parsed.data;
-    const tenant = db
-      .prepare(
-        "SELECT id, display_name, force_min_app_version, update_channel, is_active FROM tenants WHERE id = ?",
-      )
-      .get(input.tenant_id) as
+    const tenant = await db.get("SELECT id, display_name, force_min_app_version, update_channel, is_active FROM tenants WHERE id = ?", input.tenant_id) as
       | {
           id: string;
           display_name: string;
@@ -2532,21 +2133,17 @@ app.post("/api/v1/licenses", authMiddleware, (req, res) => {
     const id = newId("lic");
     const key = randomLicenseKey();
     const actor = Number.parseInt(String((req as express.Request & { userId?: string }).userId ?? "0"), 10) || null;
-    db.prepare(
-      `INSERT INTO license_keys
+    await db.run(`INSERT INTO license_keys
         (id, tenant_id, license_key, max_machines, update_channel, issued_by_user_id, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id,
+       VALUES (?, ?, ?, ?, ?, ?, ?)`, id,
       input.tenant_id,
       key,
       input.max_machines,
       input.update_channel ?? tenant.update_channel,
       actor,
-      input.expires_at ?? null,
-    );
+      input.expires_at ?? null);
 
-    const auditRecordId = appendAuditRecord({
+    const auditRecordId = await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: "license_issue",
       action_category: "entitlement",
@@ -2582,7 +2179,7 @@ app.post("/api/v1/licenses", authMiddleware, (req, res) => {
   });
 });
 
-app.get("/api/v1/tenants/:tenantId/licenses", authMiddleware, (req, res) => {
+app.get("/api/v1/tenants/:tenantId/licenses", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
   const { cursor, limit, withPagination } = parsePagination(req.query);
   const effectiveLimit = withPagination ? limit : 10_000;
@@ -2590,25 +2187,17 @@ app.get("/api/v1/tenants/:tenantId/licenses", authMiddleware, (req, res) => {
   let rows: Array<Record<string, unknown>>;
   if (cursor) {
     const [cursorCreatedAt, cursorId] = cursor.split("|");
-    rows = db
-      .prepare(
-        `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
+    rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
          FROM license_keys
          WHERE tenant_id = ? AND ((created_at < ?) OR (created_at = ? AND id < ?))
          ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      )
-      .all(tenantId, cursorCreatedAt, cursorCreatedAt, cursorId ?? "", pageSize) as Array<Record<string, unknown>>;
+         LIMIT ?`, tenantId, cursorCreatedAt, cursorCreatedAt, cursorId ?? "", pageSize) as Array<Record<string, unknown>>;
   } else {
-    rows = db
-      .prepare(
-        `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
+    rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
          FROM license_keys
          WHERE tenant_id = ?
          ORDER BY created_at DESC, id DESC
-         LIMIT ?`,
-      )
-      .all(tenantId, pageSize) as Array<Record<string, unknown>>;
+         LIMIT ?`, tenantId, pageSize) as Array<Record<string, unknown>>;
   }
   const items = rows.slice(0, effectiveLimit);
   const hasMore = rows.length > effectiveLimit;
@@ -2622,18 +2211,14 @@ app.get("/api/v1/tenants/:tenantId/licenses", authMiddleware, (req, res) => {
   res.json(items);
 });
 
-app.patch("/api/v1/licenses/:licenseId", authMiddleware, (req, res) => {
+app.patch("/api/v1/licenses/:licenseId", authMiddleware, async (req, res) => {
   const licenseId = req.params.licenseId;
   const parsed = UpdateLicenseBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`,
-    )
-    .get(licenseId) as
+  const row = await db.get(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as
     | {
         id: string;
         tenant_id: string;
@@ -2659,14 +2244,8 @@ app.patch("/api/v1/licenses/:licenseId", authMiddleware, (req, res) => {
   const nextExpires =
     input.expires_at === undefined ? row.expires_at : input.expires_at === null ? null : input.expires_at;
   const nextChannel = input.update_channel ?? row.update_channel;
-  db.prepare(
-    `UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`,
-  ).run(nextMax, nextExpires, nextChannel, licenseId);
-  const out = db
-    .prepare(
-      `SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`,
-    )
-    .get(licenseId) as Record<string, unknown>;
+  await db.run(`UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`, nextMax, nextExpires, nextChannel, licenseId);
+  const out = await db.get(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as Record<string, unknown>;
   res.json(out);
 });
 
@@ -2726,22 +2305,18 @@ async function slickPayApi(
   return { ok: res.ok, status: res.status, json };
 }
 
-function pickActiveLicenseForTenant(tenantId: string): {
+async function pickActiveLicenseForTenant(tenantId: string): Promise<{
   id: string;
   tenant_id: string;
   max_machines: number;
   expires_at: string | null;
   revoked_at: string | null;
-} | undefined {
-  return db
-    .prepare(
-      `SELECT id, tenant_id, max_machines, expires_at, revoked_at
+} | undefined> {
+  return await db.get(`SELECT id, tenant_id, max_machines, expires_at, revoked_at
        FROM license_keys
        WHERE tenant_id = ? AND revoked_at IS NULL
        ORDER BY created_at DESC, id DESC
-       LIMIT 1`,
-    )
-    .get(tenantId) as
+       LIMIT 1`, tenantId) as
     | {
         id: string;
         tenant_id: string;
@@ -2788,39 +2363,39 @@ function slugifyTenantSlug(raw: string): string {
   return clipped.length >= 2 ? clipped : "customer";
 }
 
-function allocateUniqueTenantSlug(preferred: string): string {
+async function allocateUniqueTenantSlug(preferred: string): Promise<string> {
   const base = slugifyTenantSlug(preferred);
-  const exists = (slug: string) =>
-    Boolean(db.prepare("SELECT id FROM tenants WHERE slug = ?").get(slug));
-  if (!exists(base)) return base;
+  const exists = async (slug: string) =>
+    Boolean(await db.get("SELECT id FROM tenants WHERE slug = ?", slug));
+  if (!(await exists(base))) return base;
   for (let i = 0; i < 12; i += 1) {
     const candidate = `${base.slice(0, 52)}-${randomBytes(2).toString("hex")}`;
-    if (!exists(candidate)) return candidate;
+    if (!(await exists(candidate))) return candidate;
   }
   return `${base.slice(0, 40)}-${randomBytes(4).toString("hex")}`;
 }
 
-function resolveEditionFromPlan(plan: string): string {
+async function resolveEditionFromPlan(plan: string): Promise<string> {
   const normalized = plan.trim().toLowerCase().replace(/\s+/g, "-");
-  if (editionExists(db, normalized)) return normalized;
-  if (editionExists(db, plan.trim())) return plan.trim();
+  if (await editionExists(db, normalized)) return normalized;
+  if (await editionExists(db, plan.trim())) return plan.trim();
   return "core";
 }
 
-function createTenantFromSlickPayUserInfo(
+async function createTenantFromSlickPayUserInfo(
   ui: SlickPayUserInfo,
   plan: string,
-): { id: string; slug: string; display_name: string; edition: string } {
+): Promise<{ id: string; slug: string; display_name: string; edition: string }> {
   const displayName = resolveTenantDisplayNameFromUserInfo(ui);
   if (!displayName) {
     const err = new Error("insufficient_user_info");
     (err as Error & { code?: string }).code = "insufficient_user_info";
     throw err;
   }
-  const slug = allocateUniqueTenantSlug(ui.slug?.trim() || displayName);
+  const slug = await allocateUniqueTenantSlug(ui.slug?.trim() || displayName);
   const id = newId("tenant");
-  const edition = resolveEditionFromPlan(plan);
-  insertTenantRow({
+  const edition = await resolveEditionFromPlan(plan);
+  await insertTenantRow({
     id,
     slug,
     display_name: displayName,
@@ -2828,7 +2403,7 @@ function createTenantFromSlickPayUserInfo(
     rollout_cohort: "stable-main",
     edition,
   });
-  appendAuditRecord({
+  await appendAuditRecord({
     actor_id: "payment_proxy",
     action_code: "tenant_create",
     action_category: "billing",
@@ -2847,33 +2422,27 @@ function createTenantFromSlickPayUserInfo(
   return { id, slug, display_name: displayName, edition };
 }
 
-function issueLicenseForPaidOrder(input: {
+async function issueLicenseForPaidOrder(input: {
   tenantId: string;
   maxMachines: number;
   expiresAt: string;
   updateChannel?: string;
-}): { id: string; license_key: string; max_machines: number; expires_at: string } {
-  const tenant = db
-    .prepare(`SELECT id, update_channel, is_active FROM tenants WHERE id = ?`)
-    .get(input.tenantId) as { id: string; update_channel: string; is_active: number } | undefined;
+}): Promise<{ id: string; license_key: string; max_machines: number; expires_at: string }> {
+  const tenant = await db.get(`SELECT id, update_channel, is_active FROM tenants WHERE id = ?`, input.tenantId) as { id: string; update_channel: string; is_active: number } | undefined;
   if (!tenant || tenant.is_active !== 1) {
     throw new Error("tenant_not_found_or_inactive");
   }
   const id = newId("lic");
   const key = randomLicenseKey();
-  db.prepare(
-    `INSERT INTO license_keys
+  await db.run(`INSERT INTO license_keys
       (id, tenant_id, license_key, max_machines, update_channel, issued_by_user_id, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
+     VALUES (?, ?, ?, ?, ?, ?, ?)`, id,
     input.tenantId,
     key,
     input.maxMachines,
     input.updateChannel ?? tenant.update_channel,
     null,
-    input.expiresAt,
-  );
+    input.expiresAt);
   return {
     id,
     license_key: key,
@@ -2904,9 +2473,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
   let tenant: { id: string; display_name: string; is_active: number };
   let tenantCreated = false;
   if (input.tenant_id) {
-    const existing = db
-      .prepare(`SELECT id, display_name, is_active FROM tenants WHERE id = ?`)
-      .get(input.tenant_id) as { id: string; display_name: string; is_active: number } | undefined;
+    const existing = await db.get(`SELECT id, display_name, is_active FROM tenants WHERE id = ?`, input.tenant_id) as { id: string; display_name: string; is_active: number } | undefined;
     if (!existing) {
       res.status(404).json({ error: "tenant_not_found" });
       return;
@@ -2918,7 +2485,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
     tenant = existing;
   } else {
     try {
-      const createdTenant = createTenantFromSlickPayUserInfo(input.user_info!, input.plan);
+      const createdTenant = await createTenantFromSlickPayUserInfo(input.user_info!, input.plan);
       tenant = { id: createdTenant.id, display_name: createdTenant.display_name, is_active: 1 };
       tenantCreated = true;
     } catch (err) {
@@ -2936,7 +2503,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
     }
   }
 
-  const license = pickActiveLicenseForTenant(tenant.id);
+  const license = await pickActiveLicenseForTenant(tenant.id);
   const orderId = newId("pay");
   const returnUrl = input.return_url ?? SLICKPAY_DEFAULT_RETURN_URL;
   const meta = {
@@ -2950,12 +2517,9 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
   // SlickPay docs type webhook_meta_data as array; wrap our object for compatibility.
   const webhookMetaData = [meta];
 
-  db.prepare(
-    `INSERT INTO payment_orders
+  await db.run(`INSERT INTO payment_orders
       (id, tenant_id, license_id, plan, amount, extra_slots, total_amount, status, user_info_json, meta_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-  ).run(
-    orderId,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, orderId,
     tenant.id,
     license?.id ?? null,
     input.plan,
@@ -2963,8 +2527,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
     extraSlots,
     totalAmount,
     input.user_info ? JSON.stringify(input.user_info) : null,
-    JSON.stringify(meta),
-  );
+    JSON.stringify(meta));
 
   const invoiceBody: Record<string, unknown> = {
     amount: totalAmount,
@@ -2997,16 +2560,14 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
     invoiceBody.address = address;
   }
 
-  const failInitiate = (status: number, body: Record<string, unknown>, errorMessage: string) => {
-    db.prepare(
-      `UPDATE payment_orders SET status = 'failed', error_message = ?, updated_at = datetime('now') WHERE id = ?`,
-    ).run(errorMessage.slice(0, 500), orderId);
+  const failInitiate = async (status: number, body: Record<string, unknown>, errorMessage: string) => {
+    await db.run(`UPDATE payment_orders SET status = 'failed', error_message = ?, updated_at = mfx_utc_now_text() WHERE id = ?`, errorMessage.slice(0, 500), orderId);
     if (tenantCreated) {
       // Avoid orphan tenants when SlickPay rejects the first checkout for a new customer.
-      const hasLicense = Boolean(pickActiveLicenseForTenant(tenant.id));
+      const hasLicense = Boolean(await pickActiveLicenseForTenant(tenant.id));
       if (!hasLicense) {
-        db.prepare(`DELETE FROM payment_orders WHERE id = ?`).run(orderId);
-        db.prepare(`DELETE FROM tenants WHERE id = ?`).run(tenant.id);
+        await db.run(`DELETE FROM payment_orders WHERE id = ?`, orderId);
+        await db.run(`DELETE FROM tenants WHERE id = ?`, tenant.id);
       }
     }
     res.status(status).json(body);
@@ -3015,7 +2576,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
   try {
     const created = await slickPayApi("POST", "/api/v2/users/invoices", invoiceBody);
     if (!created.ok) {
-      failInitiate(
+      await failInitiate(
         502,
         { error: "slickpay_create_failed", status: created.status, details: created.json },
         `http_${created.status}:${JSON.stringify(created.json).slice(0, 400)}`,
@@ -3037,7 +2598,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
       (typeof data.url === "string" && data.url) ||
       null;
     if (!invoiceId || !checkoutUrl) {
-      failInitiate(
+      await failInitiate(
         502,
         { error: "slickpay_invalid_response", details: created.json },
         "missing_invoice_id_or_url",
@@ -3045,13 +2606,11 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
       return;
     }
 
-    db.prepare(
-      `UPDATE payment_orders
-       SET slickpay_invoice_id = ?, slickpay_payment_url = ?, status = 'awaiting_payment', updated_at = datetime('now')
-       WHERE id = ?`,
-    ).run(invoiceId, checkoutUrl, orderId);
+    await db.run(`UPDATE payment_orders
+       SET slickpay_invoice_id = ?, slickpay_payment_url = ?, status = 'awaiting_payment', updated_at = mfx_utc_now_text()
+       WHERE id = ?`, invoiceId, checkoutUrl, orderId);
 
-    appendAuditRecord({
+    await appendAuditRecord({
       actor_id: "payment_proxy",
       action_code: "payment_initiate",
       action_category: "billing",
@@ -3080,7 +2639,7 @@ app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async 
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    failInitiate(502, { error: "slickpay_network_error", message }, message);
+    await failInitiate(502, { error: "slickpay_network_error", message }, message);
   }
 });
 
@@ -3140,12 +2699,8 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
     return;
   }
 
-  let order = db
-    .prepare(
-      `SELECT id, tenant_id, license_id, plan, extra_slots, status
-       FROM payment_orders WHERE slickpay_invoice_id = ? ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(invoiceId) as
+  let order = await db.get(`SELECT id, tenant_id, license_id, plan, extra_slots, status
+       FROM payment_orders WHERE slickpay_invoice_id = ? ORDER BY created_at DESC LIMIT 1`, invoiceId) as
     | {
         id: string;
         tenant_id: string;
@@ -3167,11 +2722,7 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
         : null;
     const orderId = meta?.payment_order_id ? String(meta.payment_order_id) : null;
     if (orderId) {
-      order = db
-        .prepare(
-          `SELECT id, tenant_id, license_id, plan, extra_slots, status FROM payment_orders WHERE id = ?`,
-        )
-        .get(orderId) as typeof order;
+      order = await db.get(`SELECT id, tenant_id, license_id, plan, extra_slots, status FROM payment_orders WHERE id = ?`, orderId) as typeof order;
     }
   }
 
@@ -3185,11 +2736,7 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
   }
 
   let license = order.license_id
-    ? (db
-        .prepare(
-          `SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ?`,
-        )
-        .get(order.license_id) as
+    ? (await db.get(`SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ?`, order.license_id) as
         | {
             id: string;
             tenant_id: string;
@@ -3200,7 +2747,7 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
         | undefined)
     : undefined;
   if (!license) {
-    license = pickActiveLicenseForTenant(order.tenant_id);
+    license = await pickActiveLicenseForTenant(order.tenant_id);
   }
 
   const previousExpires = license?.expires_at ?? null;
@@ -3211,18 +2758,26 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
   let nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
 
   if (license?.revoked_at) {
-    db.prepare(
-      `UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = datetime('now') WHERE id = ?`,
-    ).run(order.id);
+    await db.run(`UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = mfx_utc_now_text() WHERE id = ?`, order.id);
     res.status(409).json({ error: "license_revoked" });
     return;
   }
 
   let finalLicense = license;
   try {
-    const tx = db.transaction(() => {
+    let raceAlreadyPaid = false;
+    await db.tx(async () => {
+      // Two deliveries of the same webhook must not both extend the licence.
+      const locked = await db.get<{ status: string }>(
+        `SELECT status FROM payment_orders WHERE id = ? FOR UPDATE`,
+        order.id,
+      );
+      if (locked?.status === "paid") {
+        raceAlreadyPaid = true;
+        return;
+      }
       if (!finalLicense) {
-        const issued = issueLicenseForPaidOrder({
+        const issued = await issueLicenseForPaidOrder({
           tenantId: order.tenant_id,
           maxMachines: nextMaxMachines,
           expiresAt: nextExpires,
@@ -3236,23 +2791,20 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
         };
         issuedNewLicense = true;
       } else {
-        db.prepare(`UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`).run(
-          nextExpires,
+        await db.run(`UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`, nextExpires,
           nextMaxMachines,
-          finalLicense.id,
-        );
+          finalLicense.id);
       }
-      db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(
-        finalLicense.tenant_id,
-      );
-      db.prepare(
-        `UPDATE payment_orders
+      await db.run(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`, finalLicense.tenant_id);
+      await db.run(`UPDATE payment_orders
          SET status = 'paid', paid_at = ?, license_id = ?, slickpay_invoice_id = COALESCE(slickpay_invoice_id, ?),
-             updated_at = datetime('now')
-         WHERE id = ?`,
-      ).run(nowIso, finalLicense.id, invoiceId, order.id);
+             updated_at = mfx_utc_now_text()
+         WHERE id = ?`, nowIso, finalLicense.id, invoiceId, order.id);
     });
-    tx();
+    if (raceAlreadyPaid) {
+      res.status(200).json({ ok: true, already_processed: true, payment_order_id: order.id });
+      return;
+    }
   } catch (err) {
     res.status(404).json({
       error: "license_issue_failed",
@@ -3267,7 +2819,7 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
     return;
   }
 
-  appendAuditRecord({
+  await appendAuditRecord({
     actor_id: "system_slickpay_webhook",
     action_code: issuedNewLicense ? "license_issue" : "license_renew",
     action_category: "billing",
@@ -3299,14 +2851,14 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
   });
 });
 
-app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, (req, res) => {
+app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, async (req, res) => {
   const parsed = RevokeLicenseBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
-    const guard = requirePrivilegedAction(req, {
+  await runIdempotent(req, res, async () => {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "license_revoke",
       action_category: "entitlement",
       entity_refs: { entitlement_id: req.params.licenseId },
@@ -3317,21 +2869,15 @@ app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, (req, res) => {
     }
     const licenseId = req.params.licenseId;
     const now = new Date().toISOString();
-    const row = db
-      .prepare("SELECT id, revoked_at, tenant_id FROM license_keys WHERE id = ?")
-      .get(licenseId) as { id: string; revoked_at: string | null; tenant_id: string } | undefined;
+    const row = await db.get("SELECT id, revoked_at, tenant_id FROM license_keys WHERE id = ?", licenseId) as { id: string; revoked_at: string | null; tenant_id: string } | undefined;
     if (!row) {
       return { status: 404, body: { error: "license_not_found" } };
     }
     if (!row.revoked_at) {
-      db.prepare("UPDATE license_keys SET revoked_at = ?, revoked_reason = ? WHERE id = ?").run(
-        now,
+      await db.run("UPDATE license_keys SET revoked_at = ?, revoked_reason = ? WHERE id = ?", now,
         parsed.data.reason ?? "revoked by operator",
-        licenseId,
-      );
-      db.prepare(
-        "UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'license' WHERE license_id = ? AND revoked_at IS NULL",
-      ).run(now, licenseId);
+        licenseId);
+      await db.run("UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'license' WHERE license_id = ? AND revoked_at IS NULL", now, licenseId);
     }
     return { status: 200, body: { ok: true, revoked_at: now, audit_record_id: guard.auditRecordId } };
   });
@@ -3348,28 +2894,24 @@ type MachineActivationRow = {
   revocation_kind: string | null;
 };
 
-function loadMachineActivation(tenantId: string, machineFingerprint: string): MachineActivationRow | undefined {
-  return db
-    .prepare(
-      `SELECT id, license_id, revoked_at, revocation_kind
-       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
-    )
-    .get(tenantId, machineFingerprint) as MachineActivationRow | undefined;
+async function loadMachineActivation(tenantId: string, machineFingerprint: string): Promise<MachineActivationRow | undefined> {
+  return await db.get(`SELECT id, license_id, revoked_at, revocation_kind
+       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`, tenantId, machineFingerprint) as MachineActivationRow | undefined;
 }
 
 /**
  * Revokes one device. Its next request (sync heartbeat, policy refresh) is refused with
  * `activation_revoked`, its slot is freed, and re-entering the licence key does not undo it.
  */
-app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMiddleware, (req, res) => {
+app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMiddleware, async (req, res) => {
   const parsed = MachineActionBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
   const { tenantId, machineFingerprint } = req.params;
-  runIdempotent(req, res, () => {
-    const guard = requirePrivilegedAction(req, {
+  await runIdempotent(req, res, async () => {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "machine_revoke",
       action_category: "entitlement",
       scope_tenant_id: tenantId,
@@ -3379,7 +2921,7 @@ app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMi
     if (!guard.ok) {
       return { status: guard.status, body: guard.body };
     }
-    const row = loadMachineActivation(tenantId, machineFingerprint);
+    const row = await loadMachineActivation(tenantId, machineFingerprint);
     if (!row) {
       return { status: 404, body: { error: "activation_not_found" } };
     }
@@ -3390,7 +2932,7 @@ app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMi
       };
     }
     const now = new Date().toISOString();
-    db.prepare("UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'machine' WHERE id = ?").run(now, row.id);
+    await db.run("UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'machine' WHERE id = ?", now, row.id);
     structuredLog("machine_activation_revoked", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
     return { status: 200, body: { ok: true, revoked_at: now, revocation_kind: "machine", audit_record_id: guard.auditRecordId } };
   });
@@ -3400,15 +2942,15 @@ app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/revoke", authMi
  * Reinstates a device revoked with the route above. A device revoked because its licence was
  * revoked cannot be reinstated here (issue a new licence instead). Needs a free slot.
  */
-app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/reinstate", authMiddleware, (req, res) => {
+app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/reinstate", authMiddleware, async (req, res) => {
   const parsed = MachineActionBody.safeParse(req.body ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
   const { tenantId, machineFingerprint } = req.params;
-  runIdempotent(req, res, () => {
-    const guard = requirePrivilegedAction(req, {
+  await runIdempotent(req, res, async () => {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "machine_reinstate",
       action_category: "entitlement",
       scope_tenant_id: tenantId,
@@ -3418,7 +2960,7 @@ app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/reinstate", aut
     if (!guard.ok) {
       return { status: guard.status, body: guard.body };
     }
-    const row = loadMachineActivation(tenantId, machineFingerprint);
+    const row = await loadMachineActivation(tenantId, machineFingerprint);
     if (!row) {
       return { status: 404, body: { error: "activation_not_found" } };
     }
@@ -3428,30 +2970,25 @@ app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/reinstate", aut
     if (row.revocation_kind !== "machine") {
       return { status: 409, body: { error: "license_revoked", message: "The licence itself is revoked; issue a new licence." } };
     }
-    const lic = db
-      .prepare("SELECT max_machines, revoked_at FROM license_keys WHERE id = ?")
-      .get(row.license_id) as { max_machines: number; revoked_at: string | null } | undefined;
+    const lic = await db.get("SELECT max_machines, revoked_at FROM license_keys WHERE id = ?", row.license_id) as { max_machines: number; revoked_at: string | null } | undefined;
     if (!lic || lic.revoked_at) {
       return { status: 409, body: { error: "license_revoked" } };
     }
-    if (countActiveActivations(row.license_id) >= lic.max_machines) {
+    await db.lockXact("license-slots", row.license_id);
+    if (await countActiveActivations(row.license_id) >= lic.max_machines) {
       return { status: 409, body: { error: "slot_limit_reached", max_machines: lic.max_machines } };
     }
-    db.prepare("UPDATE machine_activations SET revoked_at = NULL, revocation_kind = NULL WHERE id = ?").run(row.id);
+    await db.run("UPDATE machine_activations SET revoked_at = NULL, revocation_kind = NULL WHERE id = ?", row.id);
     structuredLog("machine_activation_reinstated", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
     return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
   });
 });
 
-app.get("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, (req, res) => {
+app.get("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
-  const row = db
-    .prepare(
-      `SELECT id, offline_grace_hours, trust_revocation_disconnects_immediately,
+  const row = await db.get(`SELECT id, offline_grace_hours, trust_revocation_disconnects_immediately,
               reconnect_requires_fresh_heartbeat
-       FROM tenants WHERE id = ?`,
-    )
-    .get(tenantId) as
+       FROM tenants WHERE id = ?`, tenantId) as
     | {
         id: string;
         offline_grace_hours: number;
@@ -3471,15 +3008,15 @@ app.get("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, (req, res) =
   });
 });
 
-app.put("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, (req, res) => {
+app.put("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
   const parsed = OfflinePolicyUpdateBody.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
-    const guard = requirePrivilegedAction(req, {
+  await runIdempotent(req, res, async () => {
+    const guard = await requirePrivilegedAction(req, {
       action_code: "offline_policy_update",
       action_category: "platform_override",
       scope_tenant_id: tenantId,
@@ -3489,23 +3026,19 @@ app.put("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, (req, res) =
     if (!guard.ok) {
       return { status: guard.status, body: guard.body };
     }
-    const tenant = db.prepare("SELECT id FROM tenants WHERE id = ?").get(tenantId) as { id: string } | undefined;
+    const tenant = await db.get("SELECT id FROM tenants WHERE id = ?", tenantId) as { id: string } | undefined;
     if (!tenant) {
       return { status: 404, body: { error: "tenant_not_found" } };
     }
     const input = parsed.data;
-    db.prepare(
-      `UPDATE tenants
+    await db.run(`UPDATE tenants
        SET offline_grace_hours = ?,
            trust_revocation_disconnects_immediately = ?,
            reconnect_requires_fresh_heartbeat = ?
-       WHERE id = ?`,
-    ).run(
-      input.offline_grace_hours,
+       WHERE id = ?`, input.offline_grace_hours,
       input.trust_revocation_disconnects_immediately ? 1 : 0,
       input.reconnect_requires_fresh_heartbeat ? 1 : 0,
-      tenantId,
-    );
+      tenantId);
     return {
       status: 200,
       body: {
@@ -3519,19 +3052,15 @@ app.put("/api/v1/tenants/:tenantId/offline-policy", authMiddleware, (req, res) =
   });
 });
 
-app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, (req, res) => {
+app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, async (req, res) => {
   const tenantId = req.params.tenantId;
   const { cursor, limit, withPagination } = parsePagination(req.query);
   const effectiveLimit = withPagination ? limit : 10_000;
-  const rows = db
-    .prepare(
-      `SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind, l.update_channel
+  const rows = await db.all(`SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind, l.update_channel
        FROM machine_activations a
        JOIN license_keys l ON l.id = a.license_id
        WHERE a.tenant_id = ?
-       ORDER BY a.last_seen_at DESC, a.machine_fingerprint DESC`,
-    )
-    .all(tenantId) as Array<{
+       ORDER BY a.last_seen_at DESC, a.machine_fingerprint DESC`, tenantId) as Array<{
       machine_fingerprint: string;
       last_seen_at: string;
       app_version: string | null;
@@ -3579,25 +3108,17 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, (req, res) => {
   res.json(mapped);
 });
 
-app.get("/api/v1/ops/sync-overview", authMiddleware, (_req, res) => {
-  const tenants = db
-    .prepare(
-      `SELECT id, update_channel, force_min_app_version
+app.get("/api/v1/ops/sync-overview", authMiddleware, async (_req, res) => {
+  const tenants = await db.all(`SELECT id, update_channel, force_min_app_version
        FROM tenants
-       WHERE is_active = 1`,
-    )
-    .all() as Array<{ id: string; update_channel: string; force_min_app_version: string | null }>;
+       WHERE is_active = 1`) as Array<{ id: string; update_channel: string; force_min_app_version: string | null }>;
 
   const nowMs = Date.now();
-  const tenantRows = tenants.map((tenant) => {
-    const activations = db
-      .prepare(
-        `SELECT a.last_seen_at, a.revoked_at, l.update_channel
+  const tenantRows = await Promise.all(tenants.map(async (tenant) => {
+    const activations = await db.all(`SELECT a.last_seen_at, a.revoked_at, l.update_channel
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
-         WHERE a.tenant_id = ?`,
-      )
-      .all(tenant.id) as Array<{ last_seen_at: string; revoked_at: string | null; update_channel: string }>;
+         WHERE a.tenant_id = ?`, tenant.id) as Array<{ last_seen_at: string; revoked_at: string | null; update_channel: string }>;
     const machineCount = activations.length;
     const staleCount = activations.filter((a) => {
       const ageMs = nowMs - new Date(a.last_seen_at).getTime();
@@ -3622,7 +3143,7 @@ app.get("/api/v1/ops/sync-overview", authMiddleware, (_req, res) => {
       dead_letter_count: deadLetterCount,
       severity,
     };
-  });
+  }));
 
   const drillByTenant = Object.fromEntries(
     tenantRows.map((row) => {
@@ -3708,14 +3229,10 @@ app.get("/api/v1/ops/sync-overview", authMiddleware, (_req, res) => {
   });
 });
 
-app.get("/api/v1/ops/rollout-overview", authMiddleware, (_req, res) => {
-  const tenants = db
-    .prepare(
-      `SELECT id, update_channel, rollout_cohort, force_min_app_version, force_update_mode
+app.get("/api/v1/ops/rollout-overview", authMiddleware, async (_req, res) => {
+  const tenants = await db.all(`SELECT id, update_channel, rollout_cohort, force_min_app_version, force_update_mode
        FROM tenants
-       WHERE is_active = 1`,
-    )
-    .all() as Array<{
+       WHERE is_active = 1`) as Array<{
       id: string;
       update_channel: "stable" | "pilot" | "internal";
       rollout_cohort: string;
@@ -3723,20 +3240,14 @@ app.get("/api/v1/ops/rollout-overview", authMiddleware, (_req, res) => {
       force_update_mode: ForceUpdateMode;
     }>;
   const machineCountsByTenant = new Map<string, number>();
-  const machineRows = db
-    .prepare("SELECT tenant_id, COUNT(*) as c FROM machine_activations WHERE revoked_at IS NULL GROUP BY tenant_id")
-    .all() as Array<{ tenant_id: string; c: number }>;
+  const machineRows = await db.all("SELECT tenant_id, COUNT(*) as c FROM machine_activations WHERE revoked_at IS NULL GROUP BY tenant_id") as Array<{ tenant_id: string; c: number }>;
   for (const row of machineRows) {
     machineCountsByTenant.set(row.tenant_id, row.c);
   }
-  const mismatches = db
-    .prepare(
-      `SELECT COUNT(*) as c
+  const mismatches = await db.get(`SELECT COUNT(*) as c
        FROM license_keys l
        JOIN tenants t ON t.id = l.tenant_id
-       WHERE l.update_channel != t.update_channel`,
-    )
-    .get() as { c: number };
+       WHERE l.update_channel != t.update_channel`) as { c: number };
   const totalMachines = machineRows.reduce((sum, row) => sum + row.c, 0);
   const impact = {
     release_id: process.env.ROLLOUT_RELEASE_ID ?? `rel_desktop_${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`,
@@ -3808,18 +3319,14 @@ app.get("/api/v1/ops/rollout-overview", authMiddleware, (_req, res) => {
   });
 });
 
-app.get("/api/v1/ops/platform-overview", authMiddleware, (_req, res) => {
-  const syncRows = db
-    .prepare(
-      `SELECT t.id as tenant_id,
+app.get("/api/v1/ops/platform-overview", authMiddleware, async (_req, res) => {
+  const syncRows = await db.all(`SELECT t.id as tenant_id,
               SUM(CASE WHEN a.revoked_at IS NULL THEN 0 ELSE 1 END) as revoked_count,
               COUNT(a.id) as machine_count
        FROM tenants t
        LEFT JOIN machine_activations a ON a.tenant_id = t.id
        WHERE t.is_active = 1
-       GROUP BY t.id`,
-    )
-    .all() as Array<{ tenant_id: string; revoked_count: number; machine_count: number }>;
+       GROUP BY t.id`) as Array<{ tenant_id: string; revoked_count: number; machine_count: number }>;
   const totalMachines = syncRows.reduce((sum, row) => sum + row.machine_count, 0);
   const revokedMachines = syncRows.reduce((sum, row) => sum + row.revoked_count, 0);
   const serviceSeverity: OpsSeverity = revokedMachines >= 5 ? "warn" : "info";
@@ -3831,7 +3338,7 @@ app.get("/api/v1/ops/platform-overview", authMiddleware, (_req, res) => {
       severity: serviceSeverity,
       detail: revokedMachines > 0 ? `repair queue pressure from ${revokedMachines} revoked activations` : "worker backlog nominal",
     },
-    { service: "postgresql", severity: "info", detail: "sqlite control-plane backend healthy" },
+    { service: "postgresql", severity: "info", detail: "postgres control-plane backend healthy" },
     { service: "redis", severity: "info", detail: "cache layer optional for v1 stack" },
     {
       service: "object_storage",
@@ -3905,51 +3412,7 @@ app.get("/api/v1/ops/platform-overview", authMiddleware, (_req, res) => {
   });
 });
 
-function mapAuditRow(row: {
-  record_id: string;
-  sequence: number;
-  occurred_at_rfc3339: string;
-  actor_id: string;
-  action_code: string;
-  action_category: string;
-  correlation_id: string;
-  scope_tenant_id: string | null;
-  before_snapshot_sha256: string | null;
-  after_snapshot_sha256: string | null;
-  payload_canonical_sha256: string;
-  chain_prev_hash: string | null;
-  record_integrity_sha256: string;
-  reason_code: string | null;
-  approval_correlation_id: string | null;
-  entity_refs_json: string;
-}) {
-  let refs: AuditEntityRefs = {};
-  try {
-    refs = JSON.parse(row.entity_refs_json) as AuditEntityRefs;
-  } catch {
-    refs = {};
-  }
-  return {
-    record_id: row.record_id,
-    sequence: row.sequence,
-    occurred_at_rfc3339: row.occurred_at_rfc3339,
-    actor_id: row.actor_id,
-    action_code: row.action_code,
-    action_category: row.action_category,
-    correlation_id: row.correlation_id,
-    scope_tenant_id: row.scope_tenant_id,
-    before_snapshot_sha256: row.before_snapshot_sha256,
-    after_snapshot_sha256: row.after_snapshot_sha256,
-    payload_canonical_sha256: row.payload_canonical_sha256,
-    chain_prev_hash: row.chain_prev_hash,
-    record_integrity_sha256: row.record_integrity_sha256,
-    reason_code: row.reason_code,
-    approval_correlation_id: row.approval_correlation_id,
-    entity_refs: refs,
-  };
-}
-
-app.get("/api/v1/audit/ledger", authMiddleware, (req, res) => {
+app.get("/api/v1/audit/ledger", authMiddleware, async (req, res) => {
   const parsed = AuditLedgerQuery.safeParse(req.query ?? {});
   if (!parsed.success) {
     sendValidationError(res, parsed, "query");
@@ -3961,29 +3424,21 @@ app.get("/api/v1/audit/ledger", authMiddleware, (req, res) => {
   const cursorSequence = pagination.cursor ? Number.parseInt(pagination.cursor, 10) : null;
   const qTrimmed = q?.trim().toLowerCase() ?? "";
   const rows = (cursorSequence
-    ? db
-        .prepare(
-          `SELECT record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
+    ? await db.all(`SELECT record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
                   correlation_id, scope_tenant_id, before_snapshot_sha256, after_snapshot_sha256,
                   payload_canonical_sha256, chain_prev_hash, record_integrity_sha256, reason_code,
                   approval_correlation_id, entity_refs_json
            FROM audit_records
            WHERE sequence < ?
            ORDER BY sequence DESC
-           LIMIT ?`,
-        )
-        .all(cursorSequence, effectiveLimit + 1)
-    : db
-        .prepare(
-          `SELECT record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
+           LIMIT ?`, cursorSequence, effectiveLimit + 1)
+    : await db.all(`SELECT record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
                   correlation_id, scope_tenant_id, before_snapshot_sha256, after_snapshot_sha256,
                   payload_canonical_sha256, chain_prev_hash, record_integrity_sha256, reason_code,
                   approval_correlation_id, entity_refs_json
            FROM audit_records
            ORDER BY sequence DESC
-           LIMIT ?`,
-        )
-        .all(effectiveLimit + 1)) as Array<{
+           LIMIT ?`, effectiveLimit + 1)) as Array<{
       record_id: string;
       sequence: number;
       occurred_at_rfc3339: string;
@@ -4026,78 +3481,21 @@ app.get("/api/v1/audit/ledger", authMiddleware, (req, res) => {
   res.json(items);
 });
 
-app.get("/api/v1/audit/ledger/verify-chain", authMiddleware, (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT record_id, sequence, occurred_at_rfc3339, actor_id, action_code, action_category,
-              correlation_id, scope_tenant_id, before_snapshot_sha256, after_snapshot_sha256,
-              payload_canonical_sha256, chain_prev_hash, record_integrity_sha256, reason_code,
-              approval_correlation_id, entity_refs_json
-       FROM audit_records
-       ORDER BY sequence ASC`,
-    )
-    .all() as Array<{
-      record_id: string;
-      sequence: number;
-      occurred_at_rfc3339: string;
-      actor_id: string;
-      action_code: string;
-      action_category: string;
-      correlation_id: string;
-      scope_tenant_id: string | null;
-      before_snapshot_sha256: string | null;
-      after_snapshot_sha256: string | null;
-      payload_canonical_sha256: string;
-      chain_prev_hash: string | null;
-      record_integrity_sha256: string;
-      reason_code: string | null;
-      approval_correlation_id: string | null;
-      entity_refs_json: string;
-    }>;
-  let status: "ok" | "integrity_mismatch" | "chain_broken" = "ok";
-  let previous: string | null = null;
-  for (const row of rows) {
-    const mapped = mapAuditRow(row);
-    const preimage = auditRecordPreimage({
-      record_id: mapped.record_id,
-      sequence: mapped.sequence,
-      occurred_at_rfc3339: mapped.occurred_at_rfc3339,
-      actor_id: mapped.actor_id,
-      action_code: mapped.action_code,
-      action_category: mapped.action_category,
-      correlation_id: mapped.correlation_id,
-      scope_tenant_id: mapped.scope_tenant_id,
-      before_snapshot_sha256: mapped.before_snapshot_sha256,
-      after_snapshot_sha256: mapped.after_snapshot_sha256,
-      payload_canonical_sha256: mapped.payload_canonical_sha256,
-      chain_prev_hash: mapped.chain_prev_hash,
-      reason_code: mapped.reason_code,
-      approval_correlation_id: mapped.approval_correlation_id,
-      entity_refs: mapped.entity_refs,
-    });
-    const computed = sha256Hex(preimage);
-    if (computed !== mapped.record_integrity_sha256) {
-      status = "integrity_mismatch";
-      break;
-    }
-    if (mapped.chain_prev_hash !== previous) {
-      status = "chain_broken";
-      break;
-    }
-    previous = mapped.record_integrity_sha256;
-  }
-  res.json({ status, checked_count: rows.length });
+app.get("/api/v1/audit/ledger/verify-chain", authMiddleware, async (_req, res) => {
+  const rows = await db.all<AuditRecordRow>(
+    `SELECT ${AUDIT_RECORD_COLUMNS}
+     FROM audit_records
+     ORDER BY sequence ASC`,
+  );
+  const result = verifyAuditChain(rows);
+  res.json({ status: result.status, checked_count: result.checked_count });
 });
 
-app.get("/api/v1/audit/ledger/export", authMiddleware, (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT sequence, occurred_at_rfc3339, actor_id, action_code, action_category, correlation_id,
+app.get("/api/v1/audit/ledger/export", authMiddleware, async (_req, res) => {
+  const rows = await db.all(`SELECT sequence, occurred_at_rfc3339, actor_id, action_code, action_category, correlation_id,
               scope_tenant_id, reason_code, approval_correlation_id, record_id
        FROM audit_records
-       ORDER BY sequence DESC`,
-    )
-    .all() as Array<{
+       ORDER BY sequence DESC`) as Array<{
       sequence: number;
       occurred_at_rfc3339: string;
       actor_id: string;
@@ -4135,31 +3533,23 @@ app.get("/api/v1/audit/ledger/export", authMiddleware, (_req, res) => {
   res.status(200).send(csv);
 });
 
-app.get("/api/v1/support/tickets", authMiddleware, (req, res) => {
+app.get("/api/v1/support/tickets", authMiddleware, async (req, res) => {
   const { cursor, limit, withPagination } = parsePagination(req.query);
   const effectiveLimit = withPagination ? limit : 10_000;
   const cursorCreatedAt = cursor?.split("|")[0] ?? null;
   const cursorTicketId = cursor?.split("|")[1] ?? "";
   const rows = (cursor
-    ? db
-        .prepare(
-          `SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
+    ? await db.all(`SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
                   linked_incident_ids_json, sla_due_rfc3339, created_at_rfc3339
            FROM support_tickets
            WHERE (created_at_rfc3339 < ?) OR (created_at_rfc3339 = ? AND ticket_id < ?)
            ORDER BY created_at_rfc3339 DESC, ticket_id DESC
-           LIMIT ?`,
-        )
-        .all(cursorCreatedAt, cursorCreatedAt, cursorTicketId, effectiveLimit + 1)
-    : db
-        .prepare(
-          `SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
+           LIMIT ?`, cursorCreatedAt, cursorCreatedAt, cursorTicketId, effectiveLimit + 1)
+    : await db.all(`SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
                   linked_incident_ids_json, sla_due_rfc3339, created_at_rfc3339
            FROM support_tickets
            ORDER BY created_at_rfc3339 DESC, ticket_id DESC
-           LIMIT ?`,
-        )
-        .all(effectiveLimit + 1)) as Array<{
+           LIMIT ?`, effectiveLimit + 1)) as Array<{
       ticket_id: string;
       tenant_id: string;
       state: string;
@@ -4171,10 +3561,8 @@ app.get("/api/v1/support/tickets", authMiddleware, (req, res) => {
       sla_due_rfc3339: string | null;
       created_at_rfc3339: string;
     }>;
-  const mapped = rows.slice(0, effectiveLimit).map((row) => {
-    const linkedAudit = db
-      .prepare("SELECT audit_record_id FROM support_ticket_interventions WHERE ticket_id = ? ORDER BY created_at_rfc3339 DESC")
-      .all(row.ticket_id) as Array<{ audit_record_id: string }>;
+  const mapped = await Promise.all(rows.slice(0, effectiveLimit).map(async (row) => {
+    const linkedAudit = await db.all("SELECT audit_record_id FROM support_ticket_interventions WHERE ticket_id = ? ORDER BY created_at_rfc3339 DESC", row.ticket_id) as Array<{ audit_record_id: string }>;
     let incidents: string[] = [];
     try {
       incidents = JSON.parse(row.linked_incident_ids_json) as string[];
@@ -4194,7 +3582,7 @@ app.get("/api/v1/support/tickets", authMiddleware, (req, res) => {
       sla_due_rfc3339: row.sla_due_rfc3339,
       created_at_rfc3339: row.created_at_rfc3339,
     };
-  });
+  }));
   if (withPagination) {
     const hasMore = rows.length > effectiveLimit;
     const last = mapped[mapped.length - 1];
@@ -4208,21 +3596,17 @@ app.get("/api/v1/support/tickets", authMiddleware, (req, res) => {
   res.json(mapped);
 });
 
-app.post("/api/v1/support/tickets/:ticketId/interventions", authMiddleware, (req, res) => {
+app.post("/api/v1/support/tickets/:ticketId/interventions", authMiddleware, async (req, res) => {
   const parsed = SupportInterventionBody.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed, "body");
     return;
   }
-  runIdempotent(req, res, () => {
+  await runIdempotent(req, res, async () => {
     const ticketId = req.params.ticketId;
-    const ticket = db
-      .prepare(
-        `SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
+    const ticket = await db.get(`SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint, app_version_reported,
                 linked_incident_ids_json, sla_due_rfc3339, created_at_rfc3339
-         FROM support_tickets WHERE ticket_id = ?`,
-      )
-      .get(ticketId) as
+         FROM support_tickets WHERE ticket_id = ?`, ticketId) as
       | {
           ticket_id: string;
           tenant_id: string;
@@ -4240,7 +3624,7 @@ app.post("/api/v1/support/tickets/:ticketId/interventions", authMiddleware, (req
       return { status: 404, body: { error: "ticket_not_found" } };
     }
     const nextState = parsed.data.next_state ?? ticket.state;
-    const guard = requirePrivilegedAction(req, {
+    const guard = await requirePrivilegedAction(req, {
       action_code: parsed.data.action_code,
       action_category: "support_intervention",
       scope_tenant_id: ticket.tenant_id,
@@ -4251,15 +3635,12 @@ app.post("/api/v1/support/tickets/:ticketId/interventions", authMiddleware, (req
       return { status: guard.status, body: guard.body };
     }
     const actorId = resolveActorId(req);
-    db.prepare("UPDATE support_tickets SET state = ? WHERE ticket_id = ?").run(nextState, ticketId);
+    await db.run("UPDATE support_tickets SET state = ? WHERE ticket_id = ?", nextState, ticketId);
     const auditId = guard.auditRecordId;
-    db.prepare(
-      `INSERT INTO support_ticket_interventions
+    await db.run(`INSERT INTO support_ticket_interventions
         (intervention_id, ticket_id, actor_id, action_code, note, from_state, to_state,
          reason_code, audit_record_id, created_at_rfc3339)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      newId("intv"),
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, newId("intv"),
       ticketId,
       actorId,
       parsed.data.action_code,
@@ -4268,21 +3649,16 @@ app.post("/api/v1/support/tickets/:ticketId/interventions", authMiddleware, (req
       nextState,
       parsed.data.reason_code ?? null,
       auditId,
-      new Date().toISOString(),
-    );
+      new Date().toISOString());
     return { status: 201, body: { ok: true, audit_record_id: auditId, state: nextState } };
   });
 });
 
-app.get("/api/v1/support/tickets/export", authMiddleware, (_req, res) => {
-  const rows = db
-    .prepare(
-      `SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint,
+app.get("/api/v1/support/tickets/export", authMiddleware, async (_req, res) => {
+  const rows = await db.all(`SELECT ticket_id, tenant_id, state, severity, affected_module, sync_status_hint,
               app_version_reported, sla_due_rfc3339, created_at_rfc3339
        FROM support_tickets
-       ORDER BY created_at_rfc3339 DESC`,
-    )
-    .all() as Array<{
+       ORDER BY created_at_rfc3339 DESC`) as Array<{
       ticket_id: string;
       tenant_id: string;
       state: string;
@@ -4318,21 +3694,13 @@ app.get("/api/v1/support/tickets/export", authMiddleware, (_req, res) => {
   res.status(200).send(csv);
 });
 
-app.get("/api/v1/support/diagnostic-bundles/latest", authMiddleware, (_req, res) => {
-  const bundle = db
-    .prepare(
-      "SELECT bundle_id, created_at_rfc3339, redaction_profile FROM diagnostic_bundles ORDER BY created_at_rfc3339 DESC LIMIT 1",
-    )
-    .get() as { bundle_id: string; created_at_rfc3339: string; redaction_profile: string } | undefined;
+app.get("/api/v1/support/diagnostic-bundles/latest", authMiddleware, async (_req, res) => {
+  const bundle = await db.get("SELECT bundle_id, created_at_rfc3339, redaction_profile FROM diagnostic_bundles ORDER BY created_at_rfc3339 DESC LIMIT 1") as { bundle_id: string; created_at_rfc3339: string; redaction_profile: string } | undefined;
   if (!bundle) {
     res.status(404).json({ error: "bundle_not_found" });
     return;
   }
-  const artifacts = db
-    .prepare(
-      "SELECT logical_path, sha256, kind FROM diagnostic_bundle_artifacts WHERE bundle_id = ? ORDER BY logical_path ASC",
-    )
-    .all(bundle.bundle_id) as Array<{ logical_path: string; sha256: string; kind: string }>;
+  const artifacts = await db.all("SELECT logical_path, sha256, kind FROM diagnostic_bundle_artifacts WHERE bundle_id = ? ORDER BY logical_path ASC", bundle.bundle_id) as Array<{ logical_path: string; sha256: string; kind: string }>;
   res.json({
     bundle_id: bundle.bundle_id,
     created_at_rfc3339: bundle.created_at_rfc3339,
@@ -4341,19 +3709,13 @@ app.get("/api/v1/support/diagnostic-bundles/latest", authMiddleware, (_req, res)
   });
 });
 
-app.get("/api/v1/support/offline-reconciliation", authMiddleware, (_req, res) => {
-  const rows = db
-    .prepare(
-      "SELECT desktop_queue_id, vendor_ticket_id, sync_state, duplicate_of FROM offline_ticket_reconciliation ORDER BY desktop_queue_id ASC",
-    )
-    .all();
+app.get("/api/v1/support/offline-reconciliation", authMiddleware, async (_req, res) => {
+  const rows = await db.all("SELECT desktop_queue_id, vendor_ticket_id, sync_state, duplicate_of FROM offline_ticket_reconciliation ORDER BY desktop_queue_id ASC");
   res.json(rows);
 });
 
-app.get("/api/v1/audit/hardening/runbooks", authMiddleware, (_req, res) => {
-  const rows = db
-    .prepare("SELECT runbook_id, title, summary, first_steps_json FROM incident_runbooks ORDER BY runbook_id ASC")
-    .all() as Array<{ runbook_id: string; title: string; summary: string; first_steps_json: string }>;
+app.get("/api/v1/audit/hardening/runbooks", authMiddleware, async (_req, res) => {
+  const rows = await db.all("SELECT runbook_id, title, summary, first_steps_json FROM incident_runbooks ORDER BY runbook_id ASC") as Array<{ runbook_id: string; title: string; summary: string; first_steps_json: string }>;
   const mapped = rows.map((row) => {
     let steps: string[] = [];
     try {
@@ -4366,10 +3728,10 @@ app.get("/api/v1/audit/hardening/runbooks", authMiddleware, (_req, res) => {
   res.json(mapped);
 });
 
-app.get("/api/v1/audit/hardening/readiness", authMiddleware, (_req, res) => {
-  const auditCount = (db.prepare("SELECT COUNT(*) as c FROM audit_records").get() as { c: number }).c;
-  const interventionCount = (db.prepare("SELECT COUNT(*) as c FROM support_ticket_interventions").get() as { c: number }).c;
-  const bundleCount = (db.prepare("SELECT COUNT(*) as c FROM diagnostic_bundles").get() as { c: number }).c;
+app.get("/api/v1/audit/hardening/readiness", authMiddleware, async (_req, res) => {
+  const auditCount = (await db.get("SELECT COUNT(*) as c FROM audit_records") as { c: number }).c;
+  const interventionCount = (await db.get("SELECT COUNT(*) as c FROM support_ticket_interventions") as { c: number }).c;
+  const bundleCount = (await db.get("SELECT COUNT(*) as c FROM diagnostic_bundles") as { c: number }).c;
   res.json([
     {
       code: "audit_chain_verified",
@@ -4389,9 +3751,14 @@ app.get("/api/v1/audit/hardening/readiness", authMiddleware, (_req, res) => {
   ]);
 });
 
+function sendSyncRequestError(res: express.Response, err: SyncRequestError): void {
+  res.status(err.status).json({ error: err.code, message: err.message });
+}
+
 /**
- * Tenant-runtime sync: push local outbox rows using activation JWT (same secret as `/activation/claim`).
- * Returns a batch matching desktop `ApplySyncBatchInput` for `apply_sync_batch`.
+ * Tenant-runtime sync: push local outbox rows and pull inbound changes with the activation token.
+ * `protocol_version` selects the protocol: v1 (unchanged for old desktops) or v2
+ * (deploy/SYNC_PROTOCOL_V2.md).
  */
 app.post("/api/v1/sync/exchange", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
@@ -4399,30 +3766,85 @@ app.post("/api/v1/sync/exchange", activationAuthMiddleware, deviceRateLimiter, a
     res.status(500).json({ error: "internal_error" });
     return;
   }
-  const parsed = SyncExchangeBody.safeParse(req.body);
+  const syncAct = { tenantId: act.tenantId, licenseId: act.licenseId, machineFingerprint: act.machineFingerprint };
+  const protocolVersion = (req.body as { protocol_version?: unknown } | undefined)?.protocol_version;
+  try {
+    if (protocolVersion === "v2") {
+      const parsed = SyncExchangeBodyV2.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
+        return;
+      }
+      const outcome = await runSyncExchangeV2(
+        db,
+        { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret },
+        syncAct,
+        req.body,
+        parsed.data,
+        structuredLog,
+      );
+      if (outcome.replayed) res.setHeader("X-Idempotent-Replay", "true");
+      res.json(outcome.response);
+      return;
+    }
+    const parsed = SyncExchangeBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+      return;
+    }
+    res.json(await runSyncExchangeV1(db, syncAct, parsed.data, structuredLog));
+  } catch (e) {
+    if (e instanceof SyncRequestError) {
+      structuredLog("sync_exchange_refused", {
+        tenant_id: act.tenantId,
+        machine_fingerprint: act.machineFingerprint,
+        status: e.status,
+        error: e.code,
+      });
+      sendSyncRequestError(res, e);
+      return;
+    }
+    structuredLog("sync_exchange_error", {
+      tenant_id: act.tenantId,
+      machine_fingerprint: act.machineFingerprint,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    res.status(500).json({ error: "sync_exchange_failed" });
+  }
+});
+
+/** Protocol v2 bootstrap: paged current state, then a checkpoint for deltas. */
+app.post("/api/v1/sync/snapshot", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
+  const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+  if (!act) {
+    res.status(500).json({ error: "internal_error" });
+    return;
+  }
+  const parsed = SyncSnapshotBodyV2.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+    res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
     return;
   }
   try {
-    const store = await getSyncStore();
-    const response = await runSyncExchange(
-      store,
-      {
-        tenantId: act.tenantId,
-        licenseId: act.licenseId,
-        machineFingerprint: act.machineFingerprint,
-      },
+    const response = await runSyncSnapshotV2(
+      db,
+      { checkpointSecret: syncConfig.checkpointSecret },
+      { tenantId: act.tenantId, licenseId: act.licenseId, machineFingerprint: act.machineFingerprint },
       parsed.data,
       structuredLog,
     );
     res.json(response);
   } catch (e) {
-    structuredLog("sync_exchange_error", {
+    if (e instanceof SyncRequestError) {
+      sendSyncRequestError(res, e);
+      return;
+    }
+    structuredLog("sync_snapshot_error", {
       tenant_id: act.tenantId,
+      machine_fingerprint: act.machineFingerprint,
       error: e instanceof Error ? e.message : String(e),
     });
-    res.status(500).json({ error: "sync_exchange_failed" });
+    res.status(500).json({ error: "sync_snapshot_failed" });
   }
 });
 
@@ -4522,10 +3944,8 @@ type ActivationLicenseRow = {
   has_demo_data: number;
 };
 
-function loadLicenseForActivation(licenseKey: string): ActivationLicenseRow | undefined {
-  return db
-    .prepare(
-      `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+async function loadLicenseForActivation(licenseKey: string): Promise<ActivationLicenseRow | undefined> {
+  return await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
               l.update_channel, t.rollout_cohort,
               COALESCE(t.edition, 'core') AS edition,
               COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
@@ -4537,17 +3957,11 @@ function loadLicenseForActivation(licenseKey: string): ActivationLicenseRow | un
               COALESCE(t.has_demo_data, 0) AS has_demo_data
        FROM license_keys l
        JOIN tenants t ON t.id = l.tenant_id
-       WHERE l.license_key = ?`,
-    )
-    .get(licenseKey) as ActivationLicenseRow | undefined;
+       WHERE l.license_key = ?`, licenseKey) as ActivationLicenseRow | undefined;
 }
 
-function countActiveActivations(licenseId: string): number {
-  const row = db
-    .prepare(
-      "SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND revoked_at IS NULL",
-    )
-    .get(licenseId) as { count: number };
+async function countActiveActivations(licenseId: string): Promise<number> {
+  const row = await db.get("SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND revoked_at IS NULL", licenseId) as { count: number };
   return row.count;
 }
 
@@ -4571,24 +3985,22 @@ function resolveEnvelopeValidity(lic: ActivationLicenseRow): {
   };
 }
 
-function buildEntitlementEnvelopeForLicense(
+async function buildEntitlementEnvelopeForLicense(
   lic: ActivationLicenseRow,
   opts?: { bumpLineage?: boolean; persistLineage?: boolean },
-): EntitlementEnvelopePayload {
+): Promise<EntitlementEnvelopePayload> {
   // Soft phase: always issue lineage 1 with null previous so desktop apply does not
   // require a prior local envelope id (control plane does not track device envelopes).
   // entitlement_lineage still bumps for operator audit / concurrency hints.
-  // Catalog snapshot + lineage bump run in one IMMEDIATE transaction so a concurrent
-  // edition PATCH cannot land between SELECT and envelope stamp.
-  return db.transaction(() => {
+  // Catalog snapshot + lineage bump run in one transaction, so the envelope is stamped from a
+  // single committed catalog version.
+  return db.tx(async () => {
     if (opts?.bumpLineage) {
-      db.prepare(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`).run(lic.tenant_id);
+      await db.run(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`, lic.tenant_id);
     } else if (opts?.persistLineage) {
-      db.prepare(
-        `UPDATE tenants SET entitlement_lineage = CASE WHEN COALESCE(entitlement_lineage, 0) < 1 THEN 1 ELSE entitlement_lineage END WHERE id = ?`,
-      ).run(lic.tenant_id);
+      await db.run(`UPDATE tenants SET entitlement_lineage = CASE WHEN COALESCE(entitlement_lineage, 0) < 1 THEN 1 ELSE entitlement_lineage END WHERE id = ?`, lic.tenant_id);
     }
-    const snap = loadCapabilitiesJsonForSign(db, lic.edition);
+    const snap = await loadCapabilitiesJsonForSign(db, lic.edition);
     const { validUntil, offlineGraceUntil } = resolveEnvelopeValidity(lic);
     return buildSignedEntitlementEnvelope({
       edition: snap.tier,
@@ -4600,18 +4012,18 @@ function buildEntitlementEnvelopeForLicense(
       validUntil,
       offlineGraceUntil,
     });
-  }).immediate();
+  });
 }
 
-function buildActivationSummary(
+async function buildActivationSummary(
   lic: ActivationLicenseRow,
   input: z.infer<typeof ActivationClaimBody>,
   resolvedPolicy: ReturnType<typeof resolveForceUpdatePolicy>,
   opts?: { includeEnvelope?: boolean; bumpLineage?: boolean; persistLineage?: boolean },
-): Record<string, unknown> {
-  const edition = editionExists(db, lic.edition) ? lic.edition : parseEditionId(lic.edition, "core");
+): Promise<Record<string, unknown>> {
+  const edition = await editionExists(db, lic.edition) ? lic.edition : parseEditionId(lic.edition, "core");
   const includeEnvelope = opts?.includeEnvelope === true;
-  const envelope = buildEntitlementEnvelopeForLicense(lic, {
+  const envelope = await buildEntitlementEnvelopeForLicense(lic, {
     bumpLineage: opts?.bumpLineage,
     persistLineage: opts?.persistLineage,
   });
@@ -4628,7 +4040,7 @@ function buildActivationSummary(
     update_channel: lic.update_channel,
     expires_at: lic.expires_at,
     device_limit: lic.max_machines,
-    activated_device_count: countActiveActivations(lic.id),
+    activated_device_count: await countActiveActivations(lic.id),
     machine_label: input.machine_label ?? null,
     is_initialized: lic.is_initialized === 1,
     has_demo_data: lic.has_demo_data === 1,
@@ -4646,14 +4058,10 @@ function buildActivationSummary(
   };
 }
 
-function resolveActivationPolicy(lic: ActivationLicenseRow, appVersion: string | undefined) {
-  const cohortPolicy = db
-    .prepare(
-      `SELECT force_min_app_version, force_update_mode, force_update_reason
+async function resolveActivationPolicy(lic: ActivationLicenseRow, appVersion: string | undefined) {
+  const cohortPolicy = await db.get(`SELECT force_min_app_version, force_update_mode, force_update_reason
        FROM cohort_update_policies
-       WHERE channel = ? AND cohort_label = ?`,
-    )
-    .get(lic.update_channel, lic.rollout_cohort) as
+       WHERE channel = ? AND cohort_label = ?`, lic.update_channel, lic.rollout_cohort) as
     | {
         force_min_app_version: string | null;
         force_update_mode: Exclude<ForceUpdateMode, "inherit">;
@@ -4673,11 +4081,11 @@ function resolveActivationPolicy(lic: ActivationLicenseRow, appVersion: string |
 
 type ActivationValidateFailure = { status: number; body: Record<string, unknown>; reason: string };
 
-function validateLicenseForActivation(
+async function validateLicenseForActivation(
   lic: ActivationLicenseRow | undefined,
   input: z.infer<typeof ActivationClaimBody>,
   opts: { reserveSlot: boolean },
-): { ok: true; lic: ActivationLicenseRow } | { ok: false; failure: ActivationValidateFailure } {
+): Promise<{ ok: true; lic: ActivationLicenseRow } | { ok: false; failure: ActivationValidateFailure }> {
   if (!lic || lic.is_active !== 1) {
     return {
       ok: false,
@@ -4697,12 +4105,8 @@ function validateLicenseForActivation(
     };
   }
 
-  const existing = db
-    .prepare(
-      `SELECT id, machine_fingerprint, license_id, revoked_at, revocation_kind
-       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
-    )
-    .get(lic.tenant_id, input.machine_fingerprint) as
+  const existing = await db.get(`SELECT id, machine_fingerprint, license_id, revoked_at, revocation_kind
+       FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`, lic.tenant_id, input.machine_fingerprint) as
     | {
         id: string;
         machine_fingerprint: string;
@@ -4732,7 +4136,7 @@ function validateLicenseForActivation(
   // one bound to another licence needs a free slot like a new one.
   const holdsSlot = existing != null && existing.revoked_at == null && existing.license_id === lic.id;
   if (!holdsSlot) {
-    const activeCount = countActiveActivations(lic.id);
+    const activeCount = await countActiveActivations(lic.id);
     if (activeCount >= lic.max_machines) {
       return {
         ok: false,
@@ -4750,7 +4154,7 @@ function validateLicenseForActivation(
   return { ok: true, lic };
 }
 
-app.post("/api/v1/activation/preview", activationRateLimiter, (req, res) => {
+app.post("/api/v1/activation/preview", activationRateLimiter, async (req, res) => {
   const startedAt = Date.now();
   const parsed = ActivationClaimBody.safeParse(req.body);
   if (!parsed.success) {
@@ -4764,8 +4168,8 @@ app.post("/api/v1/activation/preview", activationRateLimiter, (req, res) => {
     return;
   }
   const input = parsed.data;
-  const lic = loadLicenseForActivation(input.license_key.trim());
-  const validated = validateLicenseForActivation(lic, input, { reserveSlot: false });
+  const lic = await loadLicenseForActivation(input.license_key.trim());
+  const validated = await validateLicenseForActivation(lic, input, { reserveSlot: false });
   if (!validated.ok) {
     observeActivationOutcome(validated.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
     structuredLog("activation_preview_failed", {
@@ -4777,7 +4181,7 @@ app.post("/api/v1/activation/preview", activationRateLimiter, (req, res) => {
     res.status(validated.failure.status).json(validated.failure.body);
     return;
   }
-  const resolvedPolicy = resolveActivationPolicy(validated.lic, input.app_version);
+  const resolvedPolicy = await resolveActivationPolicy(validated.lic, input.app_version);
   structuredLog("activation_preview_success", {
     status: 200,
     tenant_id: validated.lic.tenant_id,
@@ -4785,10 +4189,10 @@ app.post("/api/v1/activation/preview", activationRateLimiter, (req, res) => {
     machine_fingerprint: input.machine_fingerprint,
     duration_ms: Date.now() - startedAt,
   });
-  res.json(buildActivationSummary(validated.lic, input, resolvedPolicy));
+  res.json(await buildActivationSummary(validated.lic, input, resolvedPolicy));
 });
 
-app.post("/api/v1/activation/claim", activationRateLimiter, (req, res) => {
+app.post("/api/v1/activation/claim", activationRateLimiter, async (req, res) => {
   const startedAt = Date.now();
   const parsed = ActivationClaimBody.safeParse(req.body);
   if (!parsed.success) {
@@ -4803,61 +4207,76 @@ app.post("/api/v1/activation/claim", activationRateLimiter, (req, res) => {
   }
   const input = parsed.data;
   const nowIso = new Date().toISOString();
-  const lic = loadLicenseForActivation(input.license_key.trim());
-  const validated = validateLicenseForActivation(lic, input, { reserveSlot: true });
-  if (!validated.ok) {
-    observeActivationOutcome(validated.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
+  const lic = await loadLicenseForActivation(input.license_key.trim());
+  // Slot check and activation write run in one transaction under a per-licence lock, so two
+  // concurrent claims cannot both take the last slot.
+  const claim = await db.tx(async () => {
+    if (lic) await db.lockXact("license-slots", lic.id);
+    const validated = await validateLicenseForActivation(lic, input, { reserveSlot: true });
+    if (!validated.ok) return { ok: false as const, failure: validated.failure };
+
+    const resolvedPolicy = await resolveActivationPolicy(validated.lic, input.app_version);
+    const activationToken = signDeviceActivationToken(JWT_SECRET, {
+      tenantId: validated.lic.tenant_id,
+      licenseId: validated.lic.id,
+      machineFingerprint: input.machine_fingerprint,
+    });
+
+    // Operator-revoked machines were already refused by validateLicenseForActivation.
+    const existing = await db.get<{ id: string; machine_fingerprint: string }>(
+      "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
+      validated.lic.tenant_id,
+      input.machine_fingerprint,
+    );
+
+    if (existing) {
+      // Rebind to the licence being claimed (e.g. after a licence replacement) so the device lookup
+      // in activationAuthMiddleware matches the token's license_id.
+      await db.run(
+        `UPDATE machine_activations
+         SET license_id = ?, machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?,
+             revoked_at = NULL, revocation_kind = NULL
+         WHERE id = ?`,
+        validated.lic.id,
+        input.machine_label ?? null,
+        input.app_version ?? null,
+        activationToken,
+        nowIso,
+        existing.id,
+      );
+    } else {
+      await db.run(
+        `INSERT INTO machine_activations
+          (id, tenant_id, license_id, machine_fingerprint, machine_label, app_version, activation_token, activated_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        newId("act"),
+        validated.lic.tenant_id,
+        validated.lic.id,
+        input.machine_fingerprint,
+        input.machine_label ?? null,
+        input.app_version ?? null,
+        activationToken,
+        nowIso,
+        nowIso,
+      );
+    }
+    return { ok: true as const, validated, resolvedPolicy, activationToken };
+  });
+  if (!claim.ok) {
+    observeActivationOutcome(claim.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
     structuredLog("activation_claim_failed", {
-      reason: validated.failure.reason,
-      status: validated.failure.status,
+      reason: claim.failure.reason,
+      status: claim.failure.status,
       duration_ms: Date.now() - startedAt,
       machine_fingerprint: input.machine_fingerprint,
-      ...(validated.failure.reason !== "license_not_found"
+      ...(claim.failure.reason !== "license_not_found"
         ? { tenant_id: lic?.tenant_id, license_id: lic?.id }
         : {}),
     });
-    res.status(validated.failure.status).json(validated.failure.body);
+    res.status(claim.failure.status).json(claim.failure.body);
     return;
   }
-
-  const resolvedPolicy = resolveActivationPolicy(validated.lic, input.app_version);
-  const activationToken = signDeviceActivationToken(JWT_SECRET, {
-    tenantId: validated.lic.tenant_id,
-    licenseId: validated.lic.id,
-    machineFingerprint: input.machine_fingerprint,
-  });
-
-  // Operator-revoked machines were already refused by validateLicenseForActivation.
-  const existing = db
-    .prepare("SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?")
-    .get(validated.lic.tenant_id, input.machine_fingerprint) as { id: string; machine_fingerprint: string } | undefined;
-
-  if (existing) {
-    // Rebind to the licence being claimed (e.g. after a licence replacement) so the device lookup
-    // in activationAuthMiddleware matches the token's license_id.
-    db.prepare(
-      `UPDATE machine_activations
-       SET license_id = ?, machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?,
-           revoked_at = NULL, revocation_kind = NULL
-       WHERE id = ?`,
-    ).run(validated.lic.id, input.machine_label ?? null, input.app_version ?? null, activationToken, nowIso, existing.id);
-  } else {
-    db.prepare(
-      `INSERT INTO machine_activations
-        (id, tenant_id, license_id, machine_fingerprint, machine_label, app_version, activation_token, activated_at, last_seen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      newId("act"),
-      validated.lic.tenant_id,
-      validated.lic.id,
-      input.machine_fingerprint,
-      input.machine_label ?? null,
-      input.app_version ?? null,
-      activationToken,
-      nowIso,
-      nowIso,
-    );
-  }
+  const { validated, resolvedPolicy, activationToken } = claim;
 
   observeActivationOutcome("ok");
   structuredLog("activation_claim_success", {
@@ -4870,25 +4289,23 @@ app.post("/api/v1/activation/claim", activationRateLimiter, (req, res) => {
     duration_ms: Date.now() - startedAt,
   });
   res.json({
-    ...buildActivationSummary(validated.lic, input, resolvedPolicy, {
+    ...(await buildActivationSummary(validated.lic, input, resolvedPolicy, {
       includeEnvelope: true,
       persistLineage: true,
-    }),
+    })),
     // Count after write so activated_device_count includes this device.
-    activated_device_count: countActiveActivations(validated.lic.id),
+    activated_device_count: await countActiveActivations(validated.lic.id),
     activation_token: activationToken,
   });
 });
 
-app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
+app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });
     return;
   }
-  const licRow = db
-    .prepare(
-      `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+  const licRow = await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
               l.update_channel, t.rollout_cohort,
               COALESCE(t.edition, 'core') AS edition,
               COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
@@ -4900,9 +4317,7 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRa
               COALESCE(t.has_demo_data, 0) AS has_demo_data
        FROM license_keys l
        JOIN tenants t ON t.id = l.tenant_id
-       WHERE l.id = ? AND l.tenant_id = ?`,
-    )
-    .get(activation.licenseId, activation.tenantId) as ActivationLicenseRow | undefined;
+       WHERE l.id = ? AND l.tenant_id = ?`, activation.licenseId, activation.tenantId) as ActivationLicenseRow | undefined;
   if (!licRow || licRow.is_active !== 1) {
     res.status(404).json({ error: "license_not_found" });
     return;
@@ -4915,12 +4330,12 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRa
     res.status(403).json({ error: "license_expired" });
     return;
   }
-  const resolvedPolicy = resolveActivationPolicy(licRow, undefined);
+  const resolvedPolicy = await resolveActivationPolicy(licRow, undefined);
   const syntheticInput = {
     license_key: licRow.license_key,
     machine_fingerprint: activation.machineFingerprint,
   };
-  const summary = buildActivationSummary(licRow, syntheticInput, resolvedPolicy, {
+  const summary = await buildActivationSummary(licRow, syntheticInput, resolvedPolicy, {
     includeEnvelope: true,
     bumpLineage: true,
   });
@@ -4934,10 +4349,8 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRa
       licenseId: activation.licenseId,
       machineFingerprint: activation.machineFingerprint,
     });
-    db.prepare(
-      `UPDATE machine_activations SET activation_token = ?
-       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
-    ).run(activationToken, activation.tenantId, activation.licenseId, activation.machineFingerprint);
+    await db.run(`UPDATE machine_activations SET activation_token = ?
+       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`, activationToken, activation.tenantId, activation.licenseId, activation.machineFingerprint);
     structuredLog("activation_token_rotated", {
       tenant_id: activation.tenantId,
       license_id: activation.licenseId,
@@ -4947,23 +4360,19 @@ app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRa
   }
   res.json({
     ...summary,
-    activated_device_count: countActiveActivations(licRow.id),
+    activated_device_count: await countActiveActivations(licRow.id),
     // Always present: the desktop stores it as its bearer token (rotated when ageing).
     activation_token: activationToken,
   });
 });
 
-app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
+app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`,
-    )
-    .get(activation.tenantId) as { id: string; is_initialized: number } | undefined;
+  const row = await db.get(`SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`, activation.tenantId) as { id: string; is_initialized: number } | undefined;
   if (!row) {
     res.status(404).json({ error: "tenant_not_found" });
     return;
@@ -4974,41 +4383,28 @@ app.get("/api/v1/activation/tenant-status", activationAuthMiddleware, deviceRate
   });
 });
 
-app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware, deviceRateLimiter, (req, res) => {
+app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
   const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
   if (!activation) {
     res.status(401).json({ error: "missing_token" });
     return;
   }
-  const cols = tenantTableColumns();
   const nowIso = new Date().toISOString();
-  const assignments = ["is_initialized = 1"];
-  const params: unknown[] = [];
-  if (cols.has("bootstrap_completed_at")) {
-    assignments.push("bootstrap_completed_at = COALESCE(bootstrap_completed_at, ?)");
-    params.push(nowIso);
-  }
-  if (cols.has("bootstrap_method")) {
-    assignments.push("bootstrap_method = COALESCE(bootstrap_method, ?)");
-    params.push("desktop_activation");
-  }
-  if (cols.has("updated_at")) {
-    assignments.push("updated_at = ?");
-    params.push(nowIso);
-  }
-  params.push(activation.tenantId);
-  const result = db
-    .prepare(`UPDATE tenants SET ${assignments.join(", ")} WHERE id = ?`)
-    .run(...params);
+  const result = await db.run(
+    `UPDATE tenants
+     SET is_initialized = 1,
+         bootstrap_completed_at = COALESCE(bootstrap_completed_at, ?),
+         bootstrap_method = COALESCE(bootstrap_method, ?)
+     WHERE id = ?`,
+    nowIso,
+    "desktop_activation",
+    activation.tenantId,
+  );
   if (result.changes === 0) {
     res.status(404).json({ error: "tenant_not_found" });
     return;
   }
-  const row = db
-    .prepare(
-      `SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`,
-    )
-    .get(activation.tenantId) as { id: string; is_initialized: number };
+  const row = await db.get(`SELECT id, COALESCE(is_initialized, 0) AS is_initialized FROM tenants WHERE id = ?`, activation.tenantId) as { id: string; is_initialized: number };
   structuredLog("activation_tenant_initialized", {
     tenant_id: row.id,
     machine_fingerprint: activation.machineFingerprint,
@@ -5021,24 +4417,7 @@ app.post("/api/v1/activation/tenant-status/initialize", activationAuthMiddleware
 
 const port = Number(process.env.PORT ?? 3000);
 
-let syncStoreSingleton: SyncStore | null = null;
-let syncStorePromise: Promise<SyncStore> | null = null;
 let mediaStoreSingleton: TenantMediaObjectStore | null | undefined;
-
-async function getSyncStore(): Promise<SyncStore> {
-  if (syncStoreSingleton) return syncStoreSingleton;
-  if (!syncStorePromise) {
-    syncStorePromise = openSyncStore(db, process.env["DATABASE_URL"]).then((store) => {
-      syncStoreSingleton = store;
-      structuredLog("sync_store_ready", {
-        backend: store.backend,
-        database_url_set: Boolean(process.env["DATABASE_URL"]?.trim()),
-      });
-      return store;
-    });
-  }
-  return syncStorePromise;
-}
 
 function getMediaStore(): TenantMediaObjectStore | null {
   if (mediaStoreSingleton === undefined) {
@@ -5051,14 +4430,34 @@ function getMediaStore(): TenantMediaObjectStore | null {
   return mediaStoreSingleton;
 }
 
-void getSyncStore()
-  .then(() => {
-    getMediaStore();
-    app.listen(port, "0.0.0.0", () => {
-      console.log(`control-api listening on ${port}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Failed to initialize sync store", err);
-    process.exit(1);
+// Last handler: an error thrown or rejected by any route (forwarded by forwardAsyncErrors).
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  structuredLog("route_unhandled_error", {
+    method: req.method,
+    path: req.path,
+    error: err instanceof Error ? err.message : String(err),
   });
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  res.status(500).json({ error: "internal_error" });
+});
+
+/** Sync retention (log compaction + idempotency pruning) every SYNC_RETENTION_INTERVAL_MINUTES. */
+const syncRetentionTimer = setInterval(() => {
+  runSyncRetention(db, syncConfig)
+    .then((report) => structuredLog("sync_retention_run", report))
+    .catch((err) => structuredLog("sync_retention_failed", { error: err instanceof Error ? err.message : String(err) }));
+}, syncConfig.retentionIntervalMinutes * 60_000);
+syncRetentionTimer.unref();
+
+getMediaStore();
+app.listen(port, "0.0.0.0", () => {
+  structuredLog("control_api_listening", {
+    port,
+    sync_entity_registry_version: syncEntityRegistry.version,
+    sync_entity_types: syncEntityRegistry.size,
+  });
+  console.log(`control-api listening on ${port}`);
+});

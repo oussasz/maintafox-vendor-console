@@ -1,14 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
 import { obtainStepUpToken } from "./lib/step-up.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-control-api-"));
 const port = 33117;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -30,12 +27,15 @@ async function waitForHealth() {
 }
 
 async function run() {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
-      DATA_DIR: dataDir,
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
       SEED_ADMIN_EMAIL: "admin@maintafox.systems",
@@ -159,7 +159,7 @@ async function run() {
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);
-    rmSync(dataDir, { recursive: true, force: true });
+    await testPg.stop();
   }
 }
 

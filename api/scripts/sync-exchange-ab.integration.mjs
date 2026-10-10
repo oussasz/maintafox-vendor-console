@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-sync-ab-"));
 const port = 33133;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -48,12 +45,15 @@ function equipmentPayload(esid) {
 }
 
 async function run() {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
-      DATA_DIR: dataDir,
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
       SEED_ADMIN_EMAIL: "admin@maintafox.systems",
@@ -61,8 +61,6 @@ async function run() {
       SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       CORS_ORIGIN: "http://localhost:5174",
-      // Force SQLite sync fallback (no DATABASE_URL).
-      DATABASE_URL: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -275,7 +273,7 @@ async function run() {
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);
-    rmSync(dataDir, { recursive: true, force: true });
+    await testPg.stop();
   }
 }
 

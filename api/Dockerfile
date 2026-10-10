@@ -31,6 +31,8 @@ ENV NODE_ENV=production
 COPY --from=prod-deps /app /app
 COPY --from=build /app/api/dist ./dist
 COPY api/migrations ./migrations
+# Sync entity registry (protocol v2), resolved from dist/sync as ../../../shared.
+COPY shared/sync-entity-registry.v2.json /app/shared/sync-entity-registry.v2.json
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health || exit 1

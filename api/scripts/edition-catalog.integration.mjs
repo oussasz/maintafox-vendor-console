@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-edition-catalog-"));
 const port = 33141;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -62,12 +60,15 @@ function fullCaps(overrides = {}) {
 }
 
 async function run() {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
-      DATA_DIR: dataDir,
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
       SEED_ADMIN_EMAIL: "admin@maintafox.systems",
@@ -203,13 +204,8 @@ async function run() {
     throw err;
   } finally {
     server.kill("SIGTERM");
-    await delay(300);
-    try {
-      rmSync(dataDir, { recursive: true, force: true });
-    } catch (cleanupErr) {
-      // Windows may still hold the SQLite handle briefly after SIGTERM.
-      console.warn("temp dataDir cleanup skipped:", cleanupErr);
-    }
+    await once(server, "exit").catch(() => undefined);
+    await testPg.stop();
   }
 }
 

@@ -9,18 +9,15 @@
  * - last_seen_at is updated by device traffic.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import Database from "better-sqlite3";
+import pg from "pg";
 import jwt from "jsonwebtoken";
 
 import { obtainStepUpToken } from "./lib/step-up.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-control-api-machine-revocation-"));
 const port = 33127;
 const baseUrl = `http://127.0.0.1:${port}`;
 const JWT_SECRET = "integration_test_jwt_secret_value_with_minimum_length_12345";
@@ -50,12 +47,15 @@ async function json(res) {
 }
 
 async function run() {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
-      DATA_DIR: dataDir,
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
       JWT_SECRET,
       SEED_ADMIN_PASSWORD: ADMIN_PASSWORD,
       SEED_ADMIN_EMAIL: "admin@maintafox.systems",
@@ -70,7 +70,16 @@ async function run() {
   server.stdout.on("data", (buf) => (serverOutput += String(buf)));
   server.stderr.on("data", (buf) => (serverOutput += String(buf)));
 
-  const db = () => new Database(join(dataDir, "control-plane.db"));
+  /** Direct SQL against the API's Postgres database (test setup only). */
+  const sql = async (text, params = []) => {
+    const client = new pg.Client({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      return (await client.query(text, params)).rows;
+    } finally {
+      await client.end();
+    }
+  };
 
   try {
     await waitForHealth();
@@ -145,16 +154,10 @@ async function run() {
     const claimA = await claim(deviceA);
     assert.equal(claimA.status, 200, "device A claim must succeed");
     const tokenA = (await claimA.json()).activation_token;
-    {
-      const conn = db();
-      conn.prepare("UPDATE machine_activations SET last_seen_at = '2000-01-01T00:00:00.000Z' WHERE machine_fingerprint = ?").run(deviceA);
-      conn.close();
-    }
+    await sql("UPDATE machine_activations SET last_seen_at = '2000-01-01T00:00:00.000Z' WHERE machine_fingerprint = $1", [deviceA]);
     assert.equal((await refresh(tokenA)).status, 200, "policy refresh must succeed while active");
     {
-      const conn = db();
-      const seen = conn.prepare("SELECT last_seen_at FROM machine_activations WHERE machine_fingerprint = ?").get(deviceA);
-      conn.close();
+      const [seen] = await sql("SELECT last_seen_at FROM machine_activations WHERE machine_fingerprint = $1", [deviceA]);
       assert.ok(seen.last_seen_at > "2026-01-01", `last_seen_at must be refreshed, got ${seen.last_seen_at}`);
     }
 
@@ -205,11 +208,7 @@ async function run() {
       JWT_SECRET,
       { algorithm: "HS256", issuer: "maintafox-control-api", audience: "maintafox-desktop-device", expiresIn: 30 * 24 * 3600 },
     );
-    {
-      const conn = db();
-      conn.prepare("UPDATE machine_activations SET activation_token = ? WHERE machine_fingerprint = ?").run(oldToken, deviceA);
-      conn.close();
-    }
+    await sql("UPDATE machine_activations SET activation_token = $1 WHERE machine_fingerprint = $2", [oldToken, deviceA]);
     const rotateRes = await refresh(oldToken);
     assert.equal(rotateRes.status, 200);
     const rotated = (await rotateRes.json()).activation_token;
@@ -218,30 +217,18 @@ async function run() {
     assert.equal((await refresh(rotated)).status, 200);
 
     // ── Tenant deactivation, licence expiry and licence revocation ────────────────────────
-    const setTenantActive = (active) => {
-      const conn = db();
-      conn.prepare("UPDATE tenants SET is_active = ? WHERE id = ?").run(active, tenant.id);
-      conn.close();
-    };
-    setTenantActive(0);
+    const setTenantActive = (active) => sql("UPDATE tenants SET is_active = $1 WHERE id = $2", [active, tenant.id]);
+    await setTenantActive(0);
     const inactive = await refresh(rotated);
     assert.equal(inactive.status, 403);
     assert.equal((await inactive.json()).error, "tenant_inactive");
-    setTenantActive(1);
+    await setTenantActive(1);
 
-    {
-      const conn = db();
-      conn.prepare("UPDATE license_keys SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(licence.id);
-      conn.close();
-    }
+    await sql("UPDATE license_keys SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = $1", [licence.id]);
     const expired = await sync(rotated);
     assert.equal(expired.status, 403);
     assert.equal((await expired.json()).error, "license_expired");
-    {
-      const conn = db();
-      conn.prepare("UPDATE license_keys SET expires_at = '2099-01-01T00:00:00.000Z' WHERE id = ?").run(licence.id);
-      conn.close();
-    }
+    await sql("UPDATE license_keys SET expires_at = '2099-01-01T00:00:00.000Z' WHERE id = $1", [licence.id]);
 
     const revokeLicence = await fetch(`${baseUrl}/api/v1/licenses/${licence.id}/revoke`, {
       method: "POST",
@@ -262,7 +249,7 @@ async function run() {
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);
-    rmSync(dataDir, { recursive: true, force: true });
+    await testPg.stop();
   }
 }
 
