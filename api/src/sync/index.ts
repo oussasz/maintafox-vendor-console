@@ -8,7 +8,7 @@ export { runSyncExchangeV2 } from "./exchange-v2.js";
 export { loadSyncEntityRegistry, type SyncEntityRegistry } from "./registry.js";
 export { runSyncRetention } from "./retention.js";
 export { runSyncSnapshotV2 } from "./snapshot.js";
-export { purgeTenantSyncData } from "./store.js";
+export { purgeTenantSyncData, removeStateOutsideTenantScope } from "./store.js";
 export { SyncRequestError } from "./types.js";
 export type {
   SyncExchangeRequest,

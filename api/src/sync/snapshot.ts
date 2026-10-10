@@ -6,7 +6,7 @@
  */
 import type { Database } from "../db/database.js";
 import { signCheckpointToken, signSnapshotPageToken, verifySnapshotPageToken } from "./checkpoint.js";
-import { listSnapshotPage, registerDeviceUsers, tenantStateHighWater } from "./store.js";
+import { confirmDeviceUsers, listSnapshotPage, tenantStateHighWater } from "./store.js";
 import {
   sha256Hex,
   SyncRequestError,
@@ -49,9 +49,6 @@ export async function runSyncSnapshotV2(
     // gets a higher seq than this mark: reading it without the lock is safe.
     highWater = await tenantStateHighWater(db, act.tenantId);
     after = ["", ""];
-    await db.tx(() =>
-      registerDeviceUsers(db, { tenantId: act.tenantId, machineFingerprint: act.machineFingerprint, userSyncIds: users }),
-    );
   }
 
   const rows = await listSnapshotPage(db, {
@@ -65,6 +62,10 @@ export async function runSyncSnapshotV2(
   const has_more = rows.length > body.page_size;
   const items = rows.slice(0, body.page_size);
   const last = items[items.length - 1];
+  if (!has_more) {
+    // The snapshot is complete: its users no longer need user_snapshot_required.
+    await confirmDeviceUsers(db, { tenantId: act.tenantId, machineFingerprint: act.machineFingerprint, userSyncIds: users });
+  }
 
   const response: SyncSnapshotResponseV2 = {
     protocol_version: "v2",

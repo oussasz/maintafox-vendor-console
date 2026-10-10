@@ -168,12 +168,24 @@ export class Database {
   }
 }
 
+/** Connections per API process. Sync exchanges hold one for their whole transaction. */
+export const PG_POOL_MAX_CONNECTIONS = 20;
+/** A request waiting longer than this for a free connection fails (500) instead of hanging. */
+export const PG_CONNECTION_WAIT_TIMEOUT_MS = 10_000;
+/**
+ * Postgres ends a session whose transaction sits idle this long (e.g. a stalled process), so it
+ * cannot hold a tenant sync lock indefinitely.
+ */
+export const PG_IDLE_IN_TRANSACTION_TIMEOUT_MS = 60_000;
+
 /** Opens the pool and verifies connectivity. Sessions run in UTC so text timestamps compare as UTC. */
 export async function openDatabase(databaseUrl: string, applicationName: string): Promise<Database> {
   const pool = new pg.Pool({
     connectionString: databaseUrl,
     application_name: applicationName,
-    options: "-c TimeZone=UTC",
+    max: PG_POOL_MAX_CONNECTIONS,
+    connectionTimeoutMillis: PG_CONNECTION_WAIT_TIMEOUT_MS,
+    options: `-c TimeZone=UTC -c idle_in_transaction_session_timeout=${PG_IDLE_IN_TRANSACTION_TIMEOUT_MS}`,
   });
   pool.on("error", (err) => {
     // An idle client lost its connection; the pool replaces it. Log so it is visible.

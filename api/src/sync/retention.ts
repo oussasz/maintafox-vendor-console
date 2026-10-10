@@ -3,8 +3,9 @@
  *
  * Log compaction: a log row is deleted only when every active (non-revoked) device of its tenant
  * has passed it AND it is older than SYNC_INGRESS_RETENTION_DAYS. A device's position is its v2
- * acknowledged checkpoint, or its v1 cursor when it has never used v2. Devices that never synced
- * hold no position. A tenant without any positioned active device is not compacted.
+ * acknowledged checkpoint, or its v1 cursor when it has never used v2. An active device that has
+ * never synced counts as position 0 and blocks compaction for its tenant: a v1 device has no
+ * snapshot, so it must still find the whole log when it first syncs (or is reinstated).
  * Current state and tombstones are never compacted: v2 delivery reads them, not the log.
  *
  * Idempotency pruning: stored exchange responses (v1 and v2) older than
@@ -36,7 +37,7 @@ export async function runSyncRetention(
     const ingress = await db.run(
       `WITH positions AS (
          SELECT a.tenant_id,
-                COALESCE(c.acknowledged_seq, v1.last_delivered_ingress_id) AS position
+                COALESCE(c.acknowledged_seq, v1.last_delivered_ingress_id, 0) AS position
          FROM machine_activations a
          LEFT JOIN sync_device_checkpoint c
            ON c.tenant_id = a.tenant_id AND c.machine_fingerprint = a.machine_fingerprint
@@ -47,7 +48,6 @@ export async function runSyncRetention(
        floors AS (
          SELECT tenant_id, MIN(position) AS floor_seq
          FROM positions
-         WHERE position IS NOT NULL
          GROUP BY tenant_id
        )
        DELETE FROM sync_mirror_ingress i

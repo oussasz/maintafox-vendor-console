@@ -14,7 +14,7 @@ import {
   listDeltaForDevice,
   lockTenantSync,
   logRejection,
-  registerDeviceUsers,
+  recordDeviceUsers,
   tenantStateHighWater,
   upsertEntityState,
   type IngressInsert,
@@ -353,7 +353,7 @@ export async function runSyncExchangeV2(
       });
     }
 
-    const newUsers = await registerDeviceUsers(db, {
+    const newUsers = await recordDeviceUsers(db, {
       tenantId: act.tenantId,
       machineFingerprint: act.machineFingerprint,
       userSyncIds: currentUsers,
@@ -383,7 +383,8 @@ export async function runSyncExchangeV2(
          (tenant_id, machine_fingerprint, acknowledged_seq, issued_seq, device_class, tenant_config_json, last_exchange_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (tenant_id, machine_fingerprint) DO UPDATE SET
-         acknowledged_seq = EXCLUDED.acknowledged_seq,
+         -- A retry with an older token must not move the acknowledged position backwards.
+         acknowledged_seq = GREATEST(sync_device_checkpoint.acknowledged_seq, EXCLUDED.acknowledged_seq),
          issued_seq = EXCLUDED.issued_seq,
          device_class = EXCLUDED.device_class,
          tenant_config_json = COALESCE(EXCLUDED.tenant_config_json, sync_device_checkpoint.tenant_config_json),

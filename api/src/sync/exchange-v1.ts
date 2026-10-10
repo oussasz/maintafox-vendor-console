@@ -3,13 +3,16 @@
  *
  * Fixed without a wire change: the whole exchange is one transaction under the per-tenant lock;
  * the device cursor advances only together with the stored response; a device whose recent log
- * rows are all its own is no longer starved (the cursor passes over its own rows). v1 pushes also
- * update the v2 current state (last write wins, as v1 always behaved) so v2 devices receive them.
+ * rows are all its own is no longer starved (the cursor passes over its own rows). v1 pushes of
+ * tenant-scoped registry types also update the v2 current state (last write wins, as v1 always
+ * behaved) so v2 devices receive them. User-scoped and unregistered types stay in the log only:
+ * v1 carries no owner, so putting them in the state would deliver personal rows to every device.
  */
 import { randomBytes } from "node:crypto";
 
 import type { Database } from "../db/database.js";
 import { initialCheckpointToken, nextCheckpointToken, shouldAdvanceCheckpoint } from "./checkpoint.js";
+import type { SyncEntityRegistry } from "./registry.js";
 import { insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
 import {
   normalizePayloadHash,
@@ -30,6 +33,7 @@ export function newBatchId(): string {
 
 export async function runSyncExchangeV1(
   db: Database,
+  deps: { registry: SyncEntityRegistry },
   act: ActivationSyncContext,
   body: SyncExchangeRequest,
   log: (event: string, fields: Record<string, unknown>) => void,
@@ -103,7 +107,7 @@ export async function runSyncExchangeV1(
         protocolVersion: "v1",
       };
       const ingressId = await insertIngress(db, ingress);
-      if (ingressId !== null) {
+      if (ingressId !== null && deps.registry.scopeOf(ingress.entityType) === "tenant") {
         await upsertEntityState(db, ingressId, ingress);
       }
 

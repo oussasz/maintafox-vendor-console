@@ -70,12 +70,15 @@ CREATE TABLE sync_device_checkpoint (
   PRIMARY KEY (tenant_id, machine_fingerprint)
 );
 
--- Users a device has reported in current_user_sync_ids (drives user_snapshot_required).
+-- Users a device has reported in current_user_sync_ids (drives user_snapshot_required). A user is
+-- listed in user_snapshot_required until a snapshot covering it completes (confirmed_at set), so a
+-- lost response cannot make the device miss the user's older personal items.
 CREATE TABLE sync_device_user (
   tenant_id TEXT NOT NULL,
   machine_fingerprint TEXT NOT NULL,
   user_sync_id TEXT NOT NULL,
   first_seen_at TIMESTAMPTZ NOT NULL,
+  confirmed_at TIMESTAMPTZ NULL,
   PRIMARY KEY (tenant_id, machine_fingerprint, user_sync_id)
 );
 

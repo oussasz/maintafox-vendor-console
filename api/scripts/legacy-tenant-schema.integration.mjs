@@ -153,7 +153,7 @@ async function sql(databaseUrl, text, params = []) {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;

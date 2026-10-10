@@ -32,7 +32,12 @@ rollback copy.
    cd /opt/maintafox-vendor-console.new
    printf '\nSYNC_CHECKPOINT_SECRET=%s\nSYNC_INGRESS_RETENTION_DAYS=90\nSYNC_IDEMPOTENCY_RETENTION_DAYS=14\nSYNC_RETENTION_INTERVAL_MINUTES=60\n' "$(openssl rand -hex 32)" >> .env
    grep -c '^SYNC_' .env   # expect 4
+   grep '^DESKTOP_APP_ORIGINS=' .env   # must still be http://tauri.localhost,https://tauri.localhost,tauri://localhost
    ```
+
+   `DESKTOP_APP_ORIGINS` (from 066d967) must stay in `.env`: without it the installed desktop app
+   cannot reach `/api/v1/activation/*` and `/api/v1/sync/*` from its webview. Admin routes stay
+   `CORS_ORIGIN`-only.
 
 3. Build the new API image without starting it:
 
@@ -201,6 +206,9 @@ COMMIT;
 
 - The import refuses unknown tables or columns instead of guessing. Only the tenants table has
   a known legacy shape; its extra columns are kept in `tenants.legacy_attributes_json`.
-- Log compaction ignores activated devices that have never synced. A v1 device that is
-  activated but has never synced, and syncs for the first time after compaction, does not
-  receive the compacted history (v2 devices bootstrap with a snapshot and are not affected).
+- Log compaction waits for every active device, including ones that never synced. A device that
+  is revoked during a compaction and reinstated later can miss compacted rows (v2 devices recover
+  with a snapshot; a v1 device needs the desktop update).
+- On startup the API removes v2 current-state rows that only v1 can have produced for
+  user-scoped or unregistered types (log `sync_state_outside_tenant_scope_removed`); their log
+  rows stay, so v1 devices are unaffected.

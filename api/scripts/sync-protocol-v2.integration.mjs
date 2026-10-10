@@ -65,7 +65,7 @@ async function stopApi(signal = "SIGTERM") {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 60; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;
@@ -424,7 +424,13 @@ async function run() {
       assert.deepEqual(first.user_snapshot_required, ["user-1"], "first time C reports user-1");
       const cInbound = [...first.inbound_items, ...(first.has_more ? await pullAll(C) : [])];
       assert.ok(cInbound.some((i) => i.entity_sync_id === "ud-1" && i.owner_user_sync_id === "user-1"));
-      assert.deepEqual((await exchange(C)).user_snapshot_required, [], "reported once");
+      assert.deepEqual(
+        (await exchange(C)).user_snapshot_required,
+        ["user-1"],
+        "listed again until a snapshot covers the user (a lost response cannot drop it)",
+      );
+      await snapshotAll(C, "user", 10);
+      assert.deepEqual((await exchange(C)).user_snapshot_required, [], "confirmed by the completed snapshot");
       // B learns user-1 after the item was written: it is not in B's delta, a user snapshot has it.
       B.users = ["user-1"];
       const late = await exchange(B);
@@ -432,6 +438,20 @@ async function run() {
       assert.ok(!late.inbound_items.some((i) => i.entity_sync_id === "ud-1"));
       const userSnap = await snapshotAll(B, "user", 10);
       assert.deepEqual(userSnap.items.map((i) => i.entity_sync_id), ["ud-1"]);
+      assert.deepEqual((await exchange(B)).user_snapshot_required, []);
+
+      // A v1 push of a user-scoped type has no owner: it stays in the log (v1 devices) but never
+      // enters the v2 state, so it is not delivered to every device.
+      const v1Dismissal = item("user_dismissals", "ud-v1", 1, null, { banner: "y" });
+      const { base_row_version: _b, ...v1Item } = v1Dismissal;
+      const v1res = await exchangeRaw(V1, {
+        protocol_version: "v1",
+        idempotency_key: `v1-${randomUUID()}`,
+        checkpoint_token: null,
+        outbox_batch: [v1Item],
+      });
+      assert.equal(v1res.status, 200);
+      assert.ok(!(await pullAll(B)).some((i) => i.entity_sync_id === "ud-v1"), "v1 user-scoped row not fanned out via v2");
     }
 
     // ── Snapshot paging and page-token binding ────────────────────────────────────────────
@@ -628,10 +648,16 @@ async function run() {
       const [aboveBefore] = await sql("SELECT COUNT(*)::int AS c FROM sync_mirror_ingress WHERE tenant_id = $1 AND id > $2", [tenant.id, v1Cursor.c]);
       const db = await openDatabase(databaseUrl, "sync-v2-retention-test");
       try {
+        // An activated device that has never synced holds the whole log back (v1 has no snapshot).
+        await claim("fp-never-synced");
+        const blocked = await runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 });
+        assert.equal(blocked.ingress_rows_deleted, 0, "a never-synced active device blocks compaction");
+        await sql("UPDATE machine_activations SET revoked_at = now()::text, revocation_kind = 'machine' WHERE machine_fingerprint = 'fp-never-synced'");
         const report = await runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 });
         assert.equal(report.skipped_concurrent_run, false);
         assert.ok(report.ingress_rows_deleted > 0);
-        assert.ok(report.idempotency_v2_deleted > 0);
+        assert.ok(blocked.idempotency_v2_deleted > 0, "old stored responses are pruned (not blocked by device positions)");
+        assert.equal(report.idempotency_v2_deleted, 0);
       } finally {
         await db.close();
       }

@@ -240,22 +240,64 @@ export async function listSnapshotPage(
   return rows.map(toInboundItemV2);
 }
 
-/** Records users first seen on a device; returns the ones that were new, sorted. */
-export async function registerDeviceUsers(
+/**
+ * Records the users a device reports and returns, sorted, those not yet covered by a completed
+ * snapshot on that device (they stay listed in user_snapshot_required until then).
+ */
+export async function recordDeviceUsers(
   db: Database,
   input: { tenantId: string; machineFingerprint: string; userSyncIds: string[] },
 ): Promise<string[]> {
   if (input.userSyncIds.length === 0) return [];
-  const rows = await db.all<{ user_sync_id: string }>(
+  await db.run(
     `INSERT INTO sync_device_user (tenant_id, machine_fingerprint, user_sync_id, first_seen_at)
      SELECT $1, $2, u, now() FROM unnest($3::text[]) AS u
-     ON CONFLICT (tenant_id, machine_fingerprint, user_sync_id) DO NOTHING
-     RETURNING user_sync_id`,
+     ON CONFLICT (tenant_id, machine_fingerprint, user_sync_id) DO NOTHING`,
     input.tenantId,
     input.machineFingerprint,
     input.userSyncIds,
   );
-  return rows.map((r) => r.user_sync_id).sort();
+  const rows = await db.all<{ user_sync_id: string }>(
+    `SELECT user_sync_id FROM sync_device_user
+     WHERE tenant_id = $1 AND machine_fingerprint = $2 AND user_sync_id = ANY($3::text[]) AND confirmed_at IS NULL
+     ORDER BY user_sync_id`,
+    input.tenantId,
+    input.machineFingerprint,
+    input.userSyncIds,
+  );
+  return rows.map((r) => r.user_sync_id);
+}
+
+/** Marks users as covered by a snapshot that completed on this device. */
+export async function confirmDeviceUsers(
+  db: Database,
+  input: { tenantId: string; machineFingerprint: string; userSyncIds: string[] },
+): Promise<void> {
+  if (input.userSyncIds.length === 0) return;
+  await db.run(
+    `INSERT INTO sync_device_user (tenant_id, machine_fingerprint, user_sync_id, first_seen_at, confirmed_at)
+     SELECT $1, $2, u, now(), now() FROM unnest($3::text[]) AS u
+     ON CONFLICT (tenant_id, machine_fingerprint, user_sync_id)
+       DO UPDATE SET confirmed_at = COALESCE(sync_device_user.confirmed_at, now())`,
+    input.tenantId,
+    input.machineFingerprint,
+    input.userSyncIds,
+  );
+}
+
+/**
+ * Removes current-state rows that only v1 (no owner, no registry check) or the one-time v1
+ * history backfill can have produced: rows without an owner whose type is not tenant-scoped.
+ * Such rows would otherwise be delivered to every device (a user-scoped row) or carry a type v2
+ * does not know. Their log rows are kept, so v1 devices are unaffected. Returns rows removed.
+ */
+export async function removeStateOutsideTenantScope(db: Database, tenantScopedTypes: string[]): Promise<number> {
+  const result = await db.run(
+    `DELETE FROM sync_entity_state
+     WHERE owner_user_sync_id IS NULL AND NOT (entity_type = ANY($1::text[]))`,
+    tenantScopedTypes,
+  );
+  return result.changes;
 }
 
 /** Every sync table keyed by tenant (used by tenant delete). */

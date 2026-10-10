@@ -58,6 +58,7 @@ import {
   loadSyncConfig,
   loadSyncEntityRegistry,
   purgeTenantSyncData,
+  removeStateOutsideTenantScope,
   runSyncExchangeV1,
   runSyncExchangeV2,
   runSyncRetention,
@@ -262,6 +263,13 @@ try {
   });
 } catch (err) {
   fatal(`database startup failed: ${(err as Error).message}`);
+}
+
+{
+  const removed = await removeStateOutsideTenantScope(db, syncEntityRegistry.tenantScopedTypes());
+  if (removed > 0) {
+    structuredLog("sync_state_outside_tenant_scope_removed", { rows: removed });
+  }
 }
 
 await seedEditionCatalogIfEmpty(db);
@@ -996,6 +1004,15 @@ app.use((req, res, next) => {
 });
 
 app.get("/health", async (_req, res) => {
+  // All API data is in Postgres: report unhealthy (503) when it cannot be reached, so the
+  // container healthcheck and the edge see the outage.
+  try {
+    await db.query("SELECT 1");
+  } catch (err) {
+    structuredLog("health_database_unreachable", { error: err instanceof Error ? err.message : String(err) });
+    res.status(503).json({ status: "unavailable", database: "unreachable" });
+    return;
+  }
   res.json({
     status: "ok",
     seed_behavior: SEED_BEHAVIOR,
@@ -2735,39 +2752,28 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
     return;
   }
 
-  let license = order.license_id
-    ? (await db.get(`SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ?`, order.license_id) as
-        | {
-            id: string;
-            tenant_id: string;
-            max_machines: number;
-            expires_at: string | null;
-            revoked_at: string | null;
-          }
-        | undefined)
-    : undefined;
-  if (!license) {
-    license = await pickActiveLicenseForTenant(order.tenant_id);
-  }
-
-  const previousExpires = license?.expires_at ?? null;
-  const nextExpires = computeLicenseExpiresPlusOneYear(license?.expires_at ?? null);
+  type RenewLicenceRow = {
+    id: string;
+    tenant_id: string;
+    max_machines: number;
+    expires_at: string | null;
+    revoked_at: string | null;
+  };
   const extraSlots = Math.max(0, order.extra_slots ?? 0);
   const nowIso = new Date().toISOString();
   let issuedNewLicense = false;
-  let nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
-
-  if (license?.revoked_at) {
-    await db.run(`UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = mfx_utc_now_text() WHERE id = ?`, order.id);
-    res.status(409).json({ error: "license_revoked" });
-    return;
-  }
-
-  let finalLicense = license;
+  let previousExpires: string | null = null;
+  let nextExpires = "";
+  let nextMaxMachines = 0;
+  let finalLicense: RenewLicenceRow | undefined;
+  let licenceRevoked = false;
   try {
     let raceAlreadyPaid = false;
     await db.tx(async () => {
-      // Two deliveries of the same webhook must not both extend the licence.
+      // Two deliveries of the same webhook must not both extend the licence, and two different
+      // paid orders of one tenant must extend it one after the other (each from the latest
+      // expiry): lock the tenant's renewals and the order, then read the licence under the lock.
+      await db.lockXact("licence-renewal", order.tenant_id);
       const locked = await db.get<{ status: string }>(
         `SELECT status FROM payment_orders WHERE id = ? FOR UPDATE`,
         order.id,
@@ -2776,6 +2782,27 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
         raceAlreadyPaid = true;
         return;
       }
+      let license = order.license_id
+        ? await db.get<RenewLicenceRow>(
+            `SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ? FOR UPDATE`,
+            order.license_id,
+          )
+        : undefined;
+      if (!license) {
+        license = await pickActiveLicenseForTenant(order.tenant_id);
+      }
+      if (license?.revoked_at) {
+        licenceRevoked = true;
+        await db.run(
+          `UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = mfx_utc_now_text() WHERE id = ?`,
+          order.id,
+        );
+        return;
+      }
+      previousExpires = license?.expires_at ?? null;
+      nextExpires = computeLicenseExpiresPlusOneYear(license?.expires_at ?? null);
+      nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
+      finalLicense = license;
       if (!finalLicense) {
         const issued = await issueLicenseForPaidOrder({
           tenantId: order.tenant_id,
@@ -2791,16 +2818,29 @@ app.post("/api/v1/webhooks/slickpay", async (req, res) => {
         };
         issuedNewLicense = true;
       } else {
-        await db.run(`UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`, nextExpires,
+        await db.run(
+          `UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`,
+          nextExpires,
           nextMaxMachines,
-          finalLicense.id);
+          finalLicense.id,
+        );
       }
       await db.run(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`, finalLicense.tenant_id);
-      await db.run(`UPDATE payment_orders
+      await db.run(
+        `UPDATE payment_orders
          SET status = 'paid', paid_at = ?, license_id = ?, slickpay_invoice_id = COALESCE(slickpay_invoice_id, ?),
              updated_at = mfx_utc_now_text()
-         WHERE id = ?`, nowIso, finalLicense.id, invoiceId, order.id);
+         WHERE id = ?`,
+        nowIso,
+        finalLicense.id,
+        invoiceId,
+        order.id,
+      );
     });
+    if (licenceRevoked) {
+      res.status(409).json({ error: "license_revoked" });
+      return;
+    }
     if (raceAlreadyPaid) {
       res.status(200).json({ ok: true, already_processed: true, payment_order_id: order.id });
       return;
@@ -2869,6 +2909,7 @@ app.post("/api/v1/licenses/:licenseId/revoke", authMiddleware, async (req, res) 
     }
     const licenseId = req.params.licenseId;
     const now = new Date().toISOString();
+    await db.lockXact("license-slots", licenseId);
     const row = await db.get("SELECT id, revoked_at, tenant_id FROM license_keys WHERE id = ?", licenseId) as { id: string; revoked_at: string | null; tenant_id: string } | undefined;
     if (!row) {
       return { status: 404, body: { error: "license_not_found" } };
@@ -3060,7 +3101,7 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, async (req, res
        FROM machine_activations a
        JOIN license_keys l ON l.id = a.license_id
        WHERE a.tenant_id = ?
-       ORDER BY a.last_seen_at DESC, a.machine_fingerprint DESC`, tenantId) as Array<{
+       ORDER BY a.last_seen_at COLLATE "C" DESC, a.machine_fingerprint COLLATE "C" DESC`, tenantId) as Array<{
       machine_fingerprint: string;
       last_seen_at: string;
       app_version: string | null;
@@ -3068,6 +3109,7 @@ app.get("/api/v1/tenants/:tenantId/activations", authMiddleware, async (req, res
       revocation_kind: string | null;
       update_channel: string;
     }>;
+  // The cursor is compared in JS (binary); the ORDER BY uses the binary "C" collation to match.
   const filtered = cursor
     ? rows.filter((row) => {
         const [cursorLastSeenAt, cursorMachineId] = cursor.split("|");
@@ -3792,7 +3834,7 @@ app.post("/api/v1/sync/exchange", activationAuthMiddleware, deviceRateLimiter, a
       res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
       return;
     }
-    res.json(await runSyncExchangeV1(db, syncAct, parsed.data, structuredLog));
+    res.json(await runSyncExchangeV1(db, { registry: syncEntityRegistry }, syncAct, parsed.data, structuredLog));
   } catch (e) {
     if (e instanceof SyncRequestError) {
       structuredLog("sync_exchange_refused", {
@@ -4211,8 +4253,16 @@ app.post("/api/v1/activation/claim", activationRateLimiter, async (req, res) => 
   // Slot check and activation write run in one transaction under a per-licence lock, so two
   // concurrent claims cannot both take the last slot.
   const claim = await db.tx(async () => {
-    if (lic) await db.lockXact("license-slots", lic.id);
-    const validated = await validateLicenseForActivation(lic, input, { reserveSlot: true });
+    // Locks: the licence's slots (vs. other claims, reinstate and revoke), then this device on the
+    // tenant (vs. a concurrent claim of the same machine on another licence). The licence is read
+    // again under the lock so a concurrent revoke or slot change is seen.
+    let current = lic;
+    if (lic) {
+      await db.lockXact("license-slots", lic.id);
+      await db.lockXact("activation-device", `${lic.tenant_id}:${input.machine_fingerprint}`);
+      current = await loadLicenseForActivation(input.license_key.trim());
+    }
+    const validated = await validateLicenseForActivation(current, input, { reserveSlot: true });
     if (!validated.ok) return { ok: false as const, failure: validated.failure };
 
     const resolvedPolicy = await resolveActivationPolicy(validated.lic, input.app_version);

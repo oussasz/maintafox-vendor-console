@@ -42,7 +42,7 @@ function delay(ms) {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;
@@ -62,7 +62,7 @@ async function assertRefusesToBoot(missingVar) {
   let output = "";
   proc.stdout.on("data", (b) => (output += String(b)));
   proc.stderr.on("data", (b) => (output += String(b)));
-  const timer = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  const timer = setTimeout(() => proc.kill("SIGKILL"), 30_000);
   const [code] = await once(proc, "exit");
   clearTimeout(timer);
   assert.notEqual(code, 0, `API must refuse to boot without ${missingVar}; output:\n${output}`);
@@ -76,7 +76,7 @@ async function assertRejectsDesktopOrigins(value) {
   let output = "";
   proc.stdout.on("data", (b) => (output += String(b)));
   proc.stderr.on("data", (b) => (output += String(b)));
-  const timer = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  const timer = setTimeout(() => proc.kill("SIGKILL"), 30_000);
   const [code] = await once(proc, "exit");
   clearTimeout(timer);
   assert.notEqual(code, 0, `API must refuse DESKTOP_APP_ORIGINS=${value}; output:
@@ -281,5 +281,6 @@ async function run() {
 
 run().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  // exit explicitly: shutdown hooks (embedded Postgres) must not mask a failure
+  process.exit(1);
 });

@@ -37,6 +37,8 @@ const RegistryFile = z
 export type SyncEntityRegistry = {
   readonly version: number;
   scopeOf(entityType: string): SyncEntityScope | undefined;
+  /** Entity types delivered to every device of a tenant. */
+  tenantScopedTypes(): string[];
   readonly size: number;
 };
 
@@ -61,6 +63,7 @@ export function loadSyncEntityRegistry(path: string = SYNC_ENTITY_REGISTRY_PATH)
   return {
     version: parsed.data.registry_version,
     scopeOf: (entityType) => scopes.get(entityType),
+    tenantScopedTypes: () => [...scopes].filter(([, scope]) => scope === "tenant").map(([type]) => type),
     size: scopes.size,
   };
 }

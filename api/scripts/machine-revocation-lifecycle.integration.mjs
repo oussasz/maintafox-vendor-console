@@ -26,7 +26,7 @@ const ADMIN_PASSWORD = "AdminPassw0rd!";
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function waitForHealth() {
-  for (let i = 0; i < 50; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       if ((await fetch(`${baseUrl}/health`)).ok) return;
     } catch {
@@ -255,5 +255,6 @@ async function run() {
 
 run().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  // exit explicitly: shutdown hooks (embedded Postgres) must not mask a failure
+  process.exit(1);
 });

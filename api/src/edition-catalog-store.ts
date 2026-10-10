@@ -210,15 +210,25 @@ export async function createEdition(
   }
   const now = new Date().toISOString();
   const json = serializeCapabilitiesMap(parsedCaps);
-  await db.run(
-    `INSERT INTO edition_catalog (id, label, capabilities_json, is_system, row_version, updated_at, updated_by)
-     VALUES (?, ?, ?, 0, 1, ?, ?)`,
-    input.id,
-    input.label.trim(),
-    json,
-    now,
-    input.actorId,
-  );
+  try {
+    await db.savepoint(() =>
+      db.run(
+        `INSERT INTO edition_catalog (id, label, capabilities_json, is_system, row_version, updated_at, updated_by)
+         VALUES (?, ?, ?, 0, 1, ?, ?)`,
+        input.id,
+        input.label.trim(),
+        json,
+        now,
+        input.actorId,
+      ),
+    );
+  } catch (err) {
+    // Created concurrently between the existence check and the insert.
+    if ((err as { code?: string } | null)?.code === "23505") {
+      throw new EditionCatalogError("edition_id_taken", `Edition id '${input.id}' already exists`);
+    }
+    throw err;
+  }
   const created = await getEdition(db, input.id);
   if (!created) throw new EditionCatalogError("edition_not_found", "Create succeeded but row missing");
   return created;

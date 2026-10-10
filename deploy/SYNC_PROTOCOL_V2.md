@@ -158,9 +158,10 @@ checkpoint freeze, unlike v1).
   skipped rows (own rows, other users' rows) are passed over and never stall the device.
 - Apply inbound items before storing the new token. If the response is lost, retry with the same
   `idempotency_key` (stored response replayed) or with the old token (changes recomputed).
-- A user that appears in `current_user_sync_ids` for the first time on a device is listed in
-  `user_snapshot_required`. Their older personal items are not in the delta; run a snapshot with
-  `scope: "user"` for those users. The server remembers the user for that device from then on.
+- A user reported in `current_user_sync_ids` is listed in `user_snapshot_required` until a
+  snapshot that includes the user (`scope: "user"` or `"all"`, same `current_user_sync_ids`)
+  completes on that device, i.e. its last page is served. Their older personal items are not in
+  the delta. The list therefore survives a lost response; after a bootstrap snapshot it is empty.
 - After a local database reset or restore, the device must bootstrap again with a snapshot: the
   delta never re-sends rows the device wrote itself.
 
@@ -241,8 +242,10 @@ Response:
 
 ## 7. Mixed fleets (v1 and v2 devices)
 
-- v1 pushes go to the same log and current state. Having no `base_row_version`, they are applied
-  last-write-wins (`row_version` as sent), as v1 always did.
+- v1 pushes go to the same log. For **tenant-scoped registry types** they also update the current
+  state; having no `base_row_version`, they are applied last-write-wins (`row_version` as sent),
+  as v1 always did. v1 pushes of user-scoped or unregistered types stay in the log only (v1 has no
+  owner, so they would otherwise reach every device): v2 devices do not receive them.
 - v1 devices keep reading the log with their v1 cursor, so they receive v2 writes as before.
 - v1 fixes without a wire change: the exchange is atomic, the v1 cursor advances only together with
   the stored response, and a device whose recent rows are all its own is no longer starved.
@@ -252,8 +255,10 @@ Response:
 A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 
 - Log compaction deletes log rows that every active (non-revoked) device has passed (the lowest of
-  their acknowledged v2 checkpoints and v1 cursors) **and** that are older than
-  `SYNC_INGRESS_RETENTION_DAYS`. Current state and tombstones are never compacted, so v2 delivery
+  their acknowledged v2 checkpoints and v1 cursors; an active device that never synced counts as
+  0 and blocks compaction) **and** that are older than `SYNC_INGRESS_RETENTION_DAYS`. A device
+  revoked during a compaction and reinstated later may miss compacted rows: v2 devices recover with
+  a snapshot. Current state and tombstones are never compacted, so v2 delivery
   does not depend on the log.
 - Stored exchange responses older than `SYNC_IDEMPOTENCY_RETENTION_DAYS` are deleted.
 
@@ -281,3 +286,6 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 - 2026-10-10: first version.
 - 2026-10-10: §3.1 rule 2 also acknowledges an item equal to the current state as `duplicate`
   (additive; implemented with the first server release).
+- 2026-10-10: §4.1 `user_snapshot_required` repeats until a covering snapshot completes (was: listed
+  once). §7 v1 user-scoped/unregistered types stay out of the v2 state. §8 never-synced devices
+  block compaction. All in the first server release.

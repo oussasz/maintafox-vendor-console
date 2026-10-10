@@ -56,7 +56,9 @@ export async function startTestPostgres() {
       user: "mfx_test",
       password,
       port,
-      persistent: false,
+      // Deleted by stop() below with retries: on Windows the server can still hold its files for a
+      // moment after it stops, and the library's own non-retrying delete then fails with EBUSY.
+      persistent: true,
       onLog: () => {},
       onError: (msg) => process.stderr.write(`[embedded-postgres] ${String(msg)}\n`),
     });
@@ -83,7 +85,7 @@ export async function startTestPostgres() {
     async stop() {
       if (embedded) {
         await embedded.stop();
-        if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+        if (dataDir) rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
         return;
       }
       // Shared server: drop the databases this script created.

@@ -17,7 +17,7 @@ function sha256Hex(s) {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;
@@ -279,5 +279,6 @@ async function run() {
 
 run().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  // exit explicitly: shutdown hooks (embedded Postgres) must not mask a failure
+  process.exit(1);
 });
