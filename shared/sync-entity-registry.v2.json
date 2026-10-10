@@ -1,0 +1,259 @@
+{
+  "registry_version": 1,
+  "protocol_version": "v2",
+  "description": "Allowlist of sync entity types for protocol v2. scope=tenant: delivered to every device of the tenant. scope=user: requires owner_user_sync_id and is delivered only to devices reporting that user in current_user_sync_ids. Append-only: never rename or remove an entry; add new types with the desktop change that stages them.",
+  "entity_types": [
+    {
+      "entity_type": "analytics_contract_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "articles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_alert_configs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_alert_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "certification_types",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "closeout_validation_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "data_integrity_findings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "data_integrity_repair_actions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_meters",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "failure_codes",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "failure_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "failure_hierarchies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_anomalies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_checkpoints",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_evidence",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_reliability_signals",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_results",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_rounds",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_template_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_templates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "integration_exceptions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "intervention_requests",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_transactions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "loto_card_print_jobs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "media_attachments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_node_types",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_nodes",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_structure_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_handover_logs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_isolations",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_suspensions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "permit_types",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_certifications",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_readiness_snapshots",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_team_assignments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_occurrences",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_plan_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_plans",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "posted_export_batches",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_requirement_profiles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_values",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_kpi_snapshots",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "roles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "runtime_exposure_logs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "stock_locations",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "stock_reservations",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "teams",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "training_attendance",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "training_expiry_alert_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "training_sessions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "user_accounts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "user_dismissals",
+      "scope": "user"
+    },
+    {
+      "entity_type": "user_role_assignments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "user_scope_assignments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "warehouses",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_interveners",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_tasks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_orders",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_permits",
+      "scope": "tenant"
+    }
+  ]
+}
