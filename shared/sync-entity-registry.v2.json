@@ -254,6 +254,202 @@
     {
       "entity_type": "work_permits",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "article_cost_profiles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "article_families",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "asset_document_links",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "asset_external_ids",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "asset_meter_readings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "asset_photos",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "delegated_admin_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_classes",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_hierarchy",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_lifecycle_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "external_companies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "external_company_contacts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "goods_receipt_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "goods_receipts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_article_equivalents",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_count_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_count_sessions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_document_links",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_mutation_audit_links",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_reconciliation_findings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_reconciliation_runs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_state_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_supplier_article_sources",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_supplier_contacts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_supplier_prices",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_suppliers",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_valuation_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "lookup_domains",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "lookup_value_aliases",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "lookup_values",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_entity_bindings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_node_responsibilities",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "org_type_relationship_rules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "position_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "positions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "procurement_requisition_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "procurement_requisitions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "purchase_order_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "purchase_orders",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "rbac_settings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_aliases",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_domains",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_sets",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_validation_reports",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reference_value_migrations",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "repairable_orders",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "role_permissions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "role_templates",
+      "scope": "tenant"
     }
   ]
 }
