@@ -450,6 +450,86 @@
     {
       "entity_type": "role_templates",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "delay_reason_codes",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "di_attachments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "di_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "di_review_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "di_sla_rules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "di_state_transition_log",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "urgency_levels",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_action_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_state_transition_log",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_attachments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_delay_segments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_downtime_segments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_execution_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_failure_details",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_parts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_statuses",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_tools",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_types",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_order_verifications",
+      "scope": "tenant"
     }
   ]
 }
