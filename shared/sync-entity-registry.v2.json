@@ -642,6 +642,150 @@
     {
       "entity_type": "team_skill_requirements",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "event_tree_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "fmeca_analyses",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "fmeca_item_parts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "fmeca_items",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "fta_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "markov_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "mc_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "ram_advanced_guardrails",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "ram_expert_sign_offs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "ram_ishikawa_diagrams",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "rbd_models",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "rcm_decisions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "rcm_studies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_beta_benchmarks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_dashboard_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weibull_fit_results",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "activity_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "admin_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "app_settings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "audit_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notification_acknowledgements",
+      "scope": "user"
+    },
+    {
+      "entity_type": "notification_categories",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notification_escalation_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notification_escalation_steps",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notification_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notification_preferences",
+      "scope": "user"
+    },
+    {
+      "entity_type": "notification_rules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "notifications",
+      "scope": "user"
+    },
+    {
+      "entity_type": "policy_snapshots",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "report_schedules",
+      "scope": "user"
+    },
+    {
+      "entity_type": "report_templates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "retention_policies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "saved_activity_filters",
+      "scope": "user"
+    },
+    {
+      "entity_type": "settings_change_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "user_analytics_dashboard_layouts",
+      "scope": "user"
+    },
+    {
+      "entity_type": "user_dashboard_layouts",
+      "scope": "user"
     }
   ]
 }
