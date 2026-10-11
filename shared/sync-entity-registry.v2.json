@@ -786,6 +786,10 @@
     {
       "entity_type": "user_dashboard_layouts",
       "scope": "user"
+    },
+    {
+      "entity_type": "library_documents",
+      "scope": "tenant"
     }
   ]
 }
