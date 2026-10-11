@@ -530,6 +530,118 @@
     {
       "entity_type": "work_order_verifications",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "capacity_rules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "planning_windows",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_executions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_findings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_occurrence_transitions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "pm_trigger_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_break_ins",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_candidates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_change_log",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_commitments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_details",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_actuals",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_commitments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_erp_cost_center_master",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_forecast_runs",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_forecasts",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_variance_reviews",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "cost_centers",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "document_acknowledgements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_assignment_history",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_authorizations",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_availability_blocks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_rate_cards",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_skills",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_profile_skills",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "skill_categories",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "skill_definitions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "team_skill_requirements",
+      "scope": "tenant"
     }
   ]
 }
