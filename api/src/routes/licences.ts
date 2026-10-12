@@ -188,7 +188,24 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     const nextExpires =
       input.expires_at === undefined ? row.expires_at : input.expires_at === null ? null : input.expires_at;
     const nextChannel = input.update_channel ?? row.update_channel;
-    await db.run(`UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`, nextMax, nextExpires, nextChannel, licenseId);
+    await db.tx(async () => {
+      await db.run(`UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`, nextMax, nextExpires, nextChannel, licenseId);
+      // Term, slots and channel are what the customer paid for: every change is in the ledger.
+      await appendAuditRecord({
+        actor_id: resolveActorId(req),
+        action_code: "license_update",
+        action_category: "entitlement",
+        correlation_id: newId("corr"),
+        scope_tenant_id: row.tenant_id,
+        reason_code: req.header("X-Operator-Reason")?.trim() || null,
+        entity_refs: { tenant_id: row.tenant_id, entitlement_id: licenseId },
+        payload: {
+          from: { max_machines: row.max_machines, expires_at: row.expires_at, update_channel: row.update_channel },
+          to: { max_machines: nextMax, expires_at: nextExpires, update_channel: nextChannel },
+          operator_rationale: input.operator_rationale ?? null,
+        },
+      });
+    });
     const out = await db.get(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as Record<string, unknown>;
     res.json(out);
   });

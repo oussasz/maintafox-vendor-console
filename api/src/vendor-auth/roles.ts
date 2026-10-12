@@ -128,6 +128,11 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "GET /api/v1/support/diagnostic-bundles/:bundleId/download": "support.manage",
   "GET /api/v1/support/offline-reconciliation": "support.manage",
 
+  // Billing (subscription, payment history, reconciliation with SlickPay)
+  "GET /api/v1/billing/tenants/:tenantId/subscription": "customer.manage",
+  "GET /api/v1/billing/payments": "customer.manage",
+  "POST /api/v1/billing/payments/:orderId/reconcile": "customer.manage",
+
   // Operators
   "GET /api/v1/operators": "operator.manage",
   "POST /api/v1/operators": "operator.manage",

@@ -25,6 +25,8 @@ export interface OperatorActionDialogProps {
   /** Extra inputs (e.g. new fingerprint); `extraValid` gates the confirm button. */
   children?: ReactNode;
   extraValid?: boolean;
+  /** False for actions whose endpoint takes no operator reason (nothing to send to the ledger). */
+  requireReason?: boolean;
   /** Runs the action with the operator's reason (kept in the audit log); throw to show an error. */
   onConfirm: (reason: string) => Promise<void>;
   onClose: () => void;
@@ -43,6 +45,7 @@ export function OperatorActionDialog({
   destructive,
   children,
   extraValid = true,
+  requireReason = true,
   onConfirm,
   onClose,
 }: OperatorActionDialogProps) {
@@ -81,10 +84,12 @@ export function OperatorActionDialog({
         </DialogHeader>
         <div className="grid gap-3">
           {children}
-          <div className="grid gap-1">
-            <Label htmlFor="operator-action-reason">{t("operatorAction.reasonLabel")}</Label>
-            <Input id="operator-action-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
-          </div>
+          {requireReason ? (
+            <div className="grid gap-1">
+              <Label htmlFor="operator-action-reason">{t("operatorAction.reasonLabel")}</Label>
+              <Input id="operator-action-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </div>
+          ) : null}
           {error ? (
             <p role="alert" className="text-sm text-text-danger">
               {error}
@@ -98,7 +103,7 @@ export function OperatorActionDialog({
           <Button
             type="button"
             variant={destructive ? "destructive" : "default"}
-            disabled={busy || !extraValid || reason.trim().length < PRIVILEGED_REASON_MIN_LENGTH}
+            disabled={busy || !extraValid || (requireReason && reason.trim().length < PRIVILEGED_REASON_MIN_LENGTH)}
             onClick={() => void confirm()}
           >
             {busy ? t("operatorAction.working") : confirmLabel}

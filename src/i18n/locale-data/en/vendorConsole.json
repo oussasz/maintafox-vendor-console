@@ -18,7 +18,8 @@
     "rollouts": "Rollouts",
     "health": "Platform health",
     "audit": "Audit & evidence",
-    "operators": "Operators"
+    "operators": "Operators",
+    "billing": "Billing"
   },
   "home": {
     "title": "Control plane overview",
@@ -666,6 +667,73 @@
         "body": "Give this code to {{email}}. Their next sign-in asks for it, then they set up their authenticator again. It is shown only now."
       },
       "done": "I have given it"
+    }
+  },
+  "billing": {
+    "title": "Billing and subscription",
+    "body": "Licence term and slots, and every payment exactly as recorded. \"Check with SlickPay\" asks SlickPay for the real status: a payment is applied only when SlickPay says it is paid; nothing here marks a payment as paid by hand.",
+    "customer": "Customer",
+    "loading": "Loading…",
+    "noLicence": "No licence for this customer yet.",
+    "noPayments": "No payment for this customer.",
+    "noInvoice": "no invoice (never reached SlickPay)",
+    "history": "Payment history",
+    "extraSlots_one": "+{{count}} slot",
+    "extraSlots_other": "+{{count}} slots",
+    "lastChecked": "SlickPay said \"{{status}}\" ({{at}})",
+    "slickpayOff": "SlickPay is not configured on the server: payment links and checks with SlickPay are unavailable (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} payment is not settled yet: check it with SlickPay if the customer says they paid.",
+    "openOrders_other": "{{count}} payments are not settled yet: check them with SlickPay if the customer says they paid.",
+    "manualExtension": "Extend or add slots by hand (Entitlements)",
+    "col": {
+      "created": "Created",
+      "plan": "Plan",
+      "amount": "Amount",
+      "status": "Status (recorded)",
+      "slickpay": "SlickPay invoice",
+      "actions": "Actions"
+    },
+    "status": {
+      "pending": "Pending",
+      "awaiting_payment": "Awaiting payment",
+      "paid": "Paid",
+      "failed": "Failed"
+    },
+    "licence": {
+      "until": "Valid until {{date}}",
+      "noEnd": "No end date",
+      "revoked": "Revoked",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "expiredAgo_one": "Expired {{count}} day ago",
+      "expiredAgo_other": "Expired {{count}} days ago",
+      "slots": "Machines: {{active}} of {{max}} slots in use",
+      "channel": "Update channel: {{channel}}"
+    },
+    "reconcile": {
+      "button": "Check with SlickPay",
+      "title": "Check this payment with SlickPay?",
+      "body": "The server asks SlickPay for the status of invoice {{invoice}}. If SlickPay says it is paid and it was not applied (lost notification), the licence is renewed now, exactly as for a normal payment. Nothing else changes.",
+      "confirm": "Check",
+      "outcome": {
+        "applied": "SlickPay says paid: the payment is now applied and the licence renewed.",
+        "unchanged": "SlickPay says \"{{slickpay}}\": nothing to change.",
+        "already_paid": "Already applied: nothing to change.",
+        "license_revoked": "SlickPay says paid, but the licence is revoked: the payment was not applied (order marked failed).",
+        "issue_failed": "SlickPay says paid, but the licence could not be renewed: see the audit log.",
+        "mismatch_paid_here_not_at_slickpay": "Recorded as paid here, but SlickPay now says \"{{slickpay}}\". Nothing was undone: check with SlickPay and the customer."
+      }
+    },
+    "link": {
+      "button": "Create a payment link",
+      "title": "Create a SlickPay payment link",
+      "body": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year and the extra slots are added. Extra slot price: {{price}} each.",
+      "bodyNoSlotPrice": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year. Extra slots need SLICKPAY_EXTRA_SLOT_PRICE on the server.",
+      "plan": "Plan name",
+      "amount": "Amount (DZD, without extra slots)",
+      "extraSlots": "Extra slots",
+      "confirm": "Create link",
+      "created": "Payment link created ({{amount}} {{currency}}): send it to the customer."
     }
   }
 }

@@ -18,7 +18,8 @@
     "rollouts": "Déploiements",
     "health": "Santé plateforme",
     "audit": "Audit et preuves",
-    "operators": "Opérateurs"
+    "operators": "Opérateurs",
+    "billing": "Facturation"
   },
   "home": {
     "title": "Vue d'ensemble du plan de contrôle",
@@ -666,6 +667,73 @@
         "body": "Remettez ce code à {{email}}. Sa prochaine connexion le demande, puis il configure de nouveau son application d'authentification. Il n'est affiché que maintenant."
       },
       "done": "Je l'ai transmis"
+    }
+  },
+  "billing": {
+    "title": "Facturation et abonnement",
+    "body": "Durée de licence, emplacements, et chaque paiement tel qu'enregistré. « Vérifier auprès de SlickPay » demande le vrai statut à SlickPay : un paiement n'est appliqué que si SlickPay le dit payé ; rien ici ne marque un paiement comme payé à la main.",
+    "customer": "Client",
+    "loading": "Chargement…",
+    "noLicence": "Aucune licence pour ce client.",
+    "noPayments": "Aucun paiement pour ce client.",
+    "noInvoice": "pas de facture (jamais arrivé chez SlickPay)",
+    "history": "Historique des paiements",
+    "extraSlots_one": "+{{count}} emplacement",
+    "extraSlots_other": "+{{count}} emplacements",
+    "lastChecked": "SlickPay a répondu « {{status}} » ({{at}})",
+    "slickpayOff": "SlickPay n'est pas configuré sur le serveur : liens de paiement et vérifications indisponibles (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} paiement n'est pas soldé : vérifiez-le auprès de SlickPay si le client dit avoir payé.",
+    "openOrders_other": "{{count}} paiements ne sont pas soldés : vérifiez-les auprès de SlickPay si le client dit avoir payé.",
+    "manualExtension": "Prolonger ou ajouter des emplacements à la main (Droits)",
+    "col": {
+      "created": "Créé",
+      "plan": "Offre",
+      "amount": "Montant",
+      "status": "Statut (enregistré)",
+      "slickpay": "Facture SlickPay",
+      "actions": "Actions"
+    },
+    "status": {
+      "pending": "En attente",
+      "awaiting_payment": "Paiement attendu",
+      "paid": "Payé",
+      "failed": "Échoué"
+    },
+    "licence": {
+      "until": "Valable jusqu'au {{date}}",
+      "noEnd": "Sans date de fin",
+      "revoked": "Révoquée",
+      "daysLeft_one": "{{count}} jour restant",
+      "daysLeft_other": "{{count}} jours restants",
+      "expiredAgo_one": "Expirée depuis {{count}} jour",
+      "expiredAgo_other": "Expirée depuis {{count}} jours",
+      "slots": "Machines : {{active}} emplacements utilisés sur {{max}}",
+      "channel": "Canal de mise à jour : {{channel}}"
+    },
+    "reconcile": {
+      "button": "Vérifier auprès de SlickPay",
+      "title": "Vérifier ce paiement auprès de SlickPay ?",
+      "body": "Le serveur demande à SlickPay le statut de la facture {{invoice}}. Si SlickPay la dit payée et qu'elle n'a pas été appliquée (notification perdue), la licence est renouvelée maintenant, comme pour un paiement normal. Rien d'autre ne change.",
+      "confirm": "Vérifier",
+      "outcome": {
+        "applied": "SlickPay dit payé : le paiement est maintenant appliqué et la licence renouvelée.",
+        "unchanged": "SlickPay répond « {{slickpay}} » : rien à changer.",
+        "already_paid": "Déjà appliqué : rien à changer.",
+        "license_revoked": "SlickPay dit payé, mais la licence est révoquée : paiement non appliqué (commande marquée échouée).",
+        "issue_failed": "SlickPay dit payé, mais la licence n'a pas pu être renouvelée : voir le journal d'audit.",
+        "mismatch_paid_here_not_at_slickpay": "Enregistré comme payé ici, mais SlickPay répond maintenant « {{slickpay}} ». Rien n'a été annulé : vérifiez auprès de SlickPay et du client."
+      }
+    },
+    "link": {
+      "button": "Créer un lien de paiement",
+      "title": "Créer un lien de paiement SlickPay",
+      "body": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an et les emplacements supplémentaires ajoutés. Prix d'un emplacement supplémentaire : {{price}}.",
+      "bodyNoSlotPrice": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an. Les emplacements supplémentaires nécessitent SLICKPAY_EXTRA_SLOT_PRICE sur le serveur.",
+      "plan": "Nom de l'offre",
+      "amount": "Montant (DZD, hors emplacements supplémentaires)",
+      "extraSlots": "Emplacements supplémentaires",
+      "confirm": "Créer le lien",
+      "created": "Lien de paiement créé ({{amount}} {{currency}}) : envoyez-le au client."
     }
   }
 }
