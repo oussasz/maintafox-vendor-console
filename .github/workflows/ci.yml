@@ -84,12 +84,15 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:backup-drill
 
   backup-offsite:
-    name: Off-site backup copy (S3-compatible server + age)
+    name: Object storage (off-site backup copy, diagnostic bundle upload)
     runs-on: ubuntu-24.04
     env:
       OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:9090
       OFFSITE_TEST_S3_ACCESS_KEY: ci-minio-user
       OFFSITE_TEST_S3_SECRET_KEY: ci-minio-password-not-secret
+      TEST_S3_ENDPOINT: http://127.0.0.1:9090
+      TEST_S3_ACCESS_KEY: ci-minio-user
+      TEST_S3_SECRET_KEY: ci-minio-password-not-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -107,6 +110,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y age
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:backup-offsite
+      - run: pnpm --filter maintafox-control-api run test:support-bundles
 
   docker-images:
     name: Docker images build (API + backup)

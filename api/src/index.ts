@@ -26,6 +26,7 @@ import { corsOptionsDelegate, type AuthRequest } from "./app/http.js";
 import { getMediaStore } from "./app/media.js";
 import { observabilityWindow, workerState } from "./app/observability.js";
 import { fatal, forwardAsyncErrors, newId, structuredLog } from "./app/runtime.js";
+import { ensureStandardRunbooks } from "./app/runbooks.js";
 import { pruneOperatorScopeAccess, runAsSystem } from "./app/scope.js";
 import { createSeeder } from "./app/seed.js";
 import { createTenantStore } from "./app/tenant-store.js";
@@ -79,7 +80,7 @@ try {
 }
 
 const audit = createAuditAppender(db);
-const { seedAdminIfEmpty, shouldSeedDomainData, seedTenantIfEmpty, seedAuditSupportIfEmpty } = createSeeder(db, audit);
+const { seedAdminIfEmpty, shouldSeedDomainData, seedTenantIfEmpty } = createSeeder(db);
 
 // Startup maintenance and seeds touch every tenant: one recorded system scope.
 await runAsSystem(db, "startup", async () => {
@@ -97,11 +98,11 @@ await runAsSystem(db, "startup", async () => {
   await seedEditionCatalogIfEmpty(db);
   await ensureSystemEditionsPresent(db);
   await repairAllEditionCapabilities(db);
+  await ensureStandardRunbooks(db);
 
   await seedAdminIfEmpty();
   if (shouldSeedDomainData()) {
     await seedTenantIfEmpty();
-    await seedAuditSupportIfEmpty();
   } else {
     console.info(`Seed behavior '${SEED_BEHAVIOR}' active: domain bootstrap seeds are skipped.`);
   }

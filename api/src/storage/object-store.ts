@@ -7,6 +7,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 
 export type ObjectStoreConfig = {
@@ -150,6 +151,32 @@ export class TenantMediaObjectStore {
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
     return keys;
+  }
+
+  /**
+   * Size and SHA-256 of one object, read in full (used to verify an uploaded diagnostic bundle).
+   * Returns null when the object does not exist; throws `object_too_large` past `maxBytes`.
+   */
+  async readObjectDigest(objectKey: string, maxBytes: number): Promise<{ byteSize: number; sha256: string } | null> {
+    let out;
+    try {
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchKey") return null;
+      throw err;
+    }
+    if (!out.Body) return null;
+    const hash = createHash("sha256");
+    let byteSize = 0;
+    for await (const chunk of out.Body as AsyncIterable<Uint8Array>) {
+      byteSize += chunk.length;
+      if (byteSize > maxBytes) {
+        (out.Body as { destroy?: () => void }).destroy?.();
+        throw new Error("object_too_large");
+      }
+      hash.update(chunk);
+    }
+    return { byteSize, sha256: hash.digest("hex") };
   }
 
   /** Streams one object's content into `writeTo` (used by the off-site media backup). */

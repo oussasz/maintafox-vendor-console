@@ -4,7 +4,9 @@ import { getAccessToken } from "@/lib/auth-token";
 import { privilegedHeaders, type PrivilegedActionContext } from "@/services/license-control-service";
 import {
   AuditReadinessCheckItemV1Schema,
+  DiagnosticBundleDownloadV1Schema,
   DiagnosticBundleManifestV1Schema,
+  DiagnosticBundleSummaryV1Schema,
   IncidentRunbookEntryV1Schema,
   OfflineTicketReconciliationRowV1Schema,
   SupportTicketV1Schema,
@@ -14,6 +16,8 @@ import {
 export type AuditRecord = z.infer<typeof VendorAdminAuditRecordV1Schema>;
 export type SupportTicket = z.infer<typeof SupportTicketV1Schema>;
 export type DiagnosticBundle = z.infer<typeof DiagnosticBundleManifestV1Schema>;
+export type DiagnosticBundleSummary = z.infer<typeof DiagnosticBundleSummaryV1Schema>;
+export type DiagnosticBundleDownload = z.infer<typeof DiagnosticBundleDownloadV1Schema>;
 export type OfflineReconciliationRow = z.infer<typeof OfflineTicketReconciliationRowV1Schema>;
 export type IncidentRunbookEntry = z.infer<typeof IncidentRunbookEntryV1Schema>;
 export type ReadinessCheckItem = z.infer<typeof AuditReadinessCheckItemV1Schema>;
@@ -84,6 +88,17 @@ export async function listSupportTickets(): Promise<SupportTicket[]> {
   return parseOrThrow(res, z.array(SupportTicketV1Schema), "Support tickets");
 }
 
+/** Opens a ticket for a tenant (recorded in the audit ledger). */
+export async function createSupportTicket(input: {
+  tenant_id: string;
+  severity: SupportTicket["severity"];
+  affected_module: string;
+  summary: string;
+}): Promise<SupportTicket> {
+  const res = await authFetch("/api/v1/support/tickets", { method: "POST", body: JSON.stringify(input) });
+  return parseOrThrow(res, SupportTicketV1Schema, "Create support ticket");
+}
+
 export async function createSupportIntervention(
   ticketId: string,
   input: {
@@ -110,6 +125,18 @@ export async function createSupportIntervention(
 export async function getLatestDiagnosticBundle(): Promise<DiagnosticBundle> {
   const res = await authFetch("/api/v1/support/diagnostic-bundles/latest");
   return parseOrThrow(res, DiagnosticBundleManifestV1Schema, "Diagnostic bundle");
+}
+
+/** Bundles uploaded by desktops, newest first. */
+export async function listDiagnosticBundles(): Promise<DiagnosticBundleSummary[]> {
+  const res = await authFetch("/api/v1/support/diagnostic-bundles");
+  return parseOrThrow(res, z.array(DiagnosticBundleSummaryV1Schema), "Diagnostic bundles");
+}
+
+/** Short-lived download URL of an uploaded bundle (the download is recorded in the audit ledger). */
+export async function getDiagnosticBundleDownload(bundleId: string): Promise<DiagnosticBundleDownload> {
+  const res = await authFetch(`/api/v1/support/diagnostic-bundles/${encodeURIComponent(bundleId)}/download`);
+  return parseOrThrow(res, DiagnosticBundleDownloadV1Schema, "Diagnostic bundle download");
 }
 
 export async function listOfflineReconciliation(): Promise<OfflineReconciliationRow[]> {

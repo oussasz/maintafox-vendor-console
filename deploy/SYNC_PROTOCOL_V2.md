@@ -13,6 +13,7 @@ not been updated. The server picks the protocol from `protocol_version` in the r
 | `POST /api/v1/sync/exchange` | Push outbox items and pull inbound deltas (v1 or v2 by `protocol_version`). |
 | `POST /api/v1/sync/snapshot` | v2 only. Paged current state for bootstrap; the last page returns a checkpoint for deltas. |
 | `POST /api/v1/sync/media/presign-put` / `presign-get` | Unchanged from v1. |
+| `POST /api/v1/sync/diagnostic-bundles`, `POST /api/v1/sync/diagnostic-bundles/:id/complete` | Support: upload a diagnostic bundle (presigned PUT, verified by size and SHA-256; optional ticket). See `deploy/SUPPORT.md`. |
 
 All routes need the device activation token (`Authorization: Bearer <activation token>`) and go
 through the same licence/activation checks as v1 (`401 token_superseded`,
@@ -289,3 +290,6 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 - 2026-10-10: §4.1 `user_snapshot_required` repeats until a covering snapshot completes (was: listed
   once). §7 v1 user-scoped/unregistered types stay out of the v2 state. §8 never-synced devices
   block compaction. All in the first server release.
+- 2026-10-12 (Phase 3): additive. Diagnostic bundle endpoints (above). `user_accounts` payloads and
+  stored exchange responses are encrypted at rest; delivered bytes and `payload_hash` are unchanged
+  (`deploy/TENANT_ISOLATION.md`). Idempotent replays are counted for the ops metrics.

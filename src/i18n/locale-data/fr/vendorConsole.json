@@ -382,8 +382,18 @@
         }
       },
       "bundle": {
-        "title": "Paquet diagnostic (export)",
-        "export": "Demander export signé (VPS)"
+        "title": "Paquets diagnostics",
+        "loading": "Chargement des paquets…",
+        "empty": "Aucun paquet diagnostic envoyé par un poste pour le moment.",
+        "download": "Télécharger",
+        "col": {
+          "id": "Paquet",
+          "tenant": "Tenant / poste",
+          "status": "Statut",
+          "size": "Taille",
+          "ticket": "Ticket",
+          "download": "Téléchargement"
+        }
       },
       "offline": {
         "title": "Réconciliation origine hors ligne",
@@ -397,6 +407,14 @@
       "exports": {
         "title": "Types d'export conformité",
         "syncLink": "Ouvrir preuves sync"
+      },
+      "newTicket": {
+        "title": "Ouvrir un ticket",
+        "tenant": "Tenant",
+        "severity": "Gravité",
+        "module": "Module (ex. sync)",
+        "summary": "Quel est le problème ?",
+        "submit": "Ouvrir le ticket"
       }
     },
     "harden": {

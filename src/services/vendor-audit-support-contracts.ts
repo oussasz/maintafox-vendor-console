@@ -101,12 +101,17 @@ export const SupportTicketV1Schema = z.object({
   state: z.enum(["new", "triaged", "waiting_for_vendor", "waiting_for_customer", "resolved", "closed"]),
   severity: z.enum(["info", "warn", "critical"]),
   affected_module: z.string().min(1),
-  sync_status_hint: z.string().min(1),
-  app_version_reported: z.string().min(1),
+  /** Null until a device reports them (tickets opened by an operator). */
+  sync_status_hint: z.string().nullable(),
+  app_version_reported: z.string().nullable(),
   linked_incident_ids: z.array(z.string()),
   linked_audit_record_ids: z.array(z.string()),
   sla_due_rfc3339: z.string().nullable(),
   created_at_rfc3339: z.string(),
+  summary: z.string().nullable(),
+  origin: z.enum(["operator", "device"]).nullable(),
+  created_by: z.string().nullable(),
+  diagnostic_bundle_ids: z.array(z.string()),
 });
 
 export const DiagnosticArtifactRefV1Schema = z.object({
@@ -122,6 +127,28 @@ export const DiagnosticBundleManifestV1Schema = z.object({
   artifacts: z.array(DiagnosticArtifactRefV1Schema),
 });
 
+/** A bundle uploaded by a desktop (GET /api/v1/support/diagnostic-bundles). */
+export const DiagnosticBundleSummaryV1Schema = DiagnosticBundleManifestV1Schema.extend({
+  tenant_id: z.string().nullable(),
+  machine_id: z.string().nullable(),
+  app_version: z.string().nullable(),
+  status: z.enum(["pending_upload", "uploaded", "rejected"]).nullable(),
+  byte_size: z.number().int().nonnegative().nullable(),
+  content_sha256: z.string().nullable(),
+  ticket_id: z.string().nullable(),
+  uploaded_at_rfc3339: z.string().nullable(),
+  rejection_reason: z.string().nullable(),
+});
+
+export const DiagnosticBundleDownloadV1Schema = z.object({
+  bundle_id: z.string().min(1),
+  url: z.string().url(),
+  expires_in_seconds: z.number().int().positive(),
+  byte_size: z.number().int().nonnegative().nullable(),
+  content_sha256: z.string().nullable(),
+  audit_record_id: z.string().min(1),
+});
+
 export const OfflineTicketReconciliationRowV1Schema = z.object({
   desktop_queue_id: z.string().min(1),
   vendor_ticket_id: z.string().nullable(),
@@ -130,16 +157,13 @@ export const OfflineTicketReconciliationRowV1Schema = z.object({
 });
 
 export const IncidentRunbookEntryV1Schema = z.object({
-  runbook_id: z.enum([
-    "heartbeat_outage",
-    "sync_backlog_surge",
-    "failed_rollout",
-    "storage_pressure",
-    "key_rotation",
-  ]),
+  /** Operators can add runbooks, so the id is any snake_case slug (the standard ones: api/src/app/runbooks.ts). */
+  runbook_id: z.string().regex(/^[a-z][a-z0-9_]{2,63}$/),
   title: z.string().min(1),
   summary: z.string().min(1),
   first_steps: z.array(z.string()),
+  updated_at_rfc3339: z.string().nullable(),
+  updated_by: z.string().nullable(),
 });
 
 export const AuditReadinessCheckItemV1Schema = z.object({

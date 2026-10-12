@@ -5,14 +5,17 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePermissions } from "@/hooks/use-permissions";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { listTenants, type ControlTenant } from "@/services/license-control-service";
 import {
   createSupportIntervention,
+  createSupportTicket,
   downloadSupportTicketsCsv,
-  getLatestDiagnosticBundle,
+  getDiagnosticBundleDownload,
+  listDiagnosticBundles,
   listOfflineReconciliation,
   listSupportTickets,
-  type DiagnosticBundle,
+  type DiagnosticBundleSummary,
   type OfflineReconciliationRow,
   type SupportTicket,
 } from "@/services/vendor-audit-support-service";
@@ -36,7 +39,16 @@ export function SupportOperationsPanel() {
   const { requireStepUp } = useVendorConsole();
   const { can } = usePermissions();
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [bundle, setBundle] = useState<DiagnosticBundle | null>(null);
+  const [bundles, setBundles] = useState<DiagnosticBundleSummary[]>([]);
+  const [tenants, setTenants] = useState<ControlTenant[]>([]);
+  const [newTicket, setNewTicket] = useState({
+    tenant_id: "",
+    severity: "warn" as SupportTicket["severity"],
+    affected_module: "",
+    summary: "",
+  });
+  const [creatingTicket, setCreatingTicket] = useState(false);
+  const [downloadingBundleId, setDownloadingBundleId] = useState<string | null>(null);
   const [offlineRows, setOfflineRows] = useState<OfflineReconciliationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
@@ -48,14 +60,16 @@ export function SupportOperationsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [ticketRows, latestBundle, offline] = await Promise.all([
+      const [ticketRows, bundleRows, offline, tenantRows] = await Promise.all([
         listSupportTickets(),
-        getLatestDiagnosticBundle(),
+        listDiagnosticBundles(),
         listOfflineReconciliation(),
+        listTenants(),
       ]);
       setTickets(ticketRows);
-      setBundle(latestBundle);
+      setBundles(bundleRows);
       setOfflineRows(offline);
+      setTenants(tenantRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load support workflows.");
     } finally {
@@ -115,18 +129,50 @@ export function SupportOperationsPanel() {
     }
   };
 
-  const onDownloadBundleManifest = () => {
-    if (!bundle) return;
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${bundle.bundle_id}.manifest.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setSuccess(`Diagnostic bundle manifest downloaded (${bundle.bundle_id}).`);
+  const onCreateTicket = async () => {
+    if (!newTicket.tenant_id || newTicket.affected_module.trim().length < 2 || newTicket.summary.trim().length < 3) {
+      setError("Choose a tenant and fill in the module (2+ characters) and the summary (3+ characters).");
+      return;
+    }
+    setCreatingTicket(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const created = await createSupportTicket({
+        tenant_id: newTicket.tenant_id,
+        severity: newTicket.severity,
+        affected_module: newTicket.affected_module.trim(),
+        summary: newTicket.summary.trim(),
+      });
+      setNewTicket((prev) => ({ ...prev, affected_module: "", summary: "" }));
+      await load();
+      setSuccess(`Ticket ${created.ticket_id} opened.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Opening the ticket failed.");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
+  const onDownloadBundle = async (bundleId: string) => {
+    setDownloadingBundleId(bundleId);
+    setError(null);
+    setSuccess(null);
+    try {
+      const link = await getDiagnosticBundleDownload(bundleId);
+      const a = document.createElement("a");
+      a.href = link.url;
+      a.download = `${bundleId}.json`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setSuccess(`Diagnostic bundle ${bundleId} download started (recorded as ${link.audit_record_id}).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bundle download failed.");
+    } finally {
+      setDownloadingBundleId(null);
+    }
   };
 
   return (
@@ -143,6 +189,52 @@ export function SupportOperationsPanel() {
         </ConsoleStatusBanner>
       ) : null}
       {success ? <ConsoleStatusBanner tone="success">{success}</ConsoleStatusBanner> : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("audit.support.newTicket.title", "Open a ticket")}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 text-sm sm:grid-cols-[1fr_auto_1fr_2fr_auto]">
+          <select
+            aria-label={t("audit.support.newTicket.tenant", "Tenant")}
+            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            value={newTicket.tenant_id}
+            onChange={(e) => setNewTicket((prev) => ({ ...prev, tenant_id: e.target.value }))}
+          >
+            <option value="">{t("audit.support.newTicket.tenant", "Tenant")}</option>
+            {tenants.map((tn) => (
+              <option key={tn.id} value={tn.id}>
+                {tn.display_name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={t("audit.support.newTicket.severity", "Severity")}
+            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            value={newTicket.severity}
+            onChange={(e) => setNewTicket((prev) => ({ ...prev, severity: e.target.value as SupportTicket["severity"] }))}
+          >
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="critical">critical</option>
+          </select>
+          <Input
+            className="h-8 text-xs"
+            value={newTicket.affected_module}
+            onChange={(e) => setNewTicket((prev) => ({ ...prev, affected_module: e.target.value }))}
+            placeholder={t("audit.support.newTicket.module", "Module (e.g. sync)")}
+          />
+          <Input
+            className="h-8 text-xs"
+            value={newTicket.summary}
+            onChange={(e) => setNewTicket((prev) => ({ ...prev, summary: e.target.value }))}
+            placeholder={t("audit.support.newTicket.summary", "What is wrong?")}
+          />
+          <Button type="button" size="sm" disabled={creatingTicket} onClick={() => void onCreateTicket()}>
+            {creatingTicket ? t("audit.support.tickets.saving", "Saving…") : t("audit.support.newTicket.submit", "Open ticket")}
+          </Button>
+        </CardContent>
+      </Card>
 
       <section className="space-y-2">
         <div className="flex items-center justify-between">
@@ -189,7 +281,9 @@ export function SupportOperationsPanel() {
                     <OpsSeverityBadge severity={tk.severity} />
                   </td>
                   <td className="px-3 py-2">{tk.affected_module}</td>
-                  <td className="max-w-[200px] px-3 py-2 text-xs text-text-secondary">{tk.sync_status_hint}</td>
+                  <td className="max-w-[200px] px-3 py-2 text-xs text-text-secondary">
+                    {tk.summary ?? tk.sync_status_hint ?? "—"}
+                  </td>
                   <td className="px-3 py-2 font-mono text-[10px]">{tk.linked_audit_record_ids.join(", ") || "—"}</td>
                   <td className="px-3 py-2">
                     <div className="flex min-w-[280px] items-center gap-2">
@@ -226,36 +320,66 @@ export function SupportOperationsPanel() {
         </div>
       </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t("audit.support.bundle.title", "Diagnostic bundle (export)")}</CardTitle>
-          <CardDescription>
-            {bundle ? `${bundle.bundle_id} · ${bundle.redaction_profile}` : "—"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <ul className="list-inside list-disc font-mono text-xs">
-            {(bundle?.artifacts ?? []).map((a) => (
-              <li key={a.logical_path}>
-                {a.logical_path} · {a.kind} · {a.sha256.slice(0, 12)}…
-              </li>
-            ))}
-          </ul>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!bundle}
-            onClick={onDownloadBundleManifest}
-            title={!bundle ? "No diagnostic bundle is available yet." : undefined}
-          >
-            {t("audit.support.bundle.export", "Request signed export (VPS)")}
-          </Button>
-          {!bundle ? (
-            <p className="text-xs text-text-muted">Export is unavailable until a diagnostic bundle exists.</p>
-          ) : null}
-        </CardContent>
-      </Card>
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold">{t("audit.support.bundle.title", "Diagnostic bundles")}</h3>
+        <div className="overflow-x-auto rounded-lg border border-surface-border">
+          <table className="w-full min-w-[800px] text-left text-sm">
+            <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
+              <tr>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.id", "Bundle")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.tenant", "Tenant / machine")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.status", "Status")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.size", "Size")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.ticket", "Ticket")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.download", "Download")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bundles.length === 0 ? (
+                <tr className="border-b border-surface-border last:border-0">
+                  <td colSpan={6} className="px-3 py-4 text-center text-sm text-text-muted">
+                    {loading
+                      ? t("audit.support.bundle.loading", "Loading bundles…")
+                      : t("audit.support.bundle.empty", "No diagnostic bundle has been uploaded by a desktop yet.")}
+                  </td>
+                </tr>
+              ) : null}
+              {bundles.map((b) => (
+                <tr key={b.bundle_id} className="border-b border-surface-border last:border-0">
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {b.bundle_id}
+                    <div className="text-[10px] text-text-muted">
+                      {b.created_at_rfc3339} · {b.redaction_profile} · {b.app_version ?? "—"}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs">
+                    {b.tenant_id ?? "—"}
+                    <div className="text-[10px] text-text-muted">{b.machine_id ?? "—"}</div>
+                  </td>
+                  <td className="px-3 py-2 text-xs" title={b.rejection_reason ?? undefined}>
+                    {b.status ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {b.byte_size === null ? "—" : `${(b.byte_size / 1024).toFixed(1)} KiB`}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs">{b.ticket_id ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={b.status !== "uploaded" || downloadingBundleId === b.bundle_id}
+                      onClick={() => void onDownloadBundle(b.bundle_id)}
+                    >
+                      {t("audit.support.bundle.download", "Download")}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">

@@ -1,0 +1,113 @@
+/**
+ * Starts the real control API (dist/index.js) on a fresh test database, for integration scripts.
+ * `extraEnv` adds settings (e.g. the S3_* media bucket); nothing is stubbed.
+ */
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+
+import pg from "pg";
+
+import { obtainStepUpToken } from "./step-up.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./test-postgres.mjs";
+import { TEST_ENTITLEMENT_SIGNING_ENV } from "./test-signing-key.mjs";
+
+export const TEST_ADMIN_EMAIL = "admin@maintafox.systems";
+export const TEST_ADMIN_PASSWORD = "AdminPassw0rd!";
+
+export async function startControlApi({ port, extraEnv = {} }) {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  let output = "";
+  const server = spawn(process.execPath, ["dist/index.js"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
+      JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
+      SEED_ADMIN_PASSWORD: TEST_ADMIN_PASSWORD,
+      SEED_ADMIN_EMAIL: TEST_ADMIN_EMAIL,
+      ...TEST_ENTITLEMENT_SIGNING_ENV,
+      SEED_BEHAVIOR: "safe",
+      NODE_ENV: "production",
+      CORS_ORIGIN: "http://localhost:5174",
+      ...extraEnv,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  server.stdout.on("data", (b) => (output += String(b)));
+  server.stderr.on("data", (b) => (output += String(b)));
+
+  const stop = async () => {
+    if (server.exitCode === null) {
+      server.kill("SIGTERM");
+      await once(server, "exit").catch(() => undefined);
+    }
+    await testPg.stop();
+  };
+
+  let healthy = false;
+  for (let i = 0; i < 160 && !healthy; i += 1) {
+    try {
+      healthy = (await fetch(`${baseUrl}/health`)).ok;
+    } catch {
+      // keep polling
+    }
+    if (!healthy) await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!healthy) {
+    await stop();
+    throw new Error(`control API did not start:\n${output}`);
+  }
+
+  async function call(method, path, token, body, headers = {}) {
+    const res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json", ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = undefined;
+    }
+    return { status: res.status, json, text };
+  }
+
+  return {
+    baseUrl,
+    call,
+    output: () => output,
+    stop,
+    async adminToken() {
+      const r = await call("POST", "/api/v1/auth/login", null, { email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
+      if (r.status !== 200) throw new Error(`login failed: ${r.text}`);
+      return r.json.access_token;
+    },
+    stepUpToken: (adminToken) => obtainStepUpToken(baseUrl, adminToken, TEST_ADMIN_PASSWORD),
+    /** Claims a device on the licence key; returns its activation token. */
+    async claimDevice(licenseKey, fingerprint) {
+      const r = await call("POST", "/api/v1/activation/claim", null, {
+        license_key: licenseKey,
+        machine_fingerprint: fingerprint,
+        app_version: "1.2.3",
+      });
+      if (r.status !== 200) throw new Error(`claim failed: ${r.text}`);
+      return r.json.activation_token;
+    },
+    /** Superuser query (bypasses row-level security): ground truth for assertions. */
+    async su(text, params = []) {
+      const client = new pg.Client({ connectionString: databaseUrl });
+      await client.connect();
+      try {
+        return (await client.query(text, params)).rows;
+      } finally {
+        await client.end();
+      }
+    },
+  };
+}

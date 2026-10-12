@@ -382,8 +382,18 @@
         }
       },
       "bundle": {
-        "title": "Diagnostic bundle (export)",
-        "export": "Request signed export (VPS)"
+        "title": "Diagnostic bundles",
+        "loading": "Loading bundles…",
+        "empty": "No diagnostic bundle has been uploaded by a desktop yet.",
+        "download": "Download",
+        "col": {
+          "id": "Bundle",
+          "tenant": "Tenant / machine",
+          "status": "Status",
+          "size": "Size",
+          "ticket": "Ticket",
+          "download": "Download"
+        }
       },
       "offline": {
         "title": "Offline-origin reconciliation",
@@ -397,6 +407,14 @@
       "exports": {
         "title": "Compliance export kinds",
         "syncLink": "Open sync evidence"
+      },
+      "newTicket": {
+        "title": "Open a ticket",
+        "tenant": "Tenant",
+        "severity": "Severity",
+        "module": "Module (e.g. sync)",
+        "summary": "What is wrong?",
+        "submit": "Open ticket"
       }
     },
     "harden": {
