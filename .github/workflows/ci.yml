@@ -97,11 +97,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+      # minio/minio is no longer published on Docker Hub; MinIO's own registry has the same release.
       - name: Start MinIO (same release as docker-compose.yml)
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER="$OFFSITE_TEST_S3_ACCESS_KEY" -e MINIO_ROOT_PASSWORD="$OFFSITE_TEST_S3_SECRET_KEY" \
-            minio/minio:RELEASE.2025-01-20T14-49-07Z server /data
+            quay.io/minio/minio:RELEASE.2025-01-20T14-49-07Z server /data
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && exit 0; sleep 2; done
           docker logs minio; exit 1
       - run: sudo apt-get update && sudo apt-get install -y age
@@ -122,6 +123,11 @@ jobs:
           && psql --version && createdb --version && age --version && node --version
           && pg_dump --version | grep -q "PostgreSQL) 16\."
           && test -f /opt/maintafox-backup/scheduler.sh && test -f dist/tools/verify-restored-database.js'
+      - name: Images referenced by docker-compose.yml can be pulled (a fresh server must start)
+        run: |
+          for img in $(grep -E '^ +image: ' docker-compose.yml | awk '{print $2}' | grep -v ':local$' | sort -u); do
+            docker pull "$img"
+          done
       - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_DEV_MOCK_AUTH=false --build-arg VITE_BASE_PATH=/ .
 
   dependency-audit:

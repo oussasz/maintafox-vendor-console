@@ -126,6 +126,9 @@ function initCluster(root, port, walArchiveDir) {
     [
       "",
       "listen_addresses = '127.0.0.1'",
+      // TCP only: the default Unix socket directory (/var/run/postgresql) is not writable for a
+      // normal user on Linux; every client here connects to 127.0.0.1.
+      "unix_socket_directories = ''",
       "wal_level = replica",
       "archive_mode = on",
       `archive_command = 'sh "${fwd(join(BACKUP_SCRIPTS, "wal-archive.sh"))}" "%p" "%f"'`,
