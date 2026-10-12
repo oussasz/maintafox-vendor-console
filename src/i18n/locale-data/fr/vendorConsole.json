@@ -46,13 +46,6 @@
       "opsHealth": "Santé plateforme et alertes",
       "opsSync": "Diagnostics sync",
       "opsRollouts": "Contrôle déploiements"
-    },
-    "stepUpLab": {
-      "title": "Rehaussement (labo opérateur)",
-      "body": "Les actions privilégiées exigent un rehaussement délivré par le serveur : vous ressaisissez votre mot de passe et l’API de contrôle ouvre une fenêtre de 5 minutes. Ouvrez-la ici avant une série d’actions.",
-      "trigger": "Déclencher rehaussement",
-      "fresh": "Fenêtre de rehaussement active",
-      "stale": "Pas de fenêtre active"
     }
   },
   "section": {
@@ -118,7 +111,9 @@
       "channelMismatch": "Les canaux diffèrent — corriger avant application.",
       "dryRun": "Simulation (sans mutation)",
       "buildPreview": "Construire la charge utile"
-    }
+    },
+    "deleteTypeSlug": "Saisissez l'identifiant du client « {{slug}} » pour confirmer",
+    "deleteReason": "Motif (conservé dans le journal d'audit)"
   },
   "editions": {
     "core": "Core",
@@ -437,15 +432,56 @@
   },
   "stepUp": {
     "title": "Confirmer l'action sensible",
-    "description": "Rehaussement requis pour : {{action}}. Saisissez à nouveau votre mot de passe ; le serveur le vérifie et délivre une confirmation valable 5 minutes.",
+    "description": "Un nouveau code de votre application d'authentification est requis pour {{action}}. Le serveur autorise ensuite ce type d'action pendant 5 minutes.",
     "cancel": "Annuler",
     "confirm": "Confirmer",
-    "passwordLabel": "Votre mot de passe",
     "verifying": "Vérification…",
-    "errorInvalidPassword": "Mot de passe incorrect.",
     "errorRateLimited": "Trop de tentatives. Patientez quelques minutes puis réessayez.",
     "errorGeneric": "Vérification impossible : {{message}}",
     "notAvailable": "Pas encore disponible : cette action n’a pas encore de point d’API serveur (prévu dans la phase de finalisation de la console).",
-    "cancelled": "Action annulée : la confirmation n’a pas été effectuée."
+    "cancelled": "Action annulée : la confirmation n’a pas été effectuée.",
+    "codeLabel": "Code à 6 chiffres de l'application d'authentification",
+    "errorInvalidCode": "Code refusé. Vérifiez l'heure du téléphone ou attendez le code suivant (un code ne sert qu'une fois).",
+    "kinds": {
+      "mass_machine_revoke": "révoquer plusieurs machines",
+      "entitlement_suspension": "révoquer une licence ou suspendre un client",
+      "forced_rollback": "annuler une politique de mise à jour ou rappeler un déploiement",
+      "tenant_restore": "lever la suspension d'un client",
+      "signing_key_rotation": "changer la clé de signature des licences",
+      "rollout_publish": "définir une politique de mise à jour, suspendre ou reprendre un déploiement",
+      "machine_trust_change": "révoquer, rétablir, libérer ou réaffecter une machine",
+      "offline_policy_change": "modifier une politique hors ligne",
+      "support_intervention": "enregistrer une intervention de support",
+      "sync_repair": "rejouer ou réparer la synchronisation d'un appareil",
+      "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
+      "tenant_delete": "supprimer un client et toutes ses données",
+      "own_mfa_change": "générer de nouveaux codes de secours"
+    }
+  },
+  "account": {
+    "menuAria": "Compte",
+    "sessionUntil": "Session ouverte jusqu'au {{at}}",
+    "recoveryRemaining_one": "{{count}} code de secours restant",
+    "recoveryRemaining_other": "{{count}} codes de secours restants",
+    "logout": "Se déconnecter",
+    "cancel": "Annuler",
+    "logoutAll": {
+      "menu": "Se déconnecter partout",
+      "title": "Se déconnecter de tous les navigateurs ?",
+      "body": "Toutes les sessions de votre compte se terminent maintenant, sur tous les ordinateurs (après la perte d'un portable ou en cas de doute). Vous vous reconnecterez avec votre mot de passe et un code.",
+      "confirm": "Se déconnecter partout"
+    },
+    "regenerate": {
+      "menu": "Nouveaux codes de secours",
+      "title": "Générer de nouveaux codes de secours",
+      "body": "Vos codes de secours actuels cessent de fonctionner. Vous verrez 10 nouveaux codes une seule fois : conservez-les loin de votre téléphone.",
+      "reasonLabel": "Motif (conservé dans le journal d'audit)",
+      "confirm": "Générer"
+    },
+    "codes": {
+      "title": "Vos nouveaux codes de secours",
+      "body": "Chaque code sert une fois, si vous perdez votre application d'authentification. Ils ne sont affichés que maintenant : imprimez-les ou enregistrez-les en lieu sûr.",
+      "done": "Je les ai enregistrés"
+    }
   }
 }

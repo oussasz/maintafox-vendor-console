@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getAccessToken } from "@/lib/auth-token";
+import { authFetch } from "@/lib/api-client";
 import { privilegedHeaders, type PrivilegedActionContext } from "@/services/license-control-service";
 import {
   AuditReadinessCheckItemV1Schema,
@@ -21,26 +21,6 @@ export type DiagnosticBundleDownload = z.infer<typeof DiagnosticBundleDownloadV1
 export type OfflineReconciliationRow = z.infer<typeof OfflineTicketReconciliationRowV1Schema>;
 export type IncidentRunbookEntry = z.infer<typeof IncidentRunbookEntryV1Schema>;
 export type ReadinessCheckItem = z.infer<typeof AuditReadinessCheckItemV1Schema>;
-
-function apiBase(): string {
-  const raw = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
-  if (!raw) throw new Error("VITE_ADMIN_API_BASE_URL is not configured.");
-  return raw.replace(/\/$/, "");
-}
-
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Not authenticated.");
-  return fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers ?? {}),
-    },
-  });
-}
 
 async function parseOrThrow<T>(res: Response, parser: { parse: (v: unknown) => T }, label: string): Promise<T> {
   if (!res.ok) {
@@ -155,11 +135,7 @@ export async function listReadinessChecks(): Promise<ReadinessCheckItem[]> {
 }
 
 async function downloadCsv(path: string): Promise<Blob> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Not authenticated.");
-  const res = await fetch(`${apiBase()}${path}`, {
-    headers: { Accept: "text/csv", Authorization: `Bearer ${token}` },
-  });
+  const res = await authFetch(path, { headers: { Accept: "text/csv" } });
   if (!res.ok) {
     throw new Error(`CSV export failed (${res.status})`);
   }

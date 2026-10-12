@@ -19,6 +19,7 @@ import pg from "pg";
 
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { loginAccessToken } from "./lib/vendor-session.mjs";
 
 const port = 33181;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -132,8 +133,7 @@ async function main() {
   databaseUrl = await testPg.createDatabase();
   try {
     await startApi();
-    const login = await api("POST", "/api/v1/auth/login", null, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
-    const admin = login.json.access_token;
+    const admin = await loginAccessToken(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
     const t = await api("POST", "/api/v1/tenants", admin, { slug: "ops-metrics", display_name: "Ops metrics" });
     const tenantId = t.json.id;
     const l = await api("POST", "/api/v1/licenses", admin, { tenant_id: tenantId, max_machines: 2 });

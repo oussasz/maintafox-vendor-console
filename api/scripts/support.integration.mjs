@@ -47,7 +47,7 @@ try {
   assert.ok(ledger.some((r) => r.entity_refs.support_ticket_id === ticket.ticket_id), "ticket creation is audited");
 
   // Intervention (step-up + reason), then the ticket lists its audit link.
-  const stepUp = await api.stepUpToken(admin);
+  const stepUp = await api.stepUpToken(admin, "support_intervention");
   const intv = await api.call(
     "POST",
     `/api/v1/support/tickets/${ticket.ticket_id}/interventions`,

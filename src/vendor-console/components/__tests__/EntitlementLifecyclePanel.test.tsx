@@ -16,7 +16,12 @@ vi.mock("@/services/license-control-service", () => ({
   issueLicense: vi.fn(),
   revokeLicense: vi.fn(),
   updateLicense: vi.fn(),
-  requestStepUpToken: vi.fn(async () => ({ token: "stepup-test-token", expiresAtMs: Date.now() + 300_000 })),
+}));
+
+vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/vendor-auth-service")>()),
+  // The API checks the TOTP code; here the dialog only has to hand back a kind-bound token.
+  requestStepUp: vi.fn(async (actionKind: string) => ({ token: "stepup-test-token", actionKind, expiresAtMs: Date.now() + 300_000 })),
 }));
 
 import {
@@ -26,6 +31,7 @@ import {
   listTenants,
   revokeLicense,
 } from "@/services/license-control-service";
+import { requestStepUp } from "@/services/vendor-auth-service";
 import { EntitlementLifecyclePanel } from "../EntitlementLifecyclePanel";
 import { renderWithConsole } from "./renderWithConsole";
 
@@ -178,9 +184,10 @@ describe("EntitlementLifecyclePanel", () => {
     await userEvent.type(within(dialog).getByLabelText("Revoke reason"), "security incident");
     await userEvent.click(within(dialog).getByRole("button", { name: "Revoke key" }));
 
-    // Privileged action: server-verified password step-up before the revoke request is sent.
-    await userEvent.type(await screen.findByLabelText("stepUp.passwordLabel"), "operator-password");
+    // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+    expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
 
     await waitFor(() => {
       expect(revokeLicense).toHaveBeenCalledWith("lic-001", "security incident", {
@@ -275,9 +282,10 @@ describe("EntitlementLifecyclePanel", () => {
     );
     await userEvent.click(within(detailDialog).getByRole("button", { name: "Revoke key" }));
 
-    // Privileged action: server-verified password step-up before the revoke request is sent.
-    await userEvent.type(await screen.findByLabelText("stepUp.passwordLabel"), "operator-password");
+    // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+    expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
 
     await waitFor(() => {
       expect(revokeLicense).toHaveBeenCalledWith("lic-new-001", "tenant onboarding correction", {

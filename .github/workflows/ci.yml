@@ -65,6 +65,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:all
 
+  contracts-drift:
+    name: Contracts drift against the desktop (step-up action kinds)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # The desktop repository is public: read-only checkout of its main branch, no secret needed.
+      - uses: actions/checkout@v4
+        with:
+          repository: oussasz/maintafox-desktop
+          ref: main
+          path: desktop
+          sparse-checkout: src-tauri/src/vps
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
+
   backup-drill:
     name: Backup and restore drill (real PostgreSQL 16 programs)
     runs-on: ubuntu-24.04
@@ -138,7 +155,7 @@ jobs:
           for img in $(grep -E '^ +image: ' docker-compose.yml | awk '{print $2}' | grep -v ':local$' | grep -v '^minio/' | sort -u); do
             docker pull "$img"
           done
-      - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_DEV_MOCK_AUTH=false --build-arg VITE_BASE_PATH=/ .
+      - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_BASE_PATH=/ .
 
   dependency-audit:
     name: Dependency audit (fails on high)

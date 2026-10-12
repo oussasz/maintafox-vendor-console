@@ -6,7 +6,7 @@ import {
   isAuthenticationRequiredError,
   isPermissionsLoadError,
 } from "@/services/admin-permissions";
-import { setAccessToken } from "@/lib/auth-token";
+import { endSession } from "@/lib/auth-session";
 import type { PermissionRecord } from "@shared/ipc-types";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated" | "forbidden" | "error";
@@ -52,7 +52,7 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
     } catch (err) {
       setPermissions([]);
       if (isAuthenticationRequiredError(err)) {
-        setAccessToken(null);
+        endSession();
         setSessionStatus("unauthenticated");
         setLoadError(null);
         return;

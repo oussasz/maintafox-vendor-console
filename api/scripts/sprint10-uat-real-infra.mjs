@@ -1,7 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { createInterface } from "node:readline/promises";
+
+import { postAuth } from "./lib/vendor-session.mjs";
 
 const BASE_URL = (process.env.BASE_URL ?? "https://api.maintafox.systems").replace(/\/$/, "");
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "";
@@ -51,6 +53,25 @@ async function expectJson(name, path, token, init = {}) {
   return { res, json, text };
 }
 
+const terminal = createInterface({ input: process.stdin, output: process.stderr });
+
+/** Asks the operator for the current 6-digit authenticator code. */
+async function askCode(purpose) {
+  const code = (await terminal.question(`Authenticator code for ${purpose}: `)).trim();
+  if (!/^\d{6}$/.test(code)) throw new Error("a 6-digit code is required");
+  return code;
+}
+
+/** Step-up of one kind (shared/step-up-actions.v1.json) with a fresh code; a code is never accepted twice. */
+async function stepUp(token, actionKind) {
+  const res = await postAuth(BASE_URL, "/api/v1/auth/step-up", {
+    bearer: token,
+    body: { action_kind: actionKind, code: await askCode(`step-up ${actionKind} (wait for a new code)`) },
+  });
+  if (res.status !== 200) throw new Error(`step-up ${actionKind} failed (${res.status}): ${res.text}`);
+  return res.json.step_up_token;
+}
+
 async function main() {
   // 0) Health
   {
@@ -59,17 +80,22 @@ async function main() {
   }
 
   // 1) Auth
+  // Password, then a code from the operator's authenticator app (typed here: the script never
+  // holds the TOTP secret). The operator must already be enrolled (first console sign-in).
   const login = await expectJson("auth login", "/api/v1/auth/login", null, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
   });
-  const token = login.json?.access_token;
-  // Privileged calls need a real step-up token (password re-verification), not a static string.
-  const STEP_UP_TOKEN = token ? await obtainStepUpToken(BASE_URL, token, ADMIN_PASSWORD) : null;
-  record("auth login success", login.res.status === 200 && typeof token === "string", {
-    status: login.res.status,
+  if (login.json?.status !== "mfa_required") {
+    throw new Error(`login did not ask for the second factor (status ${login.res.status}): sign in once in the console to enrol.`);
+  }
+  const mfa = await postAuth(BASE_URL, "/api/v1/auth/mfa/verify", {
+    bearer: login.json.mfa_token,
+    body: { code: await askCode("sign-in") },
   });
+  const token = mfa.json?.access_token;
+  record("auth login success", mfa.status === 200 && typeof token === "string", { status: mfa.status });
   if (!token) {
     throw new Error("Cannot continue UAT without access token.");
   }
@@ -123,7 +149,7 @@ async function main() {
       headers: {
         "Content-Type": "application/json",
         "X-Operator-Reason": OPERATOR_REASON,
-        "X-Step-Up-Token": STEP_UP_TOKEN,
+        "X-Step-Up-Token": await stepUp(token, "rollout_publish"),
       },
       body: JSON.stringify({
         force_min_app_version: "9.9.9",
@@ -158,7 +184,7 @@ async function main() {
       headers: {
         "Content-Type": "application/json",
         "X-Operator-Reason": OPERATOR_REASON,
-        "X-Step-Up-Token": STEP_UP_TOKEN,
+        "X-Step-Up-Token": await stepUp(token, "entitlement_suspension"),
       },
       body: JSON.stringify({ reason: "RC UAT revoke validation" }),
     });
@@ -243,7 +269,7 @@ async function main() {
         headers: {
           "Content-Type": "application/json",
           "X-Operator-Reason": `${OPERATOR_REASON}-rollback`,
-          "X-Step-Up-Token": STEP_UP_TOKEN,
+          "X-Step-Up-Token": await stepUp(token, "forced_rollback"),
         },
         body: JSON.stringify({}),
       },
@@ -286,7 +312,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(() => terminal.close());

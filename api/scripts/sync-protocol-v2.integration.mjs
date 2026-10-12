@@ -21,6 +21,7 @@ import { openDatabase } from "../dist/db/database.js";
 import { runSyncRetention } from "../dist/sync/retention.js";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { loginOperator } from "./lib/vendor-session.mjs";
 
 const port = 33151;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -224,13 +225,8 @@ async function run() {
     await waitForHealth();
 
     // ── Tenant, licence, four devices ─────────────────────────────────────────────────────
-    const login = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
-    });
-    assert.equal(login.status, 200);
-    const admin = { Authorization: `Bearer ${(await login.json()).access_token}`, "Content-Type": "application/json" };
+    const session = await loginOperator(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const admin = { Authorization: `Bearer ${session.accessToken}`, "Content-Type": "application/json" };
     const tenantRes = await fetch(`${baseUrl}/api/v1/tenants`, {
       method: "POST",
       headers: admin,
@@ -687,7 +683,17 @@ async function run() {
 
     // ── Tenant delete purges every sync table ─────────────────────────────────────────────
     {
-      const del = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}`, { method: "DELETE", headers: admin });
+      const unconfirmed = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}`, {
+        method: "DELETE",
+        headers: admin,
+        body: JSON.stringify({ confirm_slug: "not-the-slug" }),
+      });
+      assert.equal(unconfirmed.status, 400, "tenant delete needs the slug retyped");
+      const del = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}`, {
+        method: "DELETE",
+        headers: { ...admin, "X-Operator-Reason": "tenant purge drill", "X-Step-Up-Token": await session.stepUp("tenant_delete") },
+        body: JSON.stringify({ confirm_slug: tenant.slug }),
+      });
       assert.equal(del.status, 204, await del.clone().text());
       for (const table of [
         "sync_tenant_checkpoint",

@@ -28,6 +28,7 @@ import { openDatabase } from "../dist/db/database.js";
 import { PayloadCipher } from "../dist/sync/payload-crypto.js";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { loginAccessToken } from "./lib/vendor-session.mjs";
 
 const port = 33171;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -141,9 +142,7 @@ async function main() {
   databaseUrl = await testPg.createDatabase();
   try {
     await startApi();
-    const login = await api("POST", "/api/v1/auth/login", null, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
-    assert.equal(login.status, 200);
-    const admin = login.json.access_token;
+    const admin = await loginAccessToken(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
 
     const tenants = {};
     for (const name of ["alpha", "beta"]) {

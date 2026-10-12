@@ -19,6 +19,7 @@ import {
 } from "@/services/license-control-service";
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
+import { StepUpKinds } from "@/lib/step-up-kinds";
 import { useVendorConsole } from "../VendorConsoleContext";
 
 export function MachineActivationPanel() {
@@ -107,7 +108,7 @@ export function MachineActivationPanel() {
     try {
       const privileged = {
         reason_code: action === "revoke" ? "machine-revoke" : "machine-reinstate",
-        step_up_token: await requireStepUp(action === "revoke" ? "machine revoke" : "machine reinstate"),
+        step_up_token: await requireStepUp(StepUpKinds.machineTrustChange),
       };
       if (action === "revoke") {
         await revokeMachine(row.tenant_id, row.machine_id, "revoked from vendor console", privileged);
@@ -206,7 +207,7 @@ export function MachineActivationPanel() {
                   reconnect_requires_fresh_heartbeat: policy.reconnect_requires_fresh_heartbeat,
                 }, {
                   reason_code: "offline-policy-change",
-                  step_up_token: await requireStepUp("offline policy change"),
+                  step_up_token: await requireStepUp(StepUpKinds.offlinePolicyChange),
                 });
                 setPolicy(updated);
                 setLiveSuccess("Offline grace window updated (+12h).");
@@ -237,7 +238,7 @@ export function MachineActivationPanel() {
                   reconnect_requires_fresh_heartbeat: policy.reconnect_requires_fresh_heartbeat,
                 }, {
                   reason_code: "offline-policy-change",
-                  step_up_token: await requireStepUp("offline policy change"),
+                  step_up_token: await requireStepUp(StepUpKinds.offlinePolicyChange),
                 });
                 setPolicy(updated);
                 setLiveSuccess("Trust revoke behavior updated.");

@@ -241,7 +241,6 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_ADMIN_API_BASE_URL: ${VITE_ADMIN_API_BASE_URL:-https://api.maintafox.systems}
-        VITE_DEV_MOCK_AUTH: "false"
         VITE_BASE_PATH: /
     image: maintafox-vendor-console:local
     container_name: maintafox-vendor-console

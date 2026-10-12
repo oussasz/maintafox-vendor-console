@@ -12,51 +12,51 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { requestStepUpToken, type StepUpGrant } from "@/services/license-control-service";
+import type { StepUpActionKind } from "@/lib/step-up-kinds";
+import { AuthApiError, requestStepUp, type StepUpGrant } from "@/services/vendor-auth-service";
 
 export interface VendorConsoleStepUpDialogProps {
   open: boolean;
-  actionLabel: string;
+  actionKind: StepUpActionKind | null;
   onGranted: (grant: StepUpGrant) => void;
   onCancel: () => void;
 }
 
 /**
- * Step-up re-authentication for privileged vendor actions. The operator's password is verified
- * by the control API (POST /api/v1/auth/step-up), which issues a short-lived token bound to the
- * operator; privileged routes reject requests without it. Nothing is decided client-side.
+ * Step-up for privileged vendor actions: the operator enters a fresh code from their authenticator
+ * app and the control API (POST /api/v1/auth/step-up) issues a short-lived token valid for this
+ * action kind only; privileged routes reject anything else. Nothing is decided client-side.
  */
-export function VendorConsoleStepUpDialog({ open, actionLabel, onGranted, onCancel }: VendorConsoleStepUpDialogProps) {
+export function VendorConsoleStepUpDialog({ open, actionKind, onGranted, onCancel }: VendorConsoleStepUpDialogProps) {
   const { t } = useTranslation("vendorConsole");
-  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
-    setPassword("");
+    setCode("");
     setError(null);
     setBusy(false);
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!password || busy) return;
+    if (!actionKind || code.length !== 6 || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const grant = await requestStepUpToken(password);
+      const grant = await requestStepUp(actionKind, code);
       reset();
       onGranted(grant);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const lower = message.toLowerCase();
-      if (lower.includes("invalid credentials") || lower.includes("(401)")) {
-        setError(t("stepUp.errorInvalidPassword"));
-      } else if (lower.includes("too many") || lower.includes("(429)")) {
+      if (err instanceof AuthApiError && err.code === "invalid_mfa_code") {
+        setError(t("stepUp.errorInvalidCode"));
+      } else if (err instanceof AuthApiError && err.status === 429) {
         setError(t("stepUp.errorRateLimited"));
       } else {
-        setError(t("stepUp.errorGeneric", { message }));
+        setError(t("stepUp.errorGeneric", { message: err instanceof Error ? err.message : String(err) }));
       }
+      setCode("");
       setBusy(false);
     }
   };
@@ -75,16 +75,17 @@ export function VendorConsoleStepUpDialog({ open, actionLabel, onGranted, onCanc
         <form onSubmit={(e) => void handleSubmit(e)}>
           <DialogHeader>
             <DialogTitle>{t("stepUp.title")}</DialogTitle>
-            <DialogDescription id="step-up-desc">{t("stepUp.description", { action: actionLabel })}</DialogDescription>
+            <DialogDescription id="step-up-desc">{t("stepUp.description", { action: actionKind ? t(`stepUp.kinds.${actionKind}`) : "" })}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
-            <Label htmlFor="step-up-password">{t("stepUp.passwordLabel")}</Label>
+            <Label htmlFor="step-up-code">{t("stepUp.codeLabel")}</Label>
             <Input
-              id="step-up-password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              id="step-up-code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
               aria-required
               aria-invalid={error != null}
               aria-describedby={error ? "step-up-error" : undefined}
@@ -109,7 +110,7 @@ export function VendorConsoleStepUpDialog({ open, actionLabel, onGranted, onCanc
             >
               {t("stepUp.cancel")}
             </Button>
-            <Button type="submit" disabled={busy || password.length === 0}>
+            <Button type="submit" disabled={busy || code.length !== 6}>
               {busy ? t("stepUp.verifying") : t("stepUp.confirm")}
             </Button>
           </DialogFooter>

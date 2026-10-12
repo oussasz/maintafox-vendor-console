@@ -7,17 +7,20 @@ import type express from "express";
 import type { AuditEntityRefs } from "../audit-chain.js";
 import { verifyDeviceActivationToken, verifyStepUpToken, verifyVendorAdminToken } from "../auth-tokens.js";
 import type { Database } from "../db/database.js";
+import type { VendorAuth } from "../vendor-auth/service.js";
+import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
 
-export function createGuards(db: Database, { appendAuditRecord }: AuditAppender) {
+export function createGuards(db: Database, { appendAuditRecord }: AuditAppender, vendorAuth: VendorAuth) {
   /**
-   * Vendor-console operator authentication. Only accepts vendor_admin tokens (device activation and
-   * step-up tokens are rejected by audience/kind) and re-checks that the operator still exists, so a
-   * deleted operator's unexpired token stops working immediately.
+   * Vendor-console operator authentication. Only accepts vendor_admin tokens (device activation,
+   * MFA-pending and step-up tokens are rejected by audience/kind) and re-checks that the token's
+   * session is still open for that operator, so logout, "log out everywhere", refresh-token reuse,
+   * an MFA reset or a deleted operator stop an unexpired token immediately.
    */
   async function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
     const h = req.headers.authorization;
@@ -30,12 +33,12 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
       res.status(401).json({ error: "invalid_token" });
       return;
     }
-    const operator = await db.get("SELECT id FROM users WHERE id = ?", claims.userId) as { id: number } | undefined;
-    if (!operator) {
-      res.status(401).json({ error: "invalid_token" });
+    if (!(await vendorAuth.isSessionActive(claims.sessionId, claims.userId))) {
+      res.status(401).json({ error: "session_ended" });
       return;
     }
     (req as AuthRequest).userId = String(claims.userId);
+    (req as AuthRequest).vendorSessionId = claims.sessionId;
     // Console routes act across tenants: an explicit, recorded operator scope for this request.
     const scope = await openOperatorScope(db, resolveActorId(req), { method: req.method, path: req.path });
     db.runInScope(scope, next);
@@ -203,6 +206,8 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
     input: {
       action_code: string;
       action_category: string;
+      /** The only step-up kind this route accepts (shared/step-up-actions.v1.json). */
+      step_up_kind: StepUpActionKind;
       scope_tenant_id?: string | null;
       entity_refs?: AuditEntityRefs;
       payload?: unknown;
@@ -225,14 +230,31 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
       };
     }
     const operatorId = Number((req as AuthRequest).userId);
-    const stepUp = Number.isSafeInteger(operatorId) ? verifyStepUpToken(JWT_SECRET, stepUpToken, operatorId) : null;
-    if (!stepUp) {
+    const sessionId = (req as AuthRequest).vendorSessionId ?? "";
+    const verification = verifyStepUpToken(JWT_SECRET, stepUpToken, {
+      userId: operatorId,
+      sessionId,
+      actionKind: input.step_up_kind,
+    });
+    if (!verification.ok) {
+      // A presented but refused proof is security-relevant (PrivilegedActionDenied): ledger it.
+      await appendAuditRecord({
+        actor_id: resolveActorId(req),
+        action_code: "privileged_action_denied",
+        action_category: "vendor_auth",
+        correlation_id: `priv-${newId("corr")}`,
+        scope_tenant_id: input.scope_tenant_id ?? null,
+        reason_code: reasonCode,
+        entity_refs: input.entity_refs,
+        payload: { attempted_action_code: input.action_code, step_up_kind: input.step_up_kind, denial: verification.reason },
+      });
       return {
         ok: false,
         status: 403,
-        body: { error: "privileged_action_guard_failed", reason: "invalid_or_expired_step_up_token" },
+        body: { error: "privileged_action_guard_failed", reason: verification.reason, step_up_kind: input.step_up_kind },
       };
     }
+    const stepUp = verification.claims;
     const auditRecordId = await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: input.action_code,
@@ -245,6 +267,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
         ...(input.payload as Record<string, unknown> | undefined),
         privileged_step_up_present: true,
         step_up_id: stepUp.jti,
+        step_up_kind: stepUp.actionKind,
       },
     });
     return { ok: true, reasonCode, auditRecordId };

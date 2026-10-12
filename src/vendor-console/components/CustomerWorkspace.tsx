@@ -18,10 +18,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { BulkEntitlementOperationRequestV1 } from "@shared/ipc-types";
 
 import { channelPolicyConsistent } from "@/services/customer-entitlement-machine-contracts";
-import { useVendorConsole } from "../VendorConsoleContext";
+import { StepUpKinds } from "@/lib/step-up-kinds";
+import { StepUpCancelledError, useVendorConsole } from "../VendorConsoleContext";
 import {
   createTenant,
   deleteTenant,
+  PRIVILEGED_REASON_MIN_LENGTH,
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
   isDuplicateTenantSlugMessage,
@@ -105,6 +107,8 @@ export function CustomerWorkspace() {
   const [creatingTenant, setCreatingTenant] = useState(false);
   const [deleteConfirmTenant, setDeleteConfirmTenant] = useState<ControlTenant | null>(null);
   const [deletingTenant, setDeletingTenant] = useState(false);
+  const [deleteSlugTyped, setDeleteSlugTyped] = useState("");
+  const [deleteReason, setDeleteReason] = useState("");
   const [createTenantError, setCreateTenantError] = useState<string | null>(null);
   /** Set when POST /tenants returns 409 for duplicate slug (shown on slug field). */
   const [slugConflictError, setSlugConflictError] = useState<string | null>(null);
@@ -345,7 +349,13 @@ export function CustomerWorkspace() {
     setDeletingTenant(true);
     setTenantError(null);
     try {
-      await deleteTenant(deleteConfirmTenant.id);
+      await deleteTenant(deleteConfirmTenant.id, {
+        confirm_slug: deleteSlugTyped.trim(),
+        reason_code: deleteReason.trim(),
+        step_up_token: await requireStepUp(StepUpKinds.tenantDelete),
+      });
+      setDeleteSlugTyped("");
+      setDeleteReason("");
       setTenantSuccess(`Customer "${deleteConfirmTenant.display_name}" was deleted.`);
       setDeleteConfirmTenant(null);
       if (selectedTenantId === deleteConfirmTenant.id) {
@@ -353,14 +363,16 @@ export function CustomerWorkspace() {
       }
       await loadTenants();
     } catch (err) {
-      setTenantError(err instanceof Error ? err.message : "Delete tenant failed");
+      if (!(err instanceof StepUpCancelledError)) {
+        setTenantError(err instanceof Error ? err.message : "Delete tenant failed");
+      }
     } finally {
       setDeletingTenant(false);
     }
   };
 
   // Server requires X-Operator-Reason (min 4 chars); the step-up password prompt opens on click.
-  const canRunPrivilegedPolicyAction = operatorReasonCode.trim().length >= 4;
+  const canRunPrivilegedPolicyAction = operatorReasonCode.trim().length >= PRIVILEGED_REASON_MIN_LENGTH;
   const listHasNoRows = !loadingTenants && !tenantError && tenants.length === 0;
   const noVisibleRows = !loadingTenants && !tenantError && tenants.length > 0 && visibleTenants.length === 0;
 
@@ -722,7 +734,7 @@ export function CustomerWorkspace() {
                             },
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: await requireStepUp("update policy change"),
+                              step_up_token: await requireStepUp(StepUpKinds.rolloutPublish),
                             },
                           );
                           setTenantPolicyVersion(updated.force_min_app_version ?? "");
@@ -749,7 +761,7 @@ export function CustomerWorkspace() {
                         try {
                           const rolledBack = await rollbackTenantUpdatePolicy(selectedTenant.id, {
                             reason_code: operatorReasonCode.trim(),
-                            step_up_token: await requireStepUp("update policy change"),
+                            step_up_token: await requireStepUp(StepUpKinds.forcedRollback),
                           });
                           setTenantPolicyVersion(rolledBack.force_min_app_version ?? "");
                           setTenantPolicyMode(rolledBack.force_update_mode);
@@ -830,7 +842,7 @@ export function CustomerWorkspace() {
                             },
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: await requireStepUp("update policy change"),
+                              step_up_token: await requireStepUp(StepUpKinds.rolloutPublish),
                             },
                           );
                           setCohortPolicyVersion(updated.force_min_app_version ?? "");
@@ -860,7 +872,7 @@ export function CustomerWorkspace() {
                             selectedTenant.rollout_cohort,
                             {
                               reason_code: operatorReasonCode.trim(),
-                              step_up_token: await requireStepUp("update policy change"),
+                              step_up_token: await requireStepUp(StepUpKinds.forcedRollback),
                             },
                           );
                           setCohortPolicyVersion(rolledBack.force_min_app_version ?? "");
@@ -1118,7 +1130,11 @@ export function CustomerWorkspace() {
       <Dialog
         open={deleteConfirmTenant !== null}
         onOpenChange={(open) => {
-          if (!open) setDeleteConfirmTenant(null);
+          if (!open) {
+            setDeleteConfirmTenant(null);
+            setDeleteSlugTyped("");
+            setDeleteReason("");
+          }
         }}
       >
         <DialogContent>
@@ -1135,6 +1151,23 @@ export function CustomerWorkspace() {
                 : null}
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="delete-tenant-slug">
+                {t("customers.deleteTypeSlug", { slug: deleteConfirmTenant?.slug ?? "" })}
+              </Label>
+              <Input
+                id="delete-tenant-slug"
+                autoComplete="off"
+                value={deleteSlugTyped}
+                onChange={(e) => setDeleteSlugTyped(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="delete-tenant-reason">{t("customers.deleteReason")}</Label>
+              <Input id="delete-tenant-reason" value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} />
+            </div>
+          </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setDeleteConfirmTenant(null)} disabled={deletingTenant}>
               {t("stepUp.cancel", "Cancel")}
@@ -1142,7 +1175,11 @@ export function CustomerWorkspace() {
             <Button
               type="button"
               variant="destructive"
-              disabled={deletingTenant}
+              disabled={
+                deletingTenant ||
+                deleteSlugTyped.trim() !== deleteConfirmTenant?.slug ||
+                deleteReason.trim().length < PRIVILEGED_REASON_MIN_LENGTH
+              }
               onClick={() => void handleConfirmDeleteTenant()}
             >
               {deletingTenant ? t("customers.deletingTenant", "Deleting…") : t("customers.confirmDelete", "Delete permanently")}

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { loginOperator } from "./lib/vendor-session.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
@@ -130,13 +130,9 @@ async function run() {
   try {
     await waitForHealth();
 
-    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
-    });
-    assert.equal(loginRes.status, 200, "login must succeed");
-    const { access_token: adminToken } = await loginRes.json();
+    // Password + TOTP (enrolment on first login): scripts/vendor-auth.integration.mjs covers the flow.
+    const session = await loginOperator(baseUrl, ADMIN_EMAIL, ADMIN_PASSWORD);
+    const adminToken = session.accessToken;
     const adminHeaders = { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" };
 
     // Arrange: tenant + licence + activated machine → device token.
@@ -201,14 +197,14 @@ async function run() {
     });
     assert.equal(fakeStepUp.status, 403, "a static step-up string must be rejected");
 
-    const wrongPassword = await fetch(`${baseUrl}/api/v1/auth/step-up`, {
+    const passwordStepUp = await fetch(`${baseUrl}/api/v1/auth/step-up`, {
       method: "POST",
       headers: adminHeaders,
-      body: JSON.stringify({ password: "not-the-password" }),
+      body: JSON.stringify({ password: ADMIN_PASSWORD }),
     });
-    assert.equal(wrongPassword.status, 401, "step-up with wrong password must fail");
+    assert.equal(passwordStepUp.status, 400, "step-up needs an action kind and a TOTP code, not the password");
 
-    const stepUpToken = await obtainStepUpToken(baseUrl, adminToken, ADMIN_PASSWORD);
+    const stepUpToken = await session.stepUp("rollout_publish");
     const missingReason = await fetch(`${baseUrl}${privilegedPath}`, {
       method: "PUT",
       headers: { ...adminHeaders, "X-Step-Up-Token": stepUpToken },

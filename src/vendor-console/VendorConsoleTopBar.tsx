@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
+import { VendorConsoleAccountMenu } from "./VendorConsoleAccountMenu";
 import { useVendorConsole } from "./VendorConsoleContext";
 
 export function VendorConsoleTopBar() {
@@ -66,6 +67,7 @@ export function VendorConsoleTopBar() {
       ) : (
         <div className="ml-auto text-xs text-text-muted">{t("shell.hostHint", "console.maintafox.systems")}</div>
       )}
+      <VendorConsoleAccountMenu />
     </header>
   );
 }

@@ -40,13 +40,40 @@ export const loginRateLimiter = rateLimit({
   handler: rateLimitedResponse,
 });
 
-/** Password re-verification for privileged actions (per authenticated operator). */
+/** TOTP re-verification for privileged actions (per authenticated operator); only refusals count. */
 export const stepUpRateLimiter = rateLimit({
   windowMs: 15 * 60_000,
   limit: 10,
+  skipSuccessfulRequests: true,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   keyGenerator: (req) => `user:${(req as AuthRequest).userId ?? "unknown"}`,
+  handler: rateLimitedResponse,
+});
+
+/**
+ * Second-factor guessing guard on TOTP enrolment / verification (per operator in the MFA step).
+ * Only refused attempts count, so an operator who gets codes right is never slowed down.
+ */
+export const mfaRateLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => `mfa:${(req as MfaPendingRequest).mfa?.userId ?? req.ip ?? "unknown"}`,
+  handler: rateLimitedResponse,
+});
+
+/**
+ * Refresh-cookie exchange (per client IP). The console refreshes at most once per access-token
+ * lifetime per tab; this only stops a client hammering the endpoint.
+ */
+export const refreshRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
   handler: rateLimitedResponse,
 });
 
@@ -114,7 +141,11 @@ export function parsePagination(query: unknown): {
   return { cursor, limit, withPagination };
 }
 
-export type AuthRequest = express.Request & { userId?: string };
+/** Set by authMiddleware: the operator and the server-side session their access token belongs to. */
+export type AuthRequest = express.Request & { userId?: string; vendorSessionId?: string };
+
+/** Set by the MFA-pending middleware (routes/auth.ts): password verified, second factor pending. */
+export type MfaPendingRequest = express.Request & { mfa?: { userId: number; stage: "enroll" | "verify" } };
 
 export type IdempotentResponse = {
   status: number;

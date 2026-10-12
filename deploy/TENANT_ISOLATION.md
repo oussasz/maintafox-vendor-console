@@ -46,7 +46,9 @@ run by another user) is the next step and needs a new secret on the server.
 - Losing the key makes these stored values unreadable (devices keep their own copies). It is in
   `.env`, which the backup sends off-site encrypted; keep it in the password manager too. Rotation
   is not implemented yet: changing the key makes the API refuse the old values with an explicit
-  error naming both key ids.
+  error naming both key ids. The vendor-console TOTP secrets are sealed with a subkey derived from
+  this key (HKDF label `maintafox/vendor-totp/v1`): a rotation must re-encrypt them too
+  (`deploy/VENDOR_AUTH.md`).
 
 ## Tests
 

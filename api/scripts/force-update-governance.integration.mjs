@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { loginOperator } from "./lib/vendor-session.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
@@ -60,23 +60,17 @@ async function run() {
   try {
     await waitForHealth();
 
-    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@maintafox.systems", password: "AdminPassw0rd!" }),
-    });
-    assert.equal(loginRes.status, 200, "login must succeed");
-    const loginBody = await loginRes.json();
-    const token = loginBody.access_token;
-    assert.ok(token, "access token required");
-    const stepUpToken = await obtainStepUpToken(baseUrl, token, "AdminPassw0rd!");
+    const session = await loginOperator(baseUrl, "admin@maintafox.systems", "AdminPassw0rd!");
+    const token = session.accessToken;
 
+    // Setting a policy is step-up kind rollout_publish; rolling one back is forced_rollback.
     const privilegedHeaders = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "X-Operator-Reason": "INC-2026-042 force-update drill",
-      "X-Step-Up-Token": stepUpToken,
+      "X-Step-Up-Token": await session.stepUp("rollout_publish"),
     };
+    const rollbackHeaders = { ...privilegedHeaders, "X-Step-Up-Token": await session.stepUp("forced_rollback") };
 
     const tenantRes = await fetch(`${baseUrl}/api/v1/tenants`, {
       method: "POST",
@@ -152,7 +146,7 @@ async function run() {
 
     const rollbackRes = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}/update-policy/rollback`, {
       method: "POST",
-      headers: privilegedHeaders,
+      headers: rollbackHeaders,
       body: JSON.stringify({}),
     });
     assert.equal(rollbackRes.status, 200, "tenant policy rollback must succeed");

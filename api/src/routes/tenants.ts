@@ -10,6 +10,7 @@ import { EditionIdSchema, ForceUpdateModeSchema } from "../app/schemas.js";
 import { newId, structuredLog } from "../app/runtime.js";
 import { editionExists } from "../edition-catalog-store.js";
 import { purgeTenantSyncData } from "../sync/index.js";
+import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 const CreateTenantBody = z.object({
   slug: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/),
@@ -35,6 +36,9 @@ const UpdateTenantBody = z
   })
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "empty_patch" });
+
+/** Typed confirmation: the operator retypes the slug of the tenant being deleted. */
+const DeleteTenantBody = z.object({ confirm_slug: z.string().min(1).max(64) }).strict();
 
 const OfflinePolicyUpdateBody = z.object({
   offline_grace_hours: z.number().int().min(1).max(720),
@@ -191,11 +195,36 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     res.json(out);
   });
 
+  /**
+   * Irreversible: deletes the tenant, its licences, activations, tickets and every synchronised row.
+   * Needs the tenant's slug retyped (`confirm_slug`), a reason and a `tenant_delete` step-up; audited.
+   */
   app.delete("/api/v1/tenants/:tenantId", authMiddleware, async (req, res) => {
     const tenantId = req.params.tenantId;
-    const exists = await db.get(`SELECT id FROM tenants WHERE id = ?`, tenantId) as { id: string } | undefined;
+    const parsed = DeleteTenantBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const exists = await db.get(`SELECT id, slug FROM tenants WHERE id = ?`, tenantId) as { id: string; slug: string } | undefined;
     if (!exists) {
       res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    if (parsed.data.confirm_slug !== exists.slug) {
+      res.status(400).json({ error: "confirmation_mismatch", message: "confirm_slug must equal the tenant's slug." });
+      return;
+    }
+    const guard = await requirePrivilegedAction(req, {
+      action_code: "tenant_delete",
+      action_category: "tenant",
+      step_up_kind: StepUpKinds.tenantDelete,
+      scope_tenant_id: tenantId,
+      entity_refs: { tenant_id: tenantId },
+      payload: { slug: exists.slug },
+    });
+    if (!guard.ok) {
+      res.status(guard.status).json(guard.body);
       return;
     }
     let syncRowsDeleted: Record<string, number>;
@@ -256,6 +285,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     await runIdempotent(req, res, async () => {
       const guard = await requirePrivilegedAction(req, {
         action_code: "offline_policy_update",
+        step_up_kind: StepUpKinds.offlinePolicyChange,
         action_category: "platform_override",
         scope_tenant_id: tenantId,
         entity_refs: { tenant_id: tenantId },

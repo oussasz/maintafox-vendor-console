@@ -1,12 +1,14 @@
 /**
  * JWT issuance and verification for the control API.
  *
- * Three token kinds share the HS256 `JWT_SECRET` but are cryptographically
+ * Four token kinds share the HS256 `JWT_SECRET` but are cryptographically
  * scoped by `aud` + `kind`, so a token minted for one purpose is rejected
  * everywhere else:
- *   - vendor_admin : console operators (login)
- *   - activation   : desktop machines (activation claim) → sync / activation routes
- *   - step_up      : short-lived re-authentication proof for privileged actions
+ *   - vendor_admin       : console operators, short-lived, bound to a server-side session
+ *                          (renewed through the refresh cookie, vendor-auth/service.ts)
+ *   - vendor_mfa_pending : password verified, second factor not yet (TOTP enrol / verify only)
+ *   - activation         : desktop machines (activation claim) → sync / activation routes
+ *   - step_up            : short-lived proof of a fresh TOTP code for one privileged action kind
  */
 import jwt from "jsonwebtoken";
 
@@ -14,12 +16,20 @@ export const TOKEN_ISSUER = "maintafox-control-api";
 export const AUD_VENDOR_ADMIN = "maintafox-vendor-admin";
 export const AUD_DESKTOP_DEVICE = "maintafox-desktop-device";
 export const AUD_STEP_UP = "maintafox-step-up";
+export const AUD_VENDOR_MFA = "maintafox-vendor-mfa";
 
-export const VENDOR_ADMIN_TTL_SECONDS = 12 * 3600;
+/** Access token lifetime (Rust VendorAdminSessionContract::access_token_ttl_minutes). */
+export const VENDOR_ADMIN_TTL_SECONDS = 15 * 60;
+/** Time to finish the second factor (or enrolment) after the password was accepted. */
+export const VENDOR_MFA_PENDING_TTL_SECONDS = 10 * 60;
 export const DEVICE_ACTIVATION_TTL_SECONDS = 30 * 24 * 3600;
 export const STEP_UP_TTL_SECONDS = 5 * 60;
 
-export type VendorAdminClaims = { userId: number; email: string };
+export type VendorAdminClaims = { userId: number; email: string; sessionId: string };
+
+/** `enroll`: the operator has no second factor yet and must enrol; `verify`: they must enter a code. */
+export type VendorMfaStage = "enroll" | "verify";
+export type VendorMfaClaims = { userId: number; stage: VendorMfaStage };
 
 export type DeviceActivationClaims = {
   tenantId: string;
@@ -33,10 +43,10 @@ export type VerifiedDeviceActivationClaims = DeviceActivationClaims & { issuedAt
 /** A device token older than this is replaced (and the old one invalidated) on policy refresh. */
 export const DEVICE_TOKEN_ROTATE_AFTER_SECONDS = 7 * 24 * 3600;
 
-export type StepUpClaims = { userId: number; jti: string };
+export type StepUpClaims = { userId: number; sessionId: string; actionKind: string; jti: string };
 
-export function signVendorAdminToken(secret: string, user: { id: number; email: string }): string {
-  return jwt.sign({ kind: "vendor_admin", email: user.email }, secret, {
+export function signVendorAdminToken(secret: string, user: { id: number; email: string }, sessionId: string): string {
+  return jwt.sign({ kind: "vendor_admin", email: user.email, sid: sessionId }, secret, {
     algorithm: "HS256",
     subject: String(user.id),
     issuer: TOKEN_ISSUER,
@@ -53,10 +63,37 @@ export function verifyVendorAdminToken(secret: string, token: string): VendorAdm
       issuer: TOKEN_ISSUER,
       audience: AUD_VENDOR_ADMIN,
     }) as jwt.JwtPayload;
-    if (payload.kind !== "vendor_admin" || typeof payload.email !== "string") return null;
+    if (payload.kind !== "vendor_admin" || typeof payload.email !== "string" || typeof payload.sid !== "string") return null;
+    const userId = Number(payload.sub);
+    if (!Number.isSafeInteger(userId) || userId <= 0 || !payload.sid) return null;
+    return { userId, email: payload.email, sessionId: payload.sid };
+  } catch {
+    return null;
+  }
+}
+
+export function signVendorMfaToken(secret: string, claims: VendorMfaClaims): string {
+  return jwt.sign({ kind: "vendor_mfa_pending", stage: claims.stage }, secret, {
+    algorithm: "HS256",
+    subject: String(claims.userId),
+    issuer: TOKEN_ISSUER,
+    audience: AUD_VENDOR_MFA,
+    expiresIn: VENDOR_MFA_PENDING_TTL_SECONDS,
+  });
+}
+
+/** Returns claims, or null when the token is invalid, expired, or not an MFA-pending token. */
+export function verifyVendorMfaToken(secret: string, token: string): VendorMfaClaims | null {
+  try {
+    const payload = jwt.verify(token, secret, {
+      algorithms: ["HS256"],
+      issuer: TOKEN_ISSUER,
+      audience: AUD_VENDOR_MFA,
+    }) as jwt.JwtPayload;
+    if (payload.kind !== "vendor_mfa_pending" || (payload.stage !== "enroll" && payload.stage !== "verify")) return null;
     const userId = Number(payload.sub);
     if (!Number.isSafeInteger(userId) || userId <= 0) return null;
-    return { userId, email: payload.email };
+    return { userId, stage: payload.stage };
   } catch {
     return null;
   }
@@ -114,32 +151,54 @@ export function verifyDeviceActivationToken(
   }
 }
 
-export function signStepUpToken(secret: string, userId: number, jti: string): string {
-  return jwt.sign({ kind: "step_up" }, secret, {
+export function signStepUpToken(secret: string, claims: StepUpClaims): string {
+  return jwt.sign({ kind: "step_up", act: claims.actionKind, sid: claims.sessionId }, secret, {
     algorithm: "HS256",
-    subject: String(userId),
+    subject: String(claims.userId),
     issuer: TOKEN_ISSUER,
     audience: AUD_STEP_UP,
     expiresIn: STEP_UP_TTL_SECONDS,
-    jwtid: jti,
+    jwtid: claims.jti,
   });
 }
 
+export type StepUpVerification =
+  | { ok: true; claims: StepUpClaims }
+  | { ok: false; reason: "invalid_or_expired_step_up_token" | "step_up_action_kind_mismatch" };
+
 /**
- * Returns claims when the step-up token is valid, unexpired, and was issued to `expectedUserId`.
- * Binding to the caller prevents one operator from replaying another operator's step-up proof.
+ * Accepts the step-up token only when it is valid, unexpired, issued to `expected.userId` in the
+ * same session, and for `expected.actionKind`. Binding to the caller and session prevents replaying
+ * another operator's (or a logged-out session's) proof; binding to the kind prevents spending a
+ * proof given for one action on another.
  */
-export function verifyStepUpToken(secret: string, token: string, expectedUserId: number): StepUpClaims | null {
+export function verifyStepUpToken(
+  secret: string,
+  token: string,
+  expected: { userId: number; sessionId: string; actionKind: string },
+): StepUpVerification {
+  let payload: jwt.JwtPayload;
   try {
-    const payload = jwt.verify(token, secret, {
+    payload = jwt.verify(token, secret, {
       algorithms: ["HS256"],
       issuer: TOKEN_ISSUER,
       audience: AUD_STEP_UP,
     }) as jwt.JwtPayload;
-    if (payload.kind !== "step_up" || typeof payload.jti !== "string") return null;
-    if (Number(payload.sub) !== expectedUserId) return null;
-    return { userId: expectedUserId, jti: payload.jti };
   } catch {
-    return null;
+    return { ok: false, reason: "invalid_or_expired_step_up_token" };
   }
+  if (
+    payload.kind !== "step_up" ||
+    typeof payload.jti !== "string" ||
+    typeof payload.act !== "string" ||
+    Number(payload.sub) !== expected.userId ||
+    payload.sid !== expected.sessionId
+  ) {
+    return { ok: false, reason: "invalid_or_expired_step_up_token" };
+  }
+  if (payload.act !== expected.actionKind) return { ok: false, reason: "step_up_action_kind_mismatch" };
+  return {
+    ok: true,
+    claims: { userId: expected.userId, sessionId: expected.sessionId, actionKind: payload.act, jti: payload.jti },
+  };
 }

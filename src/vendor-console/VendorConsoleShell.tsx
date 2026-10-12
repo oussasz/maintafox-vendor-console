@@ -9,7 +9,7 @@ import { VendorConsoleTopBar } from "./VendorConsoleTopBar";
 
 function VendorConsoleShellInner() {
   const { t } = useTranslation("common");
-  const { stepUpOpen, stepUpActionLabel, completeStepUp, cancelStepUp } = useVendorConsole();
+  const { stepUpOpen, stepUpActionKind, completeStepUp, cancelStepUp } = useVendorConsole();
 
   return (
     <div className="flex h-screen flex-col bg-surface-0 text-text-primary">
@@ -30,7 +30,7 @@ function VendorConsoleShellInner() {
       </div>
       <VendorConsoleStepUpDialog
         open={stepUpOpen}
-        actionLabel={stepUpActionLabel}
+        actionKind={stepUpActionKind}
         onGranted={completeStepUp}
         onCancel={cancelStepUp}
       />

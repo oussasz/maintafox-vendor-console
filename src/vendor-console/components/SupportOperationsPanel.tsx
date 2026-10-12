@@ -22,6 +22,7 @@ import {
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
+import { StepUpKinds } from "@/lib/step-up-kinds";
 import { useVendorConsole } from "../VendorConsoleContext";
 
 const COMPLIANCE_EXPORT_LABELS: Record<
@@ -98,7 +99,7 @@ export function SupportOperationsPanel() {
         reason_code: "operator_action",
       }, {
         reason_code: "support-intervention",
-        step_up_token: await requireStepUp("support intervention"),
+        step_up_token: await requireStepUp(StepUpKinds.supportIntervention),
       });
       setNoteDraft((prev) => ({ ...prev, [ticket.ticket_id]: "" }));
       await load();

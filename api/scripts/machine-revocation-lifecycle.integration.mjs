@@ -14,7 +14,7 @@ import { once } from "node:events";
 import pg from "pg";
 import jwt from "jsonwebtoken";
 
-import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { loginOperator } from "./lib/vendor-session.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 
@@ -83,22 +83,16 @@ async function run() {
 
   try {
     await waitForHealth();
-    const login = await json(
-      await fetch(`${baseUrl}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: "admin@maintafox.systems", password: ADMIN_PASSWORD }),
-      }),
-    );
-    const adminToken = login.access_token;
+    const session = await loginOperator(baseUrl, "admin@maintafox.systems", ADMIN_PASSWORD);
+    const adminToken = session.accessToken;
     assert.ok(adminToken, "admin login must succeed");
     const admin = { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" };
     let opCounter = 0;
-    const privileged = async (reason) => ({
+    const privileged = async (reason, kind) => ({
       ...admin,
       "Idempotency-Key": `machine-revocation-${(opCounter += 1)}`,
       "X-Operator-Reason": reason,
-      "X-Step-Up-Token": await obtainStepUpToken(baseUrl, adminToken, ADMIN_PASSWORD),
+      "X-Step-Up-Token": await session.stepUp(kind),
     });
 
     const tenant = await json(
@@ -145,7 +139,7 @@ async function run() {
     const machineAction = async (fingerprint, action) =>
       fetch(`${baseUrl}/api/v1/tenants/${tenant.id}/machines/${encodeURIComponent(fingerprint)}/${action}`, {
         method: "POST",
-        headers: await privileged(`MACHINE-${action.toUpperCase()}`),
+        headers: await privileged(`MACHINE-${action.toUpperCase()}`, "machine_trust_change"),
         body: JSON.stringify({ reason: `integration ${action}` }),
       });
 
@@ -232,7 +226,7 @@ async function run() {
 
     const revokeLicence = await fetch(`${baseUrl}/api/v1/licenses/${licence.id}/revoke`, {
       method: "POST",
-      headers: await privileged("LICENCE-REVOKE"),
+      headers: await privileged("LICENCE-REVOKE", "entitlement_suspension"),
       body: JSON.stringify({ reason: "integration licence revoke" }),
     });
     assert.equal(revokeLicence.status, 200);

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { PermissionRecord } from "@shared/ipc-types";
 
-import { getAccessToken } from "@/lib/auth-token";
+import { authFetch, SessionEndedError } from "@/lib/api-client";
 
 export const PermissionRecordSchema = z.object({
   name: z.string(),
@@ -44,10 +44,8 @@ export function isPermissionsLoadError(err: unknown): err is PermissionsLoadErro
   return err instanceof PermissionsLoadError;
 }
 
-function apiBase(): string | null {
-  const raw = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
-  if (!raw) return null;
-  return raw.replace(/\/$/, "");
+function apiBaseConfigured(): boolean {
+  return Boolean(import.meta.env.VITE_ADMIN_API_BASE_URL?.trim());
 }
 
 async function errorCodeFromResponse(res: Response): Promise<string> {
@@ -63,29 +61,22 @@ async function errorCodeFromResponse(res: Response): Promise<string> {
  * Loads effective permissions from the VPS admin API.
  * Expected: `GET {VITE_ADMIN_API_BASE_URL}/api/v1/me/permissions` → JSON array of PermissionRecord.
  *
- * Throws {@link AuthenticationRequiredError} for 401 / invalid_token (caller must clear token + redirect).
+ * Throws {@link AuthenticationRequiredError} when there is no session (refresh refused) or the API
+ * still answers 401 / invalid_token (caller ends the session and redirects).
  * Throws {@link PermissionsLoadError} for config, network, 5xx, or parse failures.
  */
 export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
-  const base = apiBase();
-  if (!base) {
+  if (!apiBaseConfigured()) {
     throw new PermissionsLoadError("Set VITE_ADMIN_API_BASE_URL.");
-  }
-
-  const token = getAccessToken();
-  if (!token) {
-    throw new AuthenticationRequiredError("Not authenticated", 401, "missing_token");
   }
 
   let res: Response;
   try {
-    res = await fetch(`${base}/api/v1/me/permissions`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-  } catch {
+    res = await authFetch("/api/v1/me/permissions");
+  } catch (err) {
+    if (err instanceof SessionEndedError) {
+      throw new AuthenticationRequiredError("Not authenticated", 401, "session_ended");
+    }
     throw new PermissionsLoadError("Network error while loading permissions. Check API URL and CORS.");
   }
 

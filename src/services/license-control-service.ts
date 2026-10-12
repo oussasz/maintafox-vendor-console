@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { getAccessToken } from "@/lib/auth-token";
+import { apiBase } from "@/lib/api-base";
+import { authFetch } from "@/lib/api-client";
 
 /** System + custom edition ids from the persisted catalog. */
 const EditionIdSchema = z.string().min(2).max(64);
@@ -176,12 +177,6 @@ export type PrivilegedActionContext = {
   step_up_token: string;
 };
 
-function apiBase(): string {
-  const raw = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
-  if (!raw) throw new Error("VITE_ADMIN_API_BASE_URL is not configured.");
-  return raw.replace(/\/$/, "");
-}
-
 type ControlPlaneErrorBody = {
   error?: string;
   message?: string;
@@ -276,40 +271,8 @@ async function throwIfNotOk(res: Response): Promise<void> {
   throw new Error(await parseControlPlaneErrorResponse(res));
 }
 
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Not authenticated.");
-  return fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers ?? {}),
-    },
-  });
-}
-
-const StepUpResponseSchema = z.object({
-  step_up_token: z.string().min(1),
-  token_type: z.literal("StepUp"),
-  expires_in: z.number().int().positive(),
-});
-export type StepUpGrant = { token: string; expiresAtMs: number };
-
-/**
- * Re-verify the signed-in operator's password and obtain a short-lived step-up token
- * (POST /api/v1/auth/step-up). Required by every privileged action (X-Step-Up-Token).
- */
-export async function requestStepUpToken(password: string): Promise<StepUpGrant> {
-  const res = await authFetch("/api/v1/auth/step-up", {
-    method: "POST",
-    body: JSON.stringify({ password }),
-  });
-  await throwIfNotOk(res);
-  const parsed = StepUpResponseSchema.parse(await res.json());
-  return { token: parsed.step_up_token, expiresAtMs: Date.now() + parsed.expires_in * 1000 };
-}
+/** Minimum X-Operator-Reason length; the API enforces the same (api/src/app/config.ts). */
+export const PRIVILEGED_REASON_MIN_LENGTH = 4;
 
 /** Headers for routes guarded server-side by requirePrivilegedAction (reason + step-up). */
 export function privilegedHeaders(input: PrivilegedActionContext): Record<string, string> {
@@ -397,9 +360,15 @@ export async function updateTenant(
   return TenantSchema.parse(await res.json());
 }
 
-export async function deleteTenant(tenantId: string): Promise<void> {
+/** Irreversible purge: the API needs the slug retyped, a reason and a `tenant_delete` step-up. */
+export async function deleteTenant(
+  tenantId: string,
+  input: { confirm_slug: string } & PrivilegedActionContext,
+): Promise<void> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
     method: "DELETE",
+    headers: privilegedHeaders(input),
+    body: JSON.stringify({ confirm_slug: input.confirm_slug }),
   });
   await throwIfNotOk(res);
 }

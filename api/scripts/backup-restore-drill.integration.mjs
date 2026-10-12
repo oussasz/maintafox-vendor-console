@@ -39,6 +39,7 @@ import pg from "pg";
 
 import { TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { loginAccessToken } from "./lib/vendor-session.mjs";
 
 const API_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BACKUP_SCRIPTS = resolve(API_DIR, "../deploy/backup");
@@ -239,13 +240,7 @@ async function startApi(cluster, port) {
 
 async function seedThroughApi(port) {
   const base = `http://127.0.0.1:${port}`;
-  const login = await fetch(`${base}/api/v1/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
-  });
-  assert.equal(login.status, 200);
-  const { access_token } = await login.json();
+  const access_token = await loginAccessToken(base, ADMIN_EMAIL, ADMIN_PASSWORD);
   const admin = { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" };
   for (const slug of ["drill-alpha", "drill-beta"]) {
     const t = await fetch(`${base}/api/v1/tenants`, { method: "POST", headers: admin, body: JSON.stringify({ slug, display_name: `Drill ${slug}` }) });

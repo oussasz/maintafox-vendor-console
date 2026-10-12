@@ -46,13 +46,6 @@
       "opsHealth": "Platform health & alerts",
       "opsSync": "Sync diagnostics",
       "opsRollouts": "Rollout control"
-    },
-    "stepUpLab": {
-      "title": "Step-up (operator lab)",
-      "body": "Privileged actions require a server-issued step-up: you re-enter your password and the control API grants a 5-minute window. Open one here before a batch of actions.",
-      "trigger": "Trigger step-up",
-      "fresh": "Step-up window active",
-      "stale": "No active step-up window"
     }
   },
   "section": {
@@ -118,7 +111,9 @@
       "channelMismatch": "License channel and rollout channel differ — resolve before apply.",
       "dryRun": "Dry run (no mutations)",
       "buildPreview": "Build request payload"
-    }
+    },
+    "deleteTypeSlug": "Type the customer slug \"{{slug}}\" to confirm",
+    "deleteReason": "Reason (kept in the audit log)"
   },
   "editions": {
     "core": "Core",
@@ -437,15 +432,56 @@
   },
   "stepUp": {
     "title": "Confirm sensitive action",
-    "description": "Step-up required for: {{action}}. Re-enter your password; the server verifies it and issues a 5-minute confirmation.",
+    "description": "A fresh code from your authenticator app is required to {{action}}. The server then allows this kind of action for 5 minutes.",
     "cancel": "Cancel",
     "confirm": "Confirm",
-    "passwordLabel": "Your password",
     "verifying": "Verifying…",
-    "errorInvalidPassword": "Incorrect password.",
     "errorRateLimited": "Too many attempts. Wait a few minutes and try again.",
     "errorGeneric": "Could not verify: {{message}}",
     "notAvailable": "Not available yet: this action has no server endpoint (planned in the vendor console completion phase).",
-    "cancelled": "Action cancelled: confirmation was not completed."
+    "cancelled": "Action cancelled: confirmation was not completed.",
+    "codeLabel": "6-digit code from your authenticator app",
+    "errorInvalidCode": "Code refused. Check the phone's time, or wait for the next code (a code works only once).",
+    "kinds": {
+      "mass_machine_revoke": "revoke several machines",
+      "entitlement_suspension": "revoke a licence or suspend a customer",
+      "forced_rollback": "roll back an update policy or recall a rollout",
+      "tenant_restore": "lift a customer suspension",
+      "signing_key_rotation": "rotate the licence signing key",
+      "rollout_publish": "set an update policy, pause or resume a rollout",
+      "machine_trust_change": "revoke, reinstate, release or rebind a machine",
+      "offline_policy_change": "change an offline policy",
+      "support_intervention": "record a support intervention",
+      "sync_repair": "replay or repair a device's synchronisation",
+      "vendor_user_admin": "change a console operator or reset their two-step verification",
+      "tenant_delete": "delete a customer and all its data",
+      "own_mfa_change": "generate new recovery codes"
+    }
+  },
+  "account": {
+    "menuAria": "Account",
+    "sessionUntil": "Session open until {{at}}",
+    "recoveryRemaining_one": "{{count}} recovery code left",
+    "recoveryRemaining_other": "{{count}} recovery codes left",
+    "logout": "Log out",
+    "cancel": "Cancel",
+    "logoutAll": {
+      "menu": "Log out everywhere",
+      "title": "Log out of every browser?",
+      "body": "Every session of your account ends now, on every computer (use it after losing a laptop or if you suspect someone used your account). You will sign in again with your password and a code.",
+      "confirm": "Log out everywhere"
+    },
+    "regenerate": {
+      "menu": "New recovery codes",
+      "title": "Generate new recovery codes",
+      "body": "Your current recovery codes stop working. You will see 10 new ones once: save them away from your phone.",
+      "reasonLabel": "Reason (kept in the audit log)",
+      "confirm": "Generate"
+    },
+    "codes": {
+      "title": "Your new recovery codes",
+      "body": "Each code works once, if you lose your authenticator app. They are shown only now: print them or save them somewhere safe.",
+      "done": "I have saved them"
+    }
   }
 }

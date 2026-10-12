@@ -6,12 +6,12 @@ Standalone React (Vite) app for **business and license management** on your VPS.
 
 ```bash
 pnpm install
-# Optional: work without a real API
-# echo VITE_DEV_MOCK_AUTH=true > .env.local
 pnpm dev
 ```
 
-Open http://localhost:5174 — with mock auth, use the **Continue** link on the login screen.
+Open http://localhost:5174 with a control API running (`VITE_ADMIN_API_BASE_URL`, `CORS_ORIGIN` listing
+`http://localhost:5174`). Sign-in is password + an authenticator-app code (enrolled at first sign-in):
+`deploy/VENDOR_AUTH.md`.
 
 ## Build
 
@@ -58,8 +58,7 @@ TLS: use Certbot on the host or a reverse proxy in front of port 80; see `deploy
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_ADMIN_API_BASE_URL` | Base URL of your admin API (e.g. `https://api.maintafox.systems`). The UI calls `GET /api/v1/me/permissions` with `Authorization: Bearer <token>`. Adjust `src/services/admin-permissions.ts` if your routes differ. |
-| `VITE_DEV_MOCK_AUTH` | Set to `true` for local UI-only work (full vendor permission set, no token). |
+| `VITE_ADMIN_API_BASE_URL` | Base URL of the control API (e.g. `https://api.maintafox.systems`). It must be on the same site as the console: the session refresh cookie is SameSite=Strict (`deploy/VENDOR_AUTH.md`). |
 | `VITE_BASE_PATH` | Vite `base` option if not served at domain root (default `/`). |
 
 ## Deployment: console.maintafox.systems

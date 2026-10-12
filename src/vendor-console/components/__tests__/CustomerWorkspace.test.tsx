@@ -26,7 +26,13 @@ vi.mock("@/services/license-control-service", () => ({
   updateCohortUpdatePolicy: vi.fn(),
   rollbackCohortUpdatePolicy: vi.fn(),
   isDuplicateTenantSlugMessage: vi.fn(() => false),
-  requestStepUpToken: vi.fn(async () => ({ token: "stepup-test-token", expiresAtMs: Date.now() + 300_000 })),
+  PRIVILEGED_REASON_MIN_LENGTH: 4,
+}));
+
+vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/vendor-auth-service")>()),
+  // The API checks the TOTP code; here the dialog only has to hand back a kind-bound token.
+  requestStepUp: vi.fn(async (actionKind: string) => ({ token: "stepup-test-token", actionKind, expiresAtMs: Date.now() + 300_000 })),
 }));
 
 import {

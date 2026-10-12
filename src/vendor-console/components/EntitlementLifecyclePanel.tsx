@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { StepUpKinds } from "@/lib/step-up-kinds";
 import { useVendorConsole } from "../VendorConsoleContext";
 import {
   issueLicense,
@@ -830,7 +831,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                   const reason = revokeReason.trim() || "Revoked by operator from list";
                   await revokeLicense(target.id, reason, {
                     reason_code: reason,
-                    step_up_token: await requireStepUp("license revoke"),
+                    step_up_token: await requireStepUp(StepUpKinds.entitlementSuspension),
                   });
                   await loadLicenses(target.tenant_id, target.id);
                   setMutationSuccess(`Key ${target.id} was revoked.`);
@@ -1138,7 +1139,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                       const reason = revokeReason.trim() || "Revoked by operator";
                       await revokeLicense(selectedLicense.id, reason, {
                         reason_code: reason,
-                        step_up_token: await requireStepUp("license revoke"),
+                        step_up_token: await requireStepUp(StepUpKinds.entitlementSuspension),
                       });
                       await loadLicenses(selectedLicense.tenant_id, selectedLicense.id);
                       setMutationSuccess(`Key ${selectedLicense.id} was revoked.`);

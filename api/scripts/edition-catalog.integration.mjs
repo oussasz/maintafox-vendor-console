@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
+import { loginAccessToken } from "./lib/vendor-session.mjs";
 
 const port = 33141;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -92,13 +93,7 @@ async function run() {
   try {
     await waitForHealth();
 
-    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@maintafox.systems", password: "AdminPassw0rd!" }),
-    });
-    assert.equal(loginRes.status, 200);
-    const { access_token: token } = await loginRes.json();
+    const token = await loginAccessToken(baseUrl, "admin@maintafox.systems", "AdminPassw0rd!");
     const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
     const listRes = await fetch(`${baseUrl}/api/v1/editions`, { headers: auth });

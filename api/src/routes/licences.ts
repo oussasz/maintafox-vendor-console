@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { ApiContext } from "../app/context.js";
 import { parsePagination, resolveActorId, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey, structuredLog } from "../app/runtime.js";
+import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 const UpdateLicenseBody = z
   .object({
@@ -194,6 +195,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const guard = await requirePrivilegedAction(req, {
         action_code: "license_revoke",
+        step_up_kind: StepUpKinds.entitlementSuspension,
         action_category: "entitlement",
         entity_refs: { entitlement_id: req.params.licenseId },
         payload: { reason: parsed.data.reason ?? "revoked by operator" },
@@ -237,6 +239,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const guard = await requirePrivilegedAction(req, {
         action_code: "machine_revoke",
+        step_up_kind: StepUpKinds.machineTrustChange,
         action_category: "entitlement",
         scope_tenant_id: tenantId,
         entity_refs: { tenant_id: tenantId, machine_id: machineFingerprint },
@@ -276,6 +279,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const guard = await requirePrivilegedAction(req, {
         action_code: "machine_reinstate",
+        step_up_kind: StepUpKinds.machineTrustChange,
         action_category: "entitlement",
         scope_tenant_id: tenantId,
         entity_refs: { tenant_id: tenantId, machine_id: machineFingerprint },

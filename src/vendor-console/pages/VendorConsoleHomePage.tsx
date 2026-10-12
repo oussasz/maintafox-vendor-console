@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
 
 import { VendorConsoleOpsHubCard } from "../components/VendorConsoleOpsHubCard";
-import { isStepUpFresh, useVendorConsole } from "../VendorConsoleContext";
+import { useVendorConsole } from "../VendorConsoleContext";
 
 export function VendorConsoleHomePage() {
   const { t } = useTranslation("vendorConsole");
   const { can } = usePermissions();
-  const { tenantSearch, requireStepUp, stepUpValidUntilMs } = useVendorConsole();
+  const { tenantSearch } = useVendorConsole();
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -92,25 +92,6 @@ export function VendorConsoleHomePage() {
         </article>
       </section>
 
-      <section className="rounded-lg border border-dashed border-surface-border bg-surface-1/50 p-4">
-        <h3 className="text-sm font-semibold">{t("home.stepUpLab.title", "Step-up (operator lab)")}</h3>
-        <p className="mt-1 text-xs text-text-secondary">
-          {t(
-            "home.stepUpLab.body",
-            "Dangerous actions require fresh step-up. Server endpoints must re-validate; this is UX only.",
-          )}
-        </p>
-        <div className="mt-3 flex items-center gap-3">
-          <Button type="button" size="sm" variant="secondary" onClick={() => void requireStepUp("operator step-up window").catch(() => undefined)}>
-            {t("home.stepUpLab.trigger", "Trigger step-up")}
-          </Button>
-          <span className="text-xs text-text-muted" aria-live="polite">
-            {isStepUpFresh(stepUpValidUntilMs)
-              ? t("home.stepUpLab.fresh", "Step-up window active")
-              : t("home.stepUpLab.stale", "No active step-up window")}
-          </span>
-        </div>
-      </section>
     </div>
   );
 }

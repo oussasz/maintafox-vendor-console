@@ -30,6 +30,7 @@ import { ensureStandardRunbooks } from "./app/runbooks.js";
 import { pruneOperatorScopeAccess, runAsSystem } from "./app/scope.js";
 import { createSeeder } from "./app/seed.js";
 import { createTenantStore } from "./app/tenant-store.js";
+import { createVendorAuth } from "./vendor-auth/service.js";
 import { openDatabase, type Database } from "./db/database.js";
 import { runMigrations } from "./db/migrate.js";
 import { ensureSystemEditionsPresent, repairAllEditionCapabilities, seedEditionCatalogIfEmpty } from "./edition-catalog-store.js";
@@ -145,13 +146,15 @@ app.use((req, res, next) => {
   next();
 });
 
+const vendorAuth = createVendorAuth(db, payloadCipher);
 const ctx: ApiContext = {
   db,
   syncConfig,
   syncEntityRegistry,
   payloadCipher,
+  vendorAuth,
   ...audit,
-  ...createGuards(db, audit),
+  ...createGuards(db, audit, vendorAuth),
   ...createTenantStore(db),
 };
 registerOpsRoutes(app, ctx);

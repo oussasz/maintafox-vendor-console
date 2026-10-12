@@ -8,6 +8,7 @@ import type { ApiContext } from "../app/context.js";
 import { resolveActorId, sendValidationError } from "../app/http.js";
 import { CohortForceUpdateModeSchema, ForceUpdateModeSchema } from "../app/schemas.js";
 import { newId, type ForceUpdateMode } from "../app/runtime.js";
+import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 const UpdatePolicyBody = z
   .object({
@@ -72,6 +73,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       }
       const guard = await requirePrivilegedAction(req, {
         action_code: "tenant_update_policy_set",
+        step_up_kind: StepUpKinds.rolloutPublish,
         action_category: "rollout_intervention",
         scope_tenant_id: current.tenant_id,
         entity_refs: { tenant_id: current.tenant_id },
@@ -151,6 +153,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       }
       const guard = await requirePrivilegedAction(req, {
         action_code: "tenant_update_policy_rollback",
+        step_up_kind: StepUpKinds.forcedRollback,
         action_category: "rollout_intervention",
         scope_tenant_id: current.tenant_id,
         entity_refs: { tenant_id: current.tenant_id },
@@ -235,6 +238,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         | undefined;
       const guard = await requirePrivilegedAction(req, {
         action_code: "cohort_update_policy_set",
+        step_up_kind: StepUpKinds.rolloutPublish,
         action_category: "rollout_intervention",
         entity_refs: { release_id: `${channel}:${cohort}` },
         payload: {
@@ -310,6 +314,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       }
       const guard = await requirePrivilegedAction(req, {
         action_code: "cohort_update_policy_rollback",
+        step_up_kind: StepUpKinds.forcedRollback,
         action_category: "rollout_intervention",
         entity_refs: { release_id: `${channel}:${cohort}` },
         payload: { rollback_to_previous: true },

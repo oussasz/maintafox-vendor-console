@@ -7,9 +7,9 @@ import { once } from "node:events";
 
 import pg from "pg";
 
-import { obtainStepUpToken } from "./step-up.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./test-signing-key.mjs";
+import { loginOperator } from "./vendor-session.mjs";
 
 export const TEST_ADMIN_EMAIL = "admin@maintafox.systems";
 export const TEST_ADMIN_PASSWORD = "AdminPassw0rd!";
@@ -19,22 +19,22 @@ export async function startControlApi({ port, extraEnv = {} }) {
   const databaseUrl = await testPg.createDatabase();
   const baseUrl = `http://127.0.0.1:${port}`;
   let output = "";
+  const env = {
+    PORT: String(port),
+    DATABASE_URL: databaseUrl,
+    ...TEST_SYNC_ENV,
+    JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
+    SEED_ADMIN_PASSWORD: TEST_ADMIN_PASSWORD,
+    SEED_ADMIN_EMAIL: TEST_ADMIN_EMAIL,
+    ...TEST_ENTITLEMENT_SIGNING_ENV,
+    SEED_BEHAVIOR: "safe",
+    NODE_ENV: "production",
+    CORS_ORIGIN: "http://localhost:5174",
+    ...extraEnv,
+  };
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: String(port),
-      DATABASE_URL: databaseUrl,
-      ...TEST_SYNC_ENV,
-      JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
-      SEED_ADMIN_PASSWORD: TEST_ADMIN_PASSWORD,
-      SEED_ADMIN_EMAIL: TEST_ADMIN_EMAIL,
-      ...TEST_ENTITLEMENT_SIGNING_ENV,
-      SEED_BEHAVIOR: "safe",
-      NODE_ENV: "production",
-      CORS_ORIGIN: "http://localhost:5174",
-      ...extraEnv,
-    },
+    env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.stdout.on("data", (b) => (output += String(b)));
@@ -78,17 +78,28 @@ export async function startControlApi({ port, extraEnv = {} }) {
     return { status: res.status, json, text };
   }
 
+  /** Sessions by access token, so `stepUpToken(adminToken, kind)` uses that session's authenticator. */
+  const sessions = new Map();
+
   return {
     baseUrl,
+    /** The API's environment (tools run against the same database, e.g. dist/tools/*.js). */
+    env,
     call,
     output: () => output,
     stop,
+    /** Signs the seeded operator in (password + TOTP, enrolling on first use); returns the access token. */
     async adminToken() {
-      const r = await call("POST", "/api/v1/auth/login", null, { email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
-      if (r.status !== 200) throw new Error(`login failed: ${r.text}`);
-      return r.json.access_token;
+      const session = await loginOperator(baseUrl, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD);
+      sessions.set(session.accessToken, session);
+      return session.accessToken;
     },
-    stepUpToken: (adminToken) => obtainStepUpToken(baseUrl, adminToken, TEST_ADMIN_PASSWORD),
+    /** A step-up token of `actionKind` (shared/step-up-actions.v1.json) for the session of `adminToken`. */
+    stepUpToken(adminToken, actionKind) {
+      const session = sessions.get(adminToken);
+      if (!session) throw new Error("stepUpToken: unknown access token (use adminToken() first)");
+      return session.stepUp(actionKind);
+    },
     /** Claims a device on the licence key; returns its activation token. */
     async claimDevice(licenseKey, fingerprint) {
       const r = await call("POST", "/api/v1/activation/claim", null, {

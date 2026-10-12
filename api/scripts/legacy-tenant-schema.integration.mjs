@@ -22,7 +22,7 @@ import Database from "better-sqlite3";
 import pg from "pg";
 
 import { auditRecordPreimage } from "../dist/audit-chain.js";
-import { obtainStepUpToken } from "./lib/step-up.mjs";
+import { loginOperator } from "./lib/vendor-session.mjs";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
 
@@ -282,13 +282,9 @@ async function run() {
     await waitForHealth();
 
     // Imported admin, e-mail matched case-insensitively (SQLite COLLATE NOCASE behaviour).
-    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: ADMIN_EMAIL.toUpperCase(), password: ADMIN_PASSWORD }),
-    });
-    assert.equal(loginRes.status, 200, "imported admin must log in");
-    const { access_token: token } = await loginRes.json();
+    // (enrols TOTP on first login, like every operator after Phase 4.1)
+    const session = await loginOperator(baseUrl, ADMIN_EMAIL.toUpperCase(), ADMIN_PASSWORD);
+    const token = session.accessToken;
     const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
     assert.equal((await sql(databaseUrl, "SELECT COUNT(*)::int AS c FROM users"))[0].c, 1, "no second admin is seeded");
 
@@ -303,8 +299,9 @@ async function run() {
     assert.equal(dup.status, 409, "duplicate slug must return 409");
     assert.equal((await dup.json()).error, "tenant_conflict");
 
-    // The imported chain continues: a privileged action appends record 4 and the chain verifies.
-    const stepUp = await obtainStepUpToken(baseUrl, token, ADMIN_PASSWORD);
+    // The imported chain (3 records) continues: sign-in events (Phase 4.1) and a privileged action
+    // are appended after it, and the whole chain verifies.
+    const stepUp = await session.stepUp("offline_policy_change");
     const policy = await fetch(`${baseUrl}/api/v1/tenants/tenant_legacy_1/offline-policy`, {
       method: "PUT",
       headers: { ...auth, "X-Operator-Reason": "IMPORT-CHECK", "X-Step-Up-Token": stepUp },
@@ -312,7 +309,10 @@ async function run() {
     });
     assert.equal(policy.status, 200);
     const chain = await (await fetch(`${baseUrl}/api/v1/audit/ledger/verify-chain`, { headers: auth })).json();
-    assert.deepEqual(chain, { status: "ok", checked_count: 4 });
+    const rows = await sql(databaseUrl, "SELECT sequence, action_code FROM audit_records ORDER BY sequence");
+    assert.deepEqual(chain, { status: "ok", checked_count: rows.length });
+    assert.ok(rows.length > 4, "records were appended after the 3 imported ones");
+    assert.equal(rows.at(-1).action_code, "offline_policy_update", "the privileged action is the last record");
 
     console.log("legacy SQLite import + API on Postgres: all checks passed");
   } catch (err) {

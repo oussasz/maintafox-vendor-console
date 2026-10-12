@@ -17,6 +17,7 @@ import { deviceRateLimiter, parsePagination, resolveActorId, sendValidationError
 import { getMediaStore } from "../app/media.js";
 import { newId, structuredLog } from "../app/runtime.js";
 import { AUDIT_RECORD_COLUMNS, verifyAuditChain, type AuditRecordRow } from "../audit-chain.js";
+import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 /** Largest diagnostic bundle accepted (the desktop bundle is ~0.1 MB: 500 sanitized log lines). */
 export const DIAGNOSTIC_BUNDLE_MAX_BYTES = 5 * 1024 * 1024;
@@ -281,6 +282,7 @@ export function registerSupportRoutes(app: express.Express, ctx: ApiContext): vo
       const nextState = parsed.data.next_state ?? ticket.state;
       const guard = await requirePrivilegedAction(req, {
         action_code: parsed.data.action_code,
+        step_up_kind: StepUpKinds.supportIntervention,
         action_category: "support_intervention",
         scope_tenant_id: ticket.tenant_id,
         entity_refs: { tenant_id: ticket.tenant_id, support_ticket_id: ticketId },

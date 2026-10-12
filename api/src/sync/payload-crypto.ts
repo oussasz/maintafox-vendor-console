@@ -11,7 +11,7 @@
  * by the device over the plaintext and is stored and checked as before; delivery opens the value,
  * so the device receives the same bytes it would have received without encryption.
  */
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 
 const PREFIX = "mfxenc:v1:";
 const KEY_BYTES = 32;
@@ -32,6 +32,18 @@ export class PayloadCipher {
   constructor(private readonly key: Buffer) {
     if (key.length !== KEY_BYTES) throw new Error(`payload encryption key must be ${KEY_BYTES} bytes`);
     this.keyId = createHash("sha256").update(key).digest("hex").slice(0, 16);
+  }
+
+  /**
+   * A cipher for another kind of data, with its own subkey: HKDF-SHA256 of this key with `info` as
+   * the context label. Values sealed by one never open with the other, and neither key reveals the
+   * other. Used with `info` "maintafox/vendor-totp/v1" for operator TOTP secrets
+   * (vendor-auth/service.ts): rotating SYNC_PAYLOAD_ENCRYPTION_KEY therefore also requires
+   * re-sealing those secrets (or resetting the operators' second factor, deploy/VENDOR_AUTH.md).
+   */
+  derive(info: string): PayloadCipher {
+    if (!info) throw new Error("a derived cipher needs a context label");
+    return new PayloadCipher(Buffer.from(hkdfSync("sha256", this.key, Buffer.alloc(0), info, KEY_BYTES)));
   }
 
   static isSealed(value: string): boolean {

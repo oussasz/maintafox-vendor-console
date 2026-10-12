@@ -49,6 +49,8 @@ COPY --from=build /app/api/dist ./dist
 COPY api/migrations ./migrations
 # Sync entity registry (protocol v2), resolved from dist/sync as ../../../shared.
 COPY shared/sync-entity-registry.v2.json /app/shared/sync-entity-registry.v2.json
+# Step-up action kinds (Phase 4.1), resolved from dist/vendor-auth as ../../../shared.
+COPY shared/step-up-actions.v1.json /app/shared/step-up-actions.v1.json
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health || exit 1

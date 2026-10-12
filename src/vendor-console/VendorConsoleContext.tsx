@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-import type { StepUpGrant } from "@/services/license-control-service";
+import type { StepUpActionKind } from "@/lib/step-up-kinds";
+import type { StepUpGrant } from "@/services/vendor-auth-service";
 
 /** Rejection reason when the operator closes the step-up dialog without confirming. */
 export class StepUpCancelledError extends Error {
@@ -25,97 +26,93 @@ export interface VendorConsoleContextValue {
   /** Tenant or machine id filter shown in shell (operational context). */
   tenantSearch: string;
   setTenantSearch: (q: string) => void;
-  /** Epoch ms until the server-issued step-up token expires (null when none is held). */
-  stepUpValidUntilMs: number | null;
-  clearStepUp: () => void;
   /**
-   * Resolve a server-issued step-up token for a privileged action. Reuses a fresh token,
-   * otherwise opens the password dialog. Rejects with StepUpCancelledError when dismissed.
+   * Resolve a server-issued step-up token for one privileged action kind. Reuses a fresh token of
+   * that kind, otherwise asks for an authenticator code (the dialog names the kind). Rejects with
+   * StepUpCancelledError when dismissed. A token is accepted by the API only on routes of its kind.
    */
-  requireStepUp: (actionLabel: string) => Promise<string>;
+  requireStepUp: (actionKind: StepUpActionKind) => Promise<string>;
   /** Integration / queue degraded banner driven by telemetry health. */
   integrationDegraded: boolean;
   setIntegrationDegraded: (v: boolean) => void;
   /** Dialog wiring (VendorConsoleShell). */
   stepUpOpen: boolean;
-  stepUpActionLabel: string;
+  stepUpActionKind: StepUpActionKind | null;
   completeStepUp: (grant: StepUpGrant) => void;
   cancelStepUp: () => void;
 }
 
 const VendorConsoleContext = createContext<VendorConsoleContextValue | null>(null);
 
-type PendingStepUp = { resolve: (token: string) => void; reject: (err: Error) => void };
+type PendingStepUp = {
+  actionKind: StepUpActionKind;
+  resolve: (token: string) => void;
+  reject: (err: Error) => void;
+};
 
 export function VendorConsoleProvider({ children }: { children: ReactNode }) {
   const [tenantSearch, setTenantSearch] = useState("");
-  const [grant, setGrant] = useState<StepUpGrant | null>(null);
   const [integrationDegraded, setIntegrationDegraded] = useState(false);
-  const [stepUpOpen, setStepUpOpen] = useState(false);
-  const [stepUpActionLabel, setStepUpActionLabel] = useState("");
+  const [prompt, setPrompt] = useState<StepUpActionKind | null>(null);
   const pendingRef = useRef<PendingStepUp[]>([]);
-  const grantRef = useRef<StepUpGrant | null>(null);
+  const grantsRef = useRef(new Map<StepUpActionKind, StepUpGrant>());
 
-  const clearStepUp = useCallback(() => {
-    grantRef.current = null;
-    setGrant(null);
+  /** Shows the dialog for the oldest waiting request (one kind at a time). */
+  const promptNext = useCallback(() => {
+    const next = pendingRef.current[0];
+    setPrompt(next ? next.actionKind : null);
   }, []);
 
-  const requireStepUp = useCallback((actionLabel: string) => {
-    const current = grantRef.current;
-    if (current && current.expiresAtMs - Date.now() > STEP_UP_REUSE_MARGIN_MS) {
-      return Promise.resolve(current.token);
-    }
-    return new Promise<string>((resolve, reject) => {
-      pendingRef.current.push({ resolve, reject });
-      setStepUpActionLabel(actionLabel);
-      setStepUpOpen(true);
-    });
-  }, []);
+  const requireStepUp = useCallback(
+    (actionKind: StepUpActionKind) => {
+      const current = grantsRef.current.get(actionKind);
+      if (current && current.expiresAtMs - Date.now() > STEP_UP_REUSE_MARGIN_MS) {
+        return Promise.resolve(current.token);
+      }
+      return new Promise<string>((resolve, reject) => {
+        pendingRef.current.push({ actionKind, resolve, reject });
+        if (pendingRef.current.length === 1) promptNext();
+      });
+    },
+    [promptNext],
+  );
 
-  const completeStepUp = useCallback((next: StepUpGrant) => {
-    grantRef.current = next;
-    setGrant(next);
-    setStepUpOpen(false);
-    const waiting = pendingRef.current;
-    pendingRef.current = [];
-    waiting.forEach((p) => p.resolve(next.token));
-  }, []);
+  const completeStepUp = useCallback(
+    (grant: StepUpGrant) => {
+      grantsRef.current.set(grant.actionKind, grant);
+      const served = pendingRef.current.filter((p) => p.actionKind === grant.actionKind);
+      pendingRef.current = pendingRef.current.filter((p) => p.actionKind !== grant.actionKind);
+      served.forEach((p) => p.resolve(grant.token));
+      promptNext();
+    },
+    [promptNext],
+  );
 
   const cancelStepUp = useCallback(() => {
-    setStepUpOpen(false);
-    const waiting = pendingRef.current;
-    pendingRef.current = [];
-    waiting.forEach((p) => p.reject(new StepUpCancelledError()));
-  }, []);
-
-  const stepUpValidUntilMs = grant?.expiresAtMs ?? null;
+    const head = pendingRef.current[0];
+    if (!head) {
+      setPrompt(null);
+      return;
+    }
+    const cancelled = pendingRef.current.filter((p) => p.actionKind === head.actionKind);
+    pendingRef.current = pendingRef.current.filter((p) => p.actionKind !== head.actionKind);
+    cancelled.forEach((p) => p.reject(new StepUpCancelledError()));
+    promptNext();
+  }, [promptNext]);
 
   const value = useMemo(
     () => ({
       tenantSearch,
       setTenantSearch,
-      stepUpValidUntilMs,
-      clearStepUp,
       requireStepUp,
       integrationDegraded,
       setIntegrationDegraded,
-      stepUpOpen,
-      stepUpActionLabel,
+      stepUpOpen: prompt !== null,
+      stepUpActionKind: prompt,
       completeStepUp,
       cancelStepUp,
     }),
-    [
-      tenantSearch,
-      stepUpValidUntilMs,
-      clearStepUp,
-      requireStepUp,
-      integrationDegraded,
-      stepUpOpen,
-      stepUpActionLabel,
-      completeStepUp,
-      cancelStepUp,
-    ],
+    [tenantSearch, requireStepUp, integrationDegraded, prompt, completeStepUp, cancelStepUp],
   );
 
   return <VendorConsoleContext.Provider value={value}>{children}</VendorConsoleContext.Provider>;
@@ -127,8 +124,4 @@ export function useVendorConsole(): VendorConsoleContextValue {
     throw new Error("useVendorConsole must be used within VendorConsoleProvider");
   }
   return ctx;
-}
-
-export function isStepUpFresh(stepUpValidUntilMs: number | null): boolean {
-  return typeof stepUpValidUntilMs === "number" && stepUpValidUntilMs > Date.now();
 }
