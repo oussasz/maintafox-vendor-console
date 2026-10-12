@@ -17,6 +17,10 @@
 #    encrypted) + start-wal (the name of the first WAL file it needs: retention reads it without
 #    the private key). Together with the continuous WAL archive ($MFX_WAL_ARCHIVE_DIR, written by
 #    Postgres through wal-archive.sh) this allows point-in-time recovery between nightly runs.
+# 4b. Media: every object of the tenant media bucket is copied to $BACKUP_DIR/media/current/
+#    (*.age when encrypted); objects deleted or overwritten in the bucket since the last run keep
+#    their copy in media/removed/<ts>/ for MEDIA_BACKUP_REMOVED_RETENTION_DAYS days
+#    (api/src/tools/media-backup.ts; the object store has no versioning, this replaces it).
 # 5. Local retention: dumps and base backups older than BACKUP_LOCAL_RETENTION_DAYS (by the time
 #    in their name) are deleted (the newest base backup is always kept), then WAL older than the
 #    oldest kept base backup.
@@ -32,8 +36,9 @@ here=$(dirname "$0")
 . "$here/lib.sh"
 
 require_env BACKUP_DIR BACKUP_WORK_DIR BACKUP_FILES_OWNER MFX_WAL_ARCHIVE_DIR MFX_API_DIR \
-  BACKUP_LOCAL_RETENTION_DAYS BACKUP_OFFSITE_MODE PGHOST PGUSER PGDATABASE
+  BACKUP_LOCAL_RETENTION_DAYS BACKUP_OFFSITE_MODE PGHOST PGUSER PGDATABASE MEDIA_BACKUP_REMOVED_RETENTION_DAYS
 require_positive_int BACKUP_LOCAL_RETENTION_DAYS "$BACKUP_LOCAL_RETENTION_DAYS"
+require_positive_int MEDIA_BACKUP_REMOVED_RETENTION_DAYS "$MEDIA_BACKUP_REMOVED_RETENTION_DAYS"
 printf '%s' "$BACKUP_FILES_OWNER" | grep -Eq '^[0-9]+:[0-9]+$' \
   || die "BACKUP_FILES_OWNER must be uid:gid (numbers), got '$BACKUP_FILES_OWNER'"
 case "$BACKUP_OFFSITE_MODE" in
@@ -177,13 +182,21 @@ for f in "$work/base"/*; do
   store "$f" "$base_dir/$ts.partial/$(basename "$f")"
 done
 mv "$base_dir/$ts.partial" "$base_dir/$ts"
+
+step=media
+log "media copy: tenant media bucket -> $BACKUP_DIR/media"
+media_json=$(node "$MFX_API_DIR/dist/tools/media-backup.js" backup --run-ts "$ts")
+media_field() {
+  printf '%s' "$media_json" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"
+}
+media_summary="Media: $(media_field objects) objects ($(media_field bytes) bytes) in the bucket, $(media_field copied) newly copied into the backups; $(media_field removed) deleted and $(media_field superseded) overwritten objects kept $MEDIA_BACKUP_REMOVED_RETENTION_DAYS days."
 status=succeeded
 if [ "$encrypt" = yes ]; then
   at_rest="encrypted at rest (age)"
 else
   at_rest="NOT ENCRYPTED at rest (BACKUP_LOCAL_ENCRYPTION=disabled)"
 fi
-summary="${summary:+$summary }Dump $dump_name ($dump_bytes bytes, sha256 $dump_sha) restored into a scratch database and verified ($verified_tables tables) before it was stored; base backup $ts; $at_rest."
+summary="${summary:+$summary }Dump $dump_name ($dump_bytes bytes, sha256 $dump_sha) restored into a scratch database and verified ($verified_tables tables) before it was stored; base backup $ts; $at_rest. $media_summary"
 
 step=local_retention
 cutoff=$(ts_number "$(date -u -d "@$(($(date -u +%s) - BACKUP_LOCAL_RETENTION_DAYS * 86400))" +%Y%m%dT%H%M%SZ)")
@@ -222,7 +235,7 @@ if [ "$encrypt" = yes ]; then
   previous="$work/previous-sums"
   if [ -f "$manifest" ]; then cp "$manifest" "$previous"; else : > "$previous"; fi
   {
-    (cd "$BACKUP_DIR" && find pg_dump base -type f -name '*.age' | sed 's|^|backups/|')
+    (cd "$BACKUP_DIR" && find pg_dump base media -type f -name '*.age' | sed 's|^|backups/|')
     (cd "$MFX_WAL_ARCHIVE_DIR" && find . -maxdepth 1 -type f -name '*.age' | sed 's|^\./|wal/|')
   } | sort > "$work/files"
   # FILENAME, not NR == FNR: the previous manifest is empty on the first run.

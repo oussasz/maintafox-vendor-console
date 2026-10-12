@@ -3,3 +3,5 @@ dist
 .env
 .env.local
 *.log
+# Reports of the MinIO -> Garage migration (deploy/OBJECT_STORAGE.md §4), written on the server
+object-store-migration/

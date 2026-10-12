@@ -83,8 +83,13 @@ jobs:
       - run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
 
   backup-drill:
-    name: Backup and restore drill (real PostgreSQL 16 programs)
+    name: Backup and restore drill (real PostgreSQL 16 programs, media copy from Garage)
     runs-on: ubuntu-24.04
+    env:
+      TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      TEST_S3_REGION: garage
+      TEST_S3_ACCESS_KEY: GKci0000drill0000key
+      TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -97,20 +102,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-16 postgresql-client-16 age
           echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - name: Start the object store (Garage image pinned in docker-compose.yml)
+        run: sh deploy/object-storage/ci-start-garage.sh
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:backup-drill
       - run: pnpm --filter maintafox-control-api run test:backup-keygen
 
   backup-offsite:
-    name: Object storage (off-site backup copy, diagnostic bundle upload)
+    name: Object storage on Garage (media upload/download, support bundles, off-site copy, migration tool)
     runs-on: ubuntu-24.04
     env:
-      OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:9090
-      OFFSITE_TEST_S3_ACCESS_KEY: ci-minio-user
-      OFFSITE_TEST_S3_SECRET_KEY: ci-minio-password-not-secret
-      TEST_S3_ENDPOINT: http://127.0.0.1:9090
-      TEST_S3_ACCESS_KEY: ci-minio-user
-      TEST_S3_SECRET_KEY: ci-minio-password-not-secret
+      TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      TEST_S3_REGION: garage
+      TEST_S3_ACCESS_KEY: GKci0000store0000key
+      TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
+      OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      OFFSITE_TEST_S3_REGION: garage
+      OFFSITE_TEST_S3_ACCESS_KEY: GKci0000store0000key
+      OFFSITE_TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -118,17 +127,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      # Any S3-compatible server proves the off-site copy (the real destination is a provider's
-      # bucket, not MinIO; MinIO images are no longer pullable, see deploy/CI.md).
-      - name: Start an S3-compatible server (Adobe S3Mock)
-        run: |
-          docker run -d --name s3 -p 9090:9090 adobe/s3mock:3.12.0
-          for i in $(seq 1 60); do curl -sf http://127.0.0.1:9090/ >/dev/null && exit 0; sleep 2; done
-          docker logs s3; exit 1
+      # The production object store: the image pinned in docker-compose.yml with the production
+      # garage.toml (deploy/object-storage/).
+      - name: Start the object store (Garage image pinned in docker-compose.yml)
+        run: sh deploy/object-storage/ci-start-garage.sh
       - run: sudo apt-get update && sudo apt-get install -y age
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter maintafox-control-api run test:backup-offsite
+      - run: pnpm --filter maintafox-control-api run test:media-presign
       - run: pnpm --filter maintafox-control-api run test:support-bundles
+      - run: pnpm --filter maintafox-control-api run test:backup-offsite
+      - run: pnpm --filter maintafox-control-api run test:object-store-migrate
+      - name: Object store log (on failure)
+        if: failure()
+        run: docker logs mfx-ci-garage
 
   docker-images:
     name: Docker images build (API + backup + postgres + backup pull)
@@ -148,11 +159,11 @@ jobs:
       - run: docker build -t maintafox-postgres:ci deploy/postgres
       - name: Postgres image can encrypt WAL (age) and is still PostgreSQL 16
         run: docker run --rm --entrypoint sh maintafox-postgres:ci -c 'age --version && postgres --version | grep -q "PostgreSQL) 16\."'
-      # minio/* is excluded on purpose and listed as a known issue in deploy/CI.md: MinIO stopped
-      # publishing images; every other image a fresh server needs must pull.
+      # Every image a fresh server needs must pull, with no exception (the object store is pinned by
+      # digest, so this also proves the digest still exists in the registry).
       - name: Images referenced by docker-compose.yml can be pulled (a fresh server must start)
         run: |
-          for img in $(grep -E '^ +image: ' docker-compose.yml | awk '{print $2}' | grep -v ':local$' | grep -v '^minio/' | sort -u); do
+          for img in $(grep -E '^ +image: ' docker-compose.yml | awk '{print $2}' | grep -v ':local$' | sort -u); do
             docker pull "$img"
           done
       - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_BASE_PATH=/ .

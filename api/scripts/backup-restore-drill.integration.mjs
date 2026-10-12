@@ -27,7 +27,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import pg from "pg";
 
 import { TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
@@ -161,10 +162,38 @@ function initCluster(root, port, walArchiveDir, serverEnv) {
   return new Cluster(dataDir, port, walArchiveDir, serverEnv);
 }
 
+/**
+ * The tenant media bucket the nightly backup copies (api/src/tools/media-backup.ts): a real
+ * S3-compatible server (CI: the Garage image pinned in docker-compose.yml), one bucket per run.
+ */
+function mediaBucketEnv() {
+  const env = {
+    S3_ENDPOINT: process.env.TEST_S3_ENDPOINT?.trim(),
+    S3_ACCESS_KEY: process.env.TEST_S3_ACCESS_KEY?.trim(),
+    S3_SECRET_KEY: process.env.TEST_S3_SECRET_KEY?.trim(),
+    S3_REGION: process.env.TEST_S3_REGION?.trim(),
+  };
+  if (Object.values(env).some((v) => !v)) {
+    throw new Error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION are required: the nightly backup copies the media bucket");
+  }
+  return { ...env, S3_BUCKET: `mfx-drill-${randomBytes(3).toString("hex")}`, S3_FORCE_PATH_STYLE: "true", DEPLOYMENT_ENV: "ci" };
+}
+const MEDIA = mediaBucketEnv();
+const mediaS3 = new S3Client({
+  region: MEDIA.S3_REGION,
+  endpoint: MEDIA.S3_ENDPOINT,
+  forcePathStyle: true,
+  credentials: { accessKeyId: MEDIA.S3_ACCESS_KEY, secretAccessKey: MEDIA.S3_SECRET_KEY },
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
+});
+
 function backupEnv(cluster, backupDir, workDir) {
   return {
     ...process.env,
     ...cluster.serverEnv,
+    ...MEDIA,
+    MEDIA_BACKUP_REMOVED_RETENTION_DAYS: "30",
     BACKUP_DIR: fwd(backupDir),
     BACKUP_WORK_DIR: fwd(workDir),
     BACKUP_FILES_OWNER: FILES_OWNER,
@@ -274,6 +303,15 @@ function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+async function putMedia(key, body) {
+  await mediaS3.send(new PutObjectCommand({ Bucket: MEDIA.S3_BUCKET, Key: key, Body: body, ContentLength: body.length }));
+}
+
+async function getMedia(key) {
+  const out = await mediaS3.send(new GetObjectCommand({ Bucket: MEDIA.S3_BUCKET, Key: key }));
+  return Buffer.from(await out.Body.transformToByteArray());
+}
+
 /** Files 600 and directories 700 (POSIX permissions do not exist on Windows). */
 function assertPrivate(dir) {
   if (IS_WINDOWS) return;
@@ -324,6 +362,16 @@ async function main() {
     const auditBefore = (await cluster.query("SELECT COUNT(*)::int AS c FROM audit_records"))[0].c;
     assert.ok(auditBefore >= 2, "seed must have written audit records");
 
+    // Tenant media: a photo (content-addressed key) and a support bundle whose key has characters
+    // that must be encoded in a file name (space, '+').
+    await mediaS3.send(new CreateBucketCommand({ Bucket: MEDIA.S3_BUCKET }));
+    const photo = randomBytes(70 * 1024);
+    const photoKey = `ci/media/tenant_1/work_order/wo-1/${createHash("sha256").update(photo).digest("hex")}`;
+    const bundle = randomBytes(5000);
+    const bundleKey = "ci/support/tenant_1/bundle x+y";
+    await putMedia(photoKey, photo);
+    await putMedia(bundleKey, bundle);
+
     // A. The previous release: plaintext backups (the dump is restore-verified before it is stored).
     let env = backupEnv(cluster, backupDir, workDir);
     let backup = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], env);
@@ -345,6 +393,17 @@ async function main() {
     assert.match(legacyRun.detail, /OFF-SITE COPY DISABLED/);
     const verifyLeft = await cluster.query("SELECT datname FROM pg_database WHERE datname LIKE 'mfx_nightly_verify_%'", [], "postgres");
     assert.equal(verifyLeft.length, 0, "nightly scratch database dropped");
+    // Media copied in plaintext (encryption still disabled), one file per object.
+    const legacyMedia = listFiles(join(backupDir, "media"));
+    assert.equal(legacyMedia.length, 2, `two media copies: ${legacyMedia.join(", ")}`);
+    assert.ok(legacyMedia.every((f) => f.startsWith("current/ci/") && f.endsWith(".bin")), legacyMedia.join(", "));
+    assert.ok(legacyMedia.some((f) => f.startsWith("current/ci/support/tenant_1/bundle%20x%2By+")), "key characters encoded");
+    assert.match(legacyRun.detail, /Media: 2 objects \(\d+ bytes\) in the bucket, 2 newly copied into the backups/);
+
+    // Between the nights: the photo is overwritten, the bundle deleted.
+    const photo2 = randomBytes(71 * 1024);
+    await putMedia(photoKey, photo2);
+    await mediaS3.send(new DeleteObjectCommand({ Bucket: MEDIA.S3_BUCKET, Key: bundleKey }));
 
     // B. Deploy: the server and the backup switch to BACKUP_LOCAL_ENCRYPTION=required.
     const refused = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], { ...env, BACKUP_LOCAL_ENCRYPTION: "required", BACKUP_AGE_RECIPIENT: "" }, { allowFail: true });
@@ -421,6 +480,27 @@ async function main() {
     assert.equal(encRun.dump_file, dumps[0]);
     assert.match(encRun.detail, /^Encrypted \d+ plaintext backup files left by an earlier release and deleted the plaintext\./);
     assert.match(encRun.detail, /encrypted at rest \(age\)/);
+
+    // Media after the encrypted run: the current photo, and the overwritten photo + the deleted
+    // bundle kept aside (both encrypted on the way, the plaintext copies are gone).
+    assert.match(encRun.detail, /Media: 1 objects \(\d+ bytes\) in the bucket, 1 newly copied into the backups; 1 deleted and 1 overwritten objects kept 30 days\./);
+    const mediaCurrent = files.filter((f) => f.startsWith("media/current/"));
+    const mediaRemoved = files.filter((f) => f.startsWith("media/removed/"));
+    assert.equal(mediaCurrent.length, 1, mediaCurrent.join(", "));
+    assert.equal(mediaRemoved.length, 2, mediaRemoved.join(", "));
+    const decryptedPhoto = join(root, "photo.dec");
+    run("age", ["--decrypt", "--identity", ownerKey, "--output", decryptedPhoto, join(backupDir, mediaCurrent[0])], process.env);
+    assert.ok(readFileSync(decryptedPhoto).equals(photo2), "current media copy = the overwritten photo's new content");
+    // Restore the set-aside copies with the owner's key: the deleted bundle comes back with its
+    // exact bytes; the photo still in the bucket is left alone.
+    const removedRun = join(backupDir, "media", "removed", mediaRemoved[0].split("/")[2]);
+    const restored = run("node", [join(API_DIR, "dist/tools/media-backup.js"), "restore", "--source", fwd(removedRun), "--identity", fwd(ownerKey)], env);
+    assert.deepEqual(JSON.parse(restored.stdout).result, { restored: 1, skipped_present: 1 });
+    assert.ok((await getMedia(bundleKey)).equals(bundle), "deleted bundle restored from the encrypted copy");
+    assert.ok((await getMedia(photoKey)).equals(photo2), "photo in the bucket untouched by the restore");
+    const mediaNoKey = run("node", [join(API_DIR, "dist/tools/media-backup.js"), "restore", "--source", fwd(removedRun), "--replace"], env, { allowFail: true });
+    assert.notEqual(mediaNoKey.status, 0);
+    assert.match(mediaNoKey.stderr, /is encrypted: --identity <owner's age key file> is required/);
 
     // Rows written after the encrypted base backup (only recoverable through the encrypted WAL).
     await delay(1100);

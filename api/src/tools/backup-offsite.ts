@@ -20,19 +20,17 @@
  * _ACCESS_KEY, _SECRET_KEY, _PREFIX, _FORCE_PATH_STYLE (true|false), BACKUP_AGE_RECIPIENT.
  * push-media also needs the media bucket settings the API uses (S3_ENDPOINT, S3_ACCESS_KEY, ...).
  */
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { closeSync, createReadStream, createWriteStream, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 
-import { TenantMediaObjectStore } from "../storage/object-store.js";
+import { createS3Client, TenantMediaObjectStore } from "../storage/object-store.js";
+import { isAgeFile, runAge, sha256File } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
-const AGE_HEADER = "age-encryption.org/v1\n";
 
 export type OffsiteConfig = {
   endpoint: string;
@@ -89,49 +87,11 @@ export function assertRelativeKey(key: string): string {
   return k;
 }
 
-function runAge(args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("age", args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (err) => reject(new Error(`cannot run age: ${err.message}`)));
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`age exited with ${code}: ${stderr.trim()}`));
-    });
-  });
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  await pipeline(createReadStream(path), hash);
-  return hash.digest("hex");
-}
-
-/** The file starts with the age v1 header (it was encrypted before it reached this tool). */
-export function isAgeFile(path: string): boolean {
-  const fd = openSync(path, "r");
-  try {
-    const head = Buffer.alloc(AGE_HEADER.length);
-    const n = readSync(fd, head, 0, head.length, 0);
-    return n === head.length && head.toString("latin1") === AGE_HEADER;
-  } finally {
-    closeSync(fd);
-  }
-}
-
 export class OffsiteStore {
   private readonly client: S3Client;
 
   constructor(readonly config: OffsiteConfig) {
-    this.client = new S3Client({
-      region: config.region,
-      endpoint: config.endpoint,
-      forcePathStyle: config.forcePathStyle,
-      credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    });
+    this.client = createS3Client(config);
   }
 
   remoteKey(key: string): string {

@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { ApiContext } from "../app/context.js";
 import { SYNC_MAX_OUTBOX_BATCH } from "../app/config.js";
 import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } from "../app/http.js";
-import { getMediaStore } from "../app/media.js";
+import { getMediaStore, sendObjectStoreError } from "../app/media.js";
 import { structuredLog } from "../app/runtime.js";
 import { assertTenantOwnsObjectKey, buildTenantMediaObjectKey } from "../storage/object-store.js";
 import {
@@ -176,8 +176,9 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       sendValidationError(res, parsed);
       return;
     }
+    let objectKey: string;
     try {
-      const objectKey =
+      objectKey =
         parsed.data.object_key?.trim() ||
         buildTenantMediaObjectKey({
           deploymentEnv: media.config.deploymentEnv,
@@ -186,17 +187,21 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
           parentEntitySyncId: parsed.data.parent_entity_sync_id,
           contentSha256: parsed.data.content_sha256,
         });
-      if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
-        res.status(403).json({ error: "object_key_tenant_mismatch" });
-        return;
-      }
-      const signed = await media.presignPut(objectKey);
-      res.json(signed);
     } catch (e) {
       res.status(400).json({
         error: "presign_put_failed",
         message: e instanceof Error ? e.message : String(e),
       });
+      return;
+    }
+    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
+      res.status(403).json({ error: "object_key_tenant_mismatch" });
+      return;
+    }
+    try {
+      res.json(await media.presignPut(objectKey));
+    } catch (e) {
+      sendObjectStoreError(res, "media_presign_put_failed", e, { tenant_id: act.tenantId });
     }
   });
 
@@ -222,13 +227,9 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       return;
     }
     try {
-      const signed = await media.presignGet(objectKey);
-      res.json(signed);
+      res.json(await media.presignGet(objectKey));
     } catch (e) {
-      res.status(400).json({
-        error: "presign_get_failed",
-        message: e instanceof Error ? e.message : String(e),
-      });
+      sendObjectStoreError(res, "media_presign_get_failed", e, { tenant_id: act.tenantId });
     }
   });
 }

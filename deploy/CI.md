@@ -6,9 +6,9 @@ Workflow: `.github/workflows/ci.yml`, on every push and pull request. All jobs m
 |---|---|---|
 | Lint, typecheck, console tests, build | ESLint (console + API + scripts, zero warnings), `tsc` for the console and the API, vitest, `vite build` | `pnpm lint`, `pnpm typecheck`, `pnpm --filter maintafox-control-api run typecheck`, `pnpm test`, `pnpm build` |
 | API integration scripts | every script of `test:all` against a `postgres:16-alpine` service container (`TEST_DATABASE_ADMIN_URL`) | `pnpm --filter maintafox-control-api run test:all` (embedded Postgres when the variable is unset) |
-| Backup and restore drill | `test:backup-drill` (plaintext → encrypted migration, encrypted restore and PITR with/without the key) and `test:backup-keygen`, with the Ubuntu PostgreSQL 16 programs and `age` | needs the PostgreSQL 16 programs and `age` on PATH (see deploy/BACKUP_AND_RESTORE.md §5) |
-| Off-site backup copy | `test:backup-offsite` against a MinIO container with `age` | needs an S3-compatible server and `age` |
-| Docker images | builds the API image, the backup image (`--target backup`, checks the programs it needs), the postgres image (`deploy/postgres`, checks `age` and PostgreSQL 16) and the console image | `docker build -f api/Dockerfile [--target backup] .`, `docker build deploy/postgres` |
+| Backup and restore drill | `test:backup-drill` (plaintext → encrypted migration, encrypted restore and PITR with/without the key, nightly media copy from Garage and its encrypted restore) and `test:backup-keygen`, with the Ubuntu PostgreSQL 16 programs, `age` and the pinned Garage image | needs the PostgreSQL 16 programs, `age` and an S3-compatible server (`TEST_S3_*`; see deploy/BACKUP_AND_RESTORE.md §5) |
+| Object storage on Garage | the image pinned in `docker-compose.yml` with the production `garage.toml` (`deploy/object-storage/ci-start-garage.sh`): `test:media-presign` (desktop upload/download through presigned URLs, pre-start check), `test:support-bundles`, `test:backup-offsite` (with `age`), `test:object-store-migrate` | `TEST_S3_*` / `OFFSITE_TEST_S3_*` pointing at any S3-compatible server, and `age` |
+| Docker images | pulls every image referenced by `docker-compose.yml` (no exception), builds the API image, the backup image (`--target backup`, checks the programs it needs), the postgres image (`deploy/postgres`, checks `age` and PostgreSQL 16) and the console image | `docker build -f api/Dockerfile [--target backup] .`, `docker build deploy/postgres` |
 | Read-only backup pull | `deploy/backup-pull/ci-test.sh`: the real SFTP container and the real `Pull-MaintafoxBackups.ps1` under PowerShell 7 (download + SHA-256, idempotent, read-only / SFTP-only / key-only, tampered file refused, retention) | needs docker, pwsh, age, ssh and sudo (Linux) |
 | Dependency audit | `pnpm audit --audit-level high` | same |
 | Secret scan | gitleaks 8.30.1 over the full git history | `gitleaks git . --redact` |
@@ -25,16 +25,13 @@ and removed as soon as a fixed version exists.
 Patched transitive versions are forced with `pnpm.overrides` (proxy-addr, undici 7, postcss,
 nanoid 3, browserslist, source-map-js); `vite` was raised to 6.4.4.
 
-## Known issue: MinIO images can no longer be pulled (found 2026-10-12)
+## Resolved: MinIO images can no longer be pulled (found and fixed 2026-10-12)
 
-`minio/minio` and `minio/mc` (the releases in `docker-compose.yml`) are refused by Docker Hub
-("repository does not exist") and by `quay.io/minio` ("unauthorized"): MinIO stopped publishing
-free container images. The VPS keeps working because both images are in its local Docker cache
-(never run `docker image prune -a` there), but **a new or rebuilt server cannot start the media
-store**. The CI pull check skips `minio/*` for that reason only. Options for the owner: build the
-same MinIO release from source into our own image, use a maintained community build pinned by
-digest, or move tenant media to another S3-compatible server (the API only needs S3 + presigned
-URLs). The off-site backup test uses Adobe S3Mock, which is enough to prove the S3 calls.
+`minio/minio` and `minio/mc` stopped being published (Docker Hub and quay.io refuse anonymous
+pulls; the upstream repository is archived). Tenant media moved to **Garage**, official image
+pinned by digest (docs/deploy/OBJECT_STORAGE_DECISION.md, deploy/OBJECT_STORAGE.md). The CI pull
+check covers every image again. The old MinIO image stays in the VPS cache only for the rollback
+window of the migration (deploy/OBJECT_STORAGE.md §5).
 
 ## Accepted secret-scan findings
 

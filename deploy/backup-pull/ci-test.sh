@@ -38,6 +38,10 @@ echo 000000010000000000000003 > "$srv/backups/base/20261012T023000Z/start-wal"
 enc "$srv/wal/000000010000000000000003.gz.age" 50000
 enc "$srv/wal/000000010000000000000004.gz.age" 50000
 echo "deadbeef  000000010000000000000004" > "$srv/wal/000000010000000000000004.gz.age.sha256"
+# A media copy (api/src/tools/media-backup.ts): the object key's path, percent-encoded, + ETag.
+media_copy="backups/media/current/prod/media/tenant_01/work%20order/wo-1/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08+0cc175b9c0f1b6a831c399e269772661.age"
+mkdir -p "$(dirname "$srv/$media_copy")"
+enc "$srv/$media_copy" 40000
 manifest() {
   (cd "$srv" && find backups wal -type f -name '*.age' | sort | while read -r f; do
     printf '%s  %s\n' "$(sha256sum < "$f" | cut -d' ' -f1)" "$f"
@@ -77,8 +81,8 @@ sftp_as() { # KEY, batch on stdin
 
 # 1. Full pull.
 pull > "$root/run1.log" || { cat "$root/run1.log"; fail "first pull failed"; }
-grep -q '5 files listed by the server, 5 downloaded and verified, 0 already here' "$root/run1.log" || { cat "$root/run1.log"; fail "first pull summary"; }
-for f in backups/pg_dump/maintafox-20261012T023000Z.dump.age backups/base/20261012T023000Z/base.tar.gz.age wal/000000010000000000000004.gz.age; do
+grep -q '6 files listed by the server, 6 downloaded and verified, 0 already here' "$root/run1.log" || { cat "$root/run1.log"; fail "first pull summary"; }
+for f in backups/pg_dump/maintafox-20261012T023000Z.dump.age backups/base/20261012T023000Z/base.tar.gz.age wal/000000010000000000000004.gz.age "$media_copy"; do
   [ "$(sudo cat "$srv/$f" | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$root/dest/$f" | cut -d' ' -f1)" ] || fail "$f differs"
 done
 [ ! -e "$root/dest/backups/base/20261012T023000Z/start-wal" ] || fail "a non-encrypted file was downloaded"
@@ -88,7 +92,7 @@ age -d -i "$root/owner.key" -o /dev/null "$root/dest/backups/base/20261012T02300
 
 # 2. Nothing new the second time.
 pull > "$root/run2.log" || { cat "$root/run2.log"; fail "second pull failed"; }
-grep -q '0 downloaded and verified, 5 already here' "$root/run2.log" || { cat "$root/run2.log"; fail "second pull re-downloaded"; }
+grep -q '0 downloaded and verified, 6 already here' "$root/run2.log" || { cat "$root/run2.log"; fail "second pull re-downloaded"; }
 
 # 3. Read-only, SFTP-only, key-only.
 echo "probe" > "$root/probe.txt"
@@ -128,4 +132,12 @@ pull > "$root/run4.log" || { cat "$root/run4.log"; fail "pull after retention ch
 [ -e "$root/dest/backups/pg_dump/maintafox-20261012T023000Z.dump.age" ] || fail "a listed file was deleted"
 grep -q '1 deleted' "$root/run4.log" || { cat "$root/run4.log"; fail "retention summary"; }
 
-echo "backup-pull ci-test: OK (download + SHA-256, idempotent, read-only/SFTP-only/key-only, tamper refused, retention)"
+# 6. A manifest naming a path that climbs out of backups/media is refused before anything is fetched.
+sudo chown -R "$(id -u):$(id -g)" "$srv"
+printf '%s  backups/media/current/../../../evil.age\n' "$(printf x | sha256sum | cut -d' ' -f1)" >> "$srv/backups/SHA256SUMS"
+sudo chown -R 70:70 "$srv"
+sudo find "$srv" -type f -exec chmod 600 {} +
+if pull > "$root/run5.log"; then cat "$root/run5.log"; fail "a manifest with '..' in a media path was accepted"; fi
+grep -q "unexpected line" "$root/run5.log" || { cat "$root/run5.log"; fail "'..' media path not reported"; }
+
+echo "backup-pull ci-test: OK (download + SHA-256, idempotent, read-only/SFTP-only/key-only, tamper refused, retention, media paths)"
