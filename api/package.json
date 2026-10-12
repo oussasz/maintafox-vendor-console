@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "dev": "node --watch dist/index.js",
     "test:auth-boundaries": "pnpm run build && node scripts/auth-boundaries.integration.mjs",
@@ -19,6 +20,8 @@
     "test:force-update": "pnpm run build && node scripts/force-update-governance.integration.mjs",
     "test:sync-exchange-ab": "pnpm run build && node scripts/sync-exchange-ab.integration.mjs",
     "test:sync-v2": "pnpm run build && node scripts/sync-protocol-v2.integration.mjs",
+    "test:backup-drill": "pnpm run build && node scripts/backup-restore-drill.integration.mjs",
+    "test:backup-offsite": "pnpm run build && node scripts/backup-offsite.integration.mjs",
     "test:all": "pnpm run build && node scripts/edition-catalog-store.mjs && node scripts/edition-signer-roundtrip.mjs && node scripts/auth-boundaries.integration.mjs && node scripts/license-issuance-lifecycle.integration.mjs && node scripts/machine-revocation-lifecycle.integration.mjs && node scripts/edition-catalog.integration.mjs && node scripts/legacy-tenant-schema.integration.mjs && node scripts/force-update-governance.integration.mjs && node scripts/sprint9-observability.integration.mjs && node scripts/sync-exchange-ab.integration.mjs && node scripts/sync-protocol-v2.integration.mjs",
     "migrate:sqlite-to-postgres": "node dist/tools/migrate-sqlite-to-postgres.js",
     "baseline:sprint9": "node scripts/sprint9-slo-baseline.mjs",

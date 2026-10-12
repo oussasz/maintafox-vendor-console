@@ -2,10 +2,12 @@ import {
   CreateBucketCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { pipeline } from "node:stream/promises";
 
 export type ObjectStoreConfig = {
   endpoint: string;
@@ -127,6 +129,29 @@ export class TenantMediaObjectStore {
       object_key: objectKey,
       expires_in_seconds: expiresInSeconds,
     };
+  }
+
+  /** Every object key in the bucket under `prefix` (paged; used by the off-site media backup). */
+  async listObjectKeys(prefix = ""): Promise<string[]> {
+    const keys: string[] = [];
+    let token: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.config.bucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      for (const obj of page.Contents ?? []) {
+        if (obj.Key) keys.push(obj.Key);
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+    return keys;
+  }
+
+  /** Streams one object's content into `writeTo` (used by the off-site media backup). */
+  async downloadObject(objectKey: string, writeTo: NodeJS.WritableStream): Promise<void> {
+    const out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
+    if (!out.Body) throw new Error(`object ${objectKey} has no body`);
+    await pipeline(out.Body as NodeJS.ReadableStream, writeTo);
   }
 
   async presignGet(objectKey: string, expiresInSeconds = 900): Promise<PresignResult> {

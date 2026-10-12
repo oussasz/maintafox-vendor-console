@@ -1,0 +1,3 @@
+# Shell scripts and configs read by Linux containers and by sh on Windows (Git Bash) must keep LF.
+*.sh text eol=lf
+deploy/backup/pg_hba.conf text eol=lf

@@ -24,6 +24,22 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY api/package.json ./api/
 RUN pnpm install --frozen-lockfile --filter maintafox-control-api --prod
 
+# Backup container (deploy/BACKUP_AND_RESTORE.md, compose service `backup`, `target: backup`):
+# the API build (its restore-verify and off-site tools reuse the API code) plus the PostgreSQL 16
+# programs, matching the postgres:16 server, and age for the off-site encryption.
+FROM node:20-alpine AS backup
+WORKDIR /app/api
+RUN apk add --no-cache postgresql16 postgresql16-client age
+ENV PATH=/usr/libexec/postgresql16:$PATH \
+    NODE_ENV=production \
+    MFX_API_DIR=/app/api
+COPY --from=prod-deps /app /app
+COPY --from=build /app/api/dist ./dist
+COPY api/migrations ./migrations
+COPY deploy/backup /opt/maintafox-backup
+CMD ["sh", "/opt/maintafox-backup/scheduler.sh"]
+
+# Control API (default target: the last stage).
 FROM node:20-alpine
 WORKDIR /app/api
 RUN apk add --no-cache wget

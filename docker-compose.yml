@@ -9,17 +9,47 @@
 # do not affect healthy operation; they only stop a runaway process from filling the host.
 
 services:
+  # The WAL archive volume is created root-owned; Postgres (user postgres) must write to it.
+  pg-wal-archive-init:
+    image: postgres:16-alpine
+    container_name: maintafox-pg-wal-archive-init
+    mem_limit: 64m
+    entrypoint: ["sh", "-c", "chown postgres:postgres /wal-archive && chmod 700 /wal-archive"]
+    volumes:
+      - pg_wal_archive:/wal-archive
+
   postgres:
     image: postgres:16-alpine
     container_name: maintafox-sync-postgres
     restart: unless-stopped
     mem_limit: 512m
+    # Continuous WAL archiving for point-in-time recovery (deploy/BACKUP_AND_RESTORE.md): every
+    # finished WAL segment is gzip-copied to the pg_wal_archive volume; a segment is forced at least
+    # every PG_WAL_ARCHIVE_TIMEOUT_SECONDS. hba_file adds replication access for pg_basebackup.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=sh /mfx-backup/wal-archive.sh "%p" "%f"
+      - -c
+      - archive_timeout=${PG_WAL_ARCHIVE_TIMEOUT_SECONDS:?set PG_WAL_ARCHIVE_TIMEOUT_SECONDS in .env}
+      - -c
+      - hba_file=/mfx-backup/pg_hba.conf
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      MFX_WAL_ARCHIVE_DIR: /wal-archive
     volumes:
       - sync_postgres_data:/var/lib/postgresql/data
+      - pg_wal_archive:/wal-archive
+      - ./deploy/backup:/mfx-backup:ro
+    depends_on:
+      pg-wal-archive-init:
+        condition: service_completed_successfully
     expose:
       - "5432"
     healthcheck:
@@ -49,17 +79,26 @@ services:
     mem_limit: 128m
     depends_on:
       - minio
+    # Creates the media bucket, turns on object versioning (an overwritten or deleted object stays
+    # recoverable) and expires old versions after MINIO_NONCURRENT_VERSION_RETENTION_DAYS.
+    # Every step must succeed: the API does not start on a half-configured bucket.
     entrypoint: >
       /bin/sh -c "
-      sleep 5;
-      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-      mc mb -p local/$${S3_BUCKET} || true;
-      exit 0;
+      set -e;
+      tries=0;
+      until mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do
+        tries=$$((tries + 1)); [ $$tries -lt 30 ] || exit 1; sleep 2;
+      done;
+      mc mb -p local/$${S3_BUCKET};
+      mc version enable local/$${S3_BUCKET};
+      printf '{\"Rules\":[{\"ID\":\"expire-noncurrent-versions\",\"Status\":\"Enabled\",\"Filter\":{\"Prefix\":\"\"},\"NoncurrentVersionExpiration\":{\"NoncurrentDays\":%s}}]}' $${MINIO_NONCURRENT_VERSION_RETENTION_DAYS} | mc ilm import local/$${S3_BUCKET};
+      mc version info local/$${S3_BUCKET};
       "
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
       S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
+      MINIO_NONCURRENT_VERSION_RETENTION_DAYS: ${MINIO_NONCURRENT_VERSION_RETENTION_DAYS:?set MINIO_NONCURRENT_VERSION_RETENTION_DAYS in .env}
 
   api:
     image: maintafox-control-api:local
@@ -109,6 +148,58 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  # Nightly pg_dump + base backup, local retention, optional encrypted off-site copy, monthly
+  # restore drill (deploy/BACKUP_AND_RESTORE.md). Same image build as the API, target `backup`.
+  backup:
+    image: maintafox-backup:local
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      target: backup
+    container_name: maintafox-backup
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      BACKUP_DIR: /backups
+      MFX_WAL_ARCHIVE_DIR: /wal-archive
+      BACKUP_ENV_FILE: /run/maintafox/app.env
+      BACKUP_DAILY_AT_UTC: ${BACKUP_DAILY_AT_UTC:?set BACKUP_DAILY_AT_UTC in .env}
+      BACKUP_DRILL_DAY_OF_MONTH: ${BACKUP_DRILL_DAY_OF_MONTH:?set BACKUP_DRILL_DAY_OF_MONTH in .env}
+      BACKUP_LOCAL_RETENTION_DAYS: ${BACKUP_LOCAL_RETENTION_DAYS:?set BACKUP_LOCAL_RETENTION_DAYS in .env}
+      BACKUP_OFFSITE_MODE: ${BACKUP_OFFSITE_MODE:?set BACKUP_OFFSITE_MODE in .env (disabled or s3)}
+      # Only read when BACKUP_OFFSITE_MODE=s3; the off-site tool refuses to run if one is empty.
+      BACKUP_OFFSITE_S3_ENDPOINT: ${BACKUP_OFFSITE_S3_ENDPOINT:-}
+      BACKUP_OFFSITE_S3_REGION: ${BACKUP_OFFSITE_S3_REGION:-}
+      BACKUP_OFFSITE_S3_BUCKET: ${BACKUP_OFFSITE_S3_BUCKET:-}
+      BACKUP_OFFSITE_S3_ACCESS_KEY: ${BACKUP_OFFSITE_S3_ACCESS_KEY:-}
+      BACKUP_OFFSITE_S3_SECRET_KEY: ${BACKUP_OFFSITE_S3_SECRET_KEY:-}
+      BACKUP_OFFSITE_S3_PREFIX: ${BACKUP_OFFSITE_S3_PREFIX:-}
+      BACKUP_OFFSITE_S3_FORCE_PATH_STYLE: ${BACKUP_OFFSITE_S3_FORCE_PATH_STYLE:-}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      # Media bucket (read for the off-site media copy), same values as the api service.
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+    volumes:
+      - backup_data:/backups
+      - pg_wal_archive:/wal-archive
+      # The secrets file goes off-site too (encrypted): without it a restored server cannot sign
+      # licences or accept existing device tokens.
+      - ./.env:/run/maintafox/app.env:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # The API applies migration 006 (backup_runs) before the first run is recorded.
+      api:
+        condition: service_healthy
+
   vendor-console:
     pull_policy: never
     build:
@@ -145,3 +236,5 @@ volumes:
   control_api_data:
   sync_postgres_data:
   sync_minio_data:
+  pg_wal_archive:
+  backup_data:
