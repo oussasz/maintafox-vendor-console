@@ -48,6 +48,11 @@ const VendorConsoleHealthPage = lazy(() =>
     default: m.VendorConsoleHealthPage,
   })),
 );
+const VendorConsoleOperatorsPage = lazy(() =>
+  import("@/vendor-console/pages/VendorConsoleOperatorsPage").then((m) => ({
+    default: m.VendorConsoleOperatorsPage,
+  })),
+);
 const VendorConsoleAuditPage = lazy(() =>
   import("@/vendor-console/pages/VendorConsoleAuditPage").then((m) => ({
     default: m.VendorConsoleAuditPage,
@@ -140,6 +145,11 @@ const routes: RouteObject[] = [
                     path: "audit",
                     element: <PermissionRoute permission="audit.view" />,
                     children: [{ index: true, element: <VendorConsoleAuditPage /> }],
+                  },
+                  {
+                    path: "operators",
+                    element: <PermissionRoute permission="operator.manage" />,
+                    children: [{ index: true, element: <VendorConsoleOperatorsPage /> }],
                   },
                 ],
               },

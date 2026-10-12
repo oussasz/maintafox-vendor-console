@@ -1,4 +1,4 @@
-import { KeyRound, LogOut, MonitorX, UserCircle } from "lucide-react";
+import { KeyRound, Lock, LogOut, MonitorX, UserCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { PRIVILEGED_REASON_MIN_LENGTH } from "@/services/license-control-service";
+import { changeOwnPassword } from "@/services/operators-service";
 import {
   getSessionInfo,
   logout,
@@ -36,7 +37,10 @@ import { StepUpCancelledError, useVendorConsole } from "./VendorConsoleContext";
 /** Recovery codes are a lifeline: warn when this few are left. */
 const LOW_RECOVERY_CODES = 3;
 
-type OpenDialog = "none" | "logoutAll" | "regenerate" | "codes";
+type OpenDialog = "none" | "logoutAll" | "regenerate" | "codes" | "password";
+
+/** Same minimum as the API (routes/auth.ts OPERATOR_PASSWORD_MIN_LENGTH). */
+const OPERATOR_PASSWORD_MIN_LENGTH = 12;
 
 /**
  * Signed-in operator: who, recovery codes left, new recovery codes (step-up `own_mfa_change`),
@@ -51,6 +55,8 @@ export function VendorConsoleAccountMenu() {
   const [reason, setReason] = useState("");
   const [codes, setCodes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -109,6 +115,26 @@ export function VendorConsoleAccountMenu() {
     }
   };
 
+  const onChangePassword = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const ended = await changeOwnPassword(passwords.current, passwords.next);
+      setPasswords({ current: "", next: "", confirm: "" });
+      setDialog("none");
+      setNotice(t("account.password.done", { count: ended }));
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const passwordValid =
+    passwords.current.length > 0 &&
+    passwords.next.length >= OPERATOR_PASSWORD_MIN_LENGTH &&
+    passwords.next === passwords.confirm;
+
   const remaining = info?.mfa.recovery_codes_remaining;
 
   return (
@@ -145,6 +171,10 @@ export function VendorConsoleAccountMenu() {
             <KeyRound className="mr-2 h-4 w-4" aria-hidden />
             {t("account.regenerate.menu")}
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openDialog("password")}>
+            <Lock className="mr-2 h-4 w-4" aria-hidden />
+            {t("account.password.menu")}
+          </DropdownMenuItem>
           <DropdownMenuItem disabled={busy} onSelect={() => void onLogout()}>
             <LogOut className="mr-2 h-4 w-4" aria-hidden />
             {t("account.logout")}
@@ -156,6 +186,11 @@ export function VendorConsoleAccountMenu() {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {notice && dialog === "none" ? (
+        <p role="status" className="max-w-xs truncate text-xs text-text-secondary" title={notice}>
+          {notice}
+        </p>
+      ) : null}
       {error && dialog === "none" ? (
         <p role="alert" className="max-w-xs truncate text-xs text-text-danger" title={error}>
           {error}
@@ -230,6 +265,59 @@ export function VendorConsoleAccountMenu() {
               }}
             >
               {t("account.codes.done")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={dialog === "password"} onOpenChange={(open) => !open && setDialog("none")}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("account.password.title")}</DialogTitle>
+            <DialogDescription>{t("account.password.body", { min: OPERATOR_PASSWORD_MIN_LENGTH })}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="password-current">{t("account.password.current")}</Label>
+              <Input
+                id="password-current"
+                type="password"
+                autoComplete="current-password"
+                value={passwords.current}
+                onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="password-next">{t("account.password.next")}</Label>
+              <Input
+                id="password-next"
+                type="password"
+                autoComplete="new-password"
+                value={passwords.next}
+                onChange={(e) => setPasswords({ ...passwords, next: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="password-confirm">{t("account.password.confirmLabel")}</Label>
+              <Input
+                id="password-confirm"
+                type="password"
+                autoComplete="new-password"
+                value={passwords.confirm}
+                onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
+              />
+            </div>
+          </div>
+          {error ? (
+            <p role="alert" className="text-sm text-text-danger">
+              {error}
+            </p>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setDialog("none")} disabled={busy}>
+              {t("account.cancel")}
+            </Button>
+            <Button type="button" onClick={() => void onChangePassword()} disabled={busy || !passwordValid}>
+              {t("account.password.confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, BookMarked, Cpu, FileSearch, Layers, Rocket, Server, Users } from "lucide-react";
+import { Activity, BookMarked, Cpu, FileSearch, Layers, Rocket, Server, ShieldCheck, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
 
@@ -65,6 +65,12 @@ const NAV: {
     labelKey: "nav.audit",
     permission: "audit.view",
     icon: <FileSearch className="h-4 w-4" />,
+  },
+  {
+    to: "/vendor-console/operators",
+    labelKey: "nav.operators",
+    permission: "operator.manage",
+    icon: <ShieldCheck className="h-4 w-4" />,
   },
 ];
 

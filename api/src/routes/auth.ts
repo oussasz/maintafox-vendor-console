@@ -40,24 +40,24 @@ import {
   VENDOR_MFA_PENDING_TTL_SECONDS,
   verifyVendorMfaToken,
 } from "../auth-tokens.js";
+import { ROLE_PERMISSIONS, type Role } from "../vendor-auth/roles.js";
 import { isStepUpActionKind, StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
-/** Matches vendor-console PermissionRecord + RBAC for console operators. */
-const VENDOR_PERMISSIONS = [
-  "console.view",
-  "customer.manage",
-  "entitlement.manage",
-  "sync.operate",
-  "rollout.manage",
-  "platform.observe",
-  "audit.view",
-].map((name) => ({
-  name,
-  description: name,
-  category: "vendor",
-  is_dangerous: false,
-  requires_step_up: false,
-}));
+/** Permissions of a role, in the console's PermissionRecord shape. */
+function permissionRecords(role: Role) {
+  return ROLE_PERMISSIONS[role].map((name) => ({
+    name,
+    description: name,
+    category: "vendor",
+    is_dangerous: false,
+    requires_step_up: false,
+  }));
+}
+
+/** Minimum length of an operator password set through the API. */
+export const OPERATOR_PASSWORD_MIN_LENGTH = 12;
+/** bcrypt cost of operator passwords (as the first seeded operator, app/seed.ts). */
+export const OPERATOR_PASSWORD_BCRYPT_COST = 12;
 
 export const REFRESH_COOKIE_NAME = "mfx_vendor_refresh";
 /** The refresh cookie is sent only to the auth routes, never with ordinary API calls. */
@@ -83,6 +83,12 @@ const VerifyBody = z.union([
 ]);
 /** After a server-side MFA reset, enrolment needs the one-time code the reset printed. */
 const EnrollStartBody = z.object({ reset_code: z.string().trim().min(10).max(32).optional() }).strict();
+const ChangePasswordBody = z
+  .object({
+    current_password: z.string().min(1).max(1024),
+    new_password: z.string().min(OPERATOR_PASSWORD_MIN_LENGTH).max(1024),
+  })
+  .strict();
 const StepUpBody = z.object({ action_kind: z.string().min(1).max(64), code: TotpCode }).strict();
 
 function readCookie(req: express.Request, name: string): string | null {
@@ -169,6 +175,7 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     extra: Record<string, unknown>,
   ): Promise<void> {
     const session = await vendorAuth.startSession(user.id, clientOf(req));
+    await vendorAuth.recordLogin(user.id);
     setRefreshCookie(res, session.refreshToken, session.expiresAt);
     res.json({
       access_token: signVendorAdminToken(JWT_SECRET, user, session.sessionId),
@@ -195,13 +202,14 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     const { email, password } = parsed.data;
     const user = await vendorAuth.findUserByEmail(email);
     const passwordOk = await bcrypt.compare(password, user?.password_hash ?? UNKNOWN_USER_HASH);
-    if (!user || !passwordOk) {
+    // A disabled operator is refused like a wrong password (nothing tells a caller the account exists).
+    if (!user || !passwordOk || !user.is_active) {
       observeAuthAttempt(Date.now() - startedAt, false);
       structuredLog("auth_login_failed", { reason: "invalid_credentials", status: 401, email });
       await auditAuth({
         actor_id: user ? `user_${user.id}` : "anonymous",
         action_code: "login_failure",
-        payload: { email, client_ip: req.ip ?? null },
+        payload: { email, client_ip: req.ip ?? null, operator_disabled: user ? !user.is_active : null },
       });
       res.status(401).json({ error: "invalid_credentials" });
       return;
@@ -230,7 +238,7 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     }
     const mfa = (req as MfaPendingRequest).mfa!;
     const user = await vendorAuth.getUser(mfa.userId);
-    if (!user) {
+    if (!user || !user.is_active) {
       res.status(401).json({ error: "mfa_token_invalid" });
       return;
     }
@@ -260,7 +268,7 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     }
     const mfa = (req as MfaPendingRequest).mfa!;
     const user = await vendorAuth.getUser(mfa.userId);
-    if (!user) {
+    if (!user || !user.is_active) {
       res.status(401).json({ error: "mfa_token_invalid" });
       return;
     }
@@ -287,7 +295,7 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     }
     const mfa = (req as MfaPendingRequest).mfa!;
     const user = await vendorAuth.getUser(mfa.userId);
-    if (!user) {
+    if (!user || !user.is_active) {
       res.status(401).json({ error: "mfa_token_invalid" });
       return;
     }
@@ -397,7 +405,7 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
       return;
     }
     res.json({
-      user: { id: user.id, email: user.email },
+      user: { id: user.id, email: user.email, display_name: user.display_name, role: user.role },
       session: { id: session.id, created_at: session.createdAt, expires_at: session.expiresAt },
       mfa: { enrolled: user.totp_enrolled, recovery_codes_remaining: await vendorAuth.remainingRecoveryCodes(userId) },
       step_up_ttl_seconds: STEP_UP_TTL_SECONDS,
@@ -455,7 +463,35 @@ export function registerAuthRoutes(app: express.Express, ctx: ApiContext): void 
     res.json({ recovery_codes: codes, audit_record_id: guard.auditRecordId });
   });
 
-  app.get("/api/v1/me/permissions", authMiddleware, async (_req, res) => {
-    res.json(VENDOR_PERMISSIONS);
+  /** The signed-in operator's permissions (from their role; the server checks them on every route). */
+  app.get("/api/v1/me/permissions", authMiddleware, async (req, res) => {
+    res.json(permissionRecords((req as AuthRequest).operatorRole!));
+  });
+
+  /**
+   * Changes the signed-in operator's password (current password required). Every other session of
+   * theirs ends; this one continues. Refusals count against the step-up rate limit.
+   */
+  app.post("/api/v1/auth/password", authMiddleware, stepUpRateLimiter, async (req, res) => {
+    const parsed = ChangePasswordBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const userId = Number((req as AuthRequest).userId);
+    const user = await vendorAuth.getUser(userId);
+    if (!user || !(await bcrypt.compare(parsed.data.current_password, user.password_hash))) {
+      await auditAuth({ actor_id: `user_${userId}`, action_code: "password_change_refused" });
+      res.status(401).json({ error: "invalid_credentials" });
+      return;
+    }
+    if (parsed.data.new_password === parsed.data.current_password) {
+      res.status(400).json({ error: "password_unchanged" });
+      return;
+    }
+    const hash = await bcrypt.hash(parsed.data.new_password, OPERATOR_PASSWORD_BCRYPT_COST);
+    const otherSessionsEnded = await vendorAuth.changePassword(userId, hash, (req as AuthRequest).vendorSessionId!);
+    await auditAuth({ actor_id: `user_${userId}`, action_code: "password_changed", payload: { other_sessions_ended: otherSessionsEnded } });
+    res.json({ ok: true, other_sessions_ended: otherSessionsEnded });
   });
 }

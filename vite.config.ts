@@ -20,6 +20,10 @@ export default defineConfig({
     setupFiles: "./src/test/setup.ts",
     globals: true,
     css: true,
+    // Dialog + step-up flows type many characters in jsdom; 5 s (default) is too tight on a busy
+    // machine or CI runner, a hung test still fails.
+    testTimeout: 15_000,
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**"],
   },
   base: process.env.VITE_BASE_PATH ?? "/",
 });

@@ -11,6 +11,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import type { Database } from "../db/database.js";
 import { newId, sha256Hex } from "../app/runtime.js";
 import { PayloadCipher } from "../sync/index.js";
+import { isRole, type Role } from "./roles.js";
 import { generateTotpSecret, otpauthUri, verifyTotp } from "./totp.js";
 
 /** Absolute session lifetime: the operator signs in again (password + TOTP) at least this often. */
@@ -36,6 +37,10 @@ export const TOTP_SEAL_KEY_INFO = "maintafox/vendor-totp/v1";
 export type VendorUser = {
   id: number;
   email: string;
+  display_name: string | null;
+  role: Role;
+  /** A disabled operator cannot sign in (the account and its audit trail are kept). */
+  is_active: boolean;
   password_hash: string;
   totp_enrolled: boolean;
   /** Re-enrolment after a server-side MFA reset needs the one-time code the CLI printed. */
@@ -53,17 +58,24 @@ export type RefreshOutcome =
 type UserRow = {
   id: number;
   email: string;
+  display_name: string | null;
+  role: string;
+  is_active: boolean;
   password_hash: string;
   totp_enrolled_at: string | null;
   mfa_reset_code_sha256: string | null;
 };
-const USER_COLUMNS = "id, email, password_hash, totp_enrolled_at, mfa_reset_code_sha256";
+const USER_COLUMNS = "id, email, display_name, role, is_active, password_hash, totp_enrolled_at, mfa_reset_code_sha256";
 
 function toVendorUser(row: UserRow | undefined): VendorUser | undefined {
+  if (row && !isRole(row.role)) throw new Error(`operator ${row.id} has an unknown role '${row.role}'`);
   return (
     row && {
       id: row.id,
       email: row.email,
+      display_name: row.display_name,
+      role: row.role as Role,
+      is_active: row.is_active,
       password_hash: row.password_hash,
       totp_enrolled: row.totp_enrolled_at !== null,
       reset_code_required: row.mfa_reset_code_sha256 !== null,
@@ -81,6 +93,10 @@ function newRecoveryCode(): string {
     raw += RECOVERY_CODE_ALPHABET[randomInt(RECOVERY_CODE_ALPHABET.length)];
   }
   return `${raw.slice(0, RECOVERY_CODE_GROUP)}-${raw.slice(RECOVERY_CODE_GROUP)}`;
+}
+
+function oneTimeCodeHash(code: string): string {
+  return sha256Hex(normalizeRecoveryCode(code));
 }
 
 function totpAad(userId: number): string {
@@ -304,15 +320,18 @@ export function createVendorAuth(db: Database, payloadCipher: PayloadCipher) {
     return row && { id: row.id, createdAt: new Date(row.created_at).toISOString(), expiresAt: new Date(row.expires_at).toISOString() };
   }
 
-  /** True while the session exists, belongs to the operator, is not revoked and not expired. */
-  async function isSessionActive(sessionId: string, userId: number): Promise<boolean> {
-    const row = await db.get<{ ok: boolean }>(
-      `SELECT (revoked_at IS NULL AND expires_at > now()) AS ok
-       FROM vendor_sessions WHERE id = ? AND user_id = ?`,
+  /**
+   * The operator's role while the session exists, belongs to them, is not revoked or expired, and
+   * the operator is enabled; null otherwise.
+   */
+  async function activeSessionRole(sessionId: string, userId: number): Promise<Role | null> {
+    const row = await db.get<{ role: string }>(
+      `SELECT u.role FROM vendor_sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.id = ? AND s.user_id = ? AND s.revoked_at IS NULL AND s.expires_at > now() AND u.is_active`,
       sessionId,
       userId,
     );
-    return row?.ok === true;
+    return row && isRole(row.role) ? row.role : null;
   }
 
   async function revokeSession(sessionId: string, reason: string): Promise<boolean> {
@@ -346,7 +365,7 @@ export function createVendorAuth(db: Database, payloadCipher: PayloadCipher) {
       await db.run(
         `UPDATE users SET totp_secret_sealed = NULL, totp_pending_sealed = NULL, totp_enrolled_at = NULL,
            totp_last_step = NULL, mfa_reset_code_sha256 = ? WHERE id = ?`,
-        sha256Hex(normalizeRecoveryCode(resetCode)),
+        oneTimeCodeHash(resetCode),
         userId,
       );
       await db.run("DELETE FROM vendor_recovery_codes WHERE user_id = ?", userId);
@@ -354,11 +373,39 @@ export function createVendorAuth(db: Database, payloadCipher: PayloadCipher) {
     });
   }
 
+  /**
+   * A one-time enrolment code for a new operator (same mechanism as an MFA reset): their first
+   * enrolment needs it, so the password alone cannot claim the new account. Returned once.
+   */
+  async function issueEnrolmentCode(userId: number): Promise<string> {
+    const code = newRecoveryCode();
+    await db.run("UPDATE users SET mfa_reset_code_sha256 = ? WHERE id = ?", oneTimeCodeHash(code), userId);
+    return code;
+  }
+
+  /** Stores a new password hash and ends every other session of the operator; returns how many. */
+  async function changePassword(userId: number, passwordHash: string, keepSessionId: string): Promise<number> {
+    return db.tx(async () => {
+      await db.run("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, userId);
+      const r = await db.run(
+        `UPDATE vendor_sessions SET revoked_at = now(), revoked_reason = 'password_changed'
+         WHERE user_id = ? AND id <> ? AND revoked_at IS NULL`,
+        userId,
+        keepSessionId,
+      );
+      return r.changes;
+    });
+  }
+
+  async function recordLogin(userId: number): Promise<void> {
+    await db.run("UPDATE users SET last_login_at = now() WHERE id = ?", userId);
+  }
+
   /** True when `code` is the operator's pending MFA reset code (compared by hash). */
   async function checkResetCode(userId: number, code: string): Promise<boolean> {
     const row = await db.get<{ ok: boolean }>(
       "SELECT mfa_reset_code_sha256 = ? AS ok FROM users WHERE id = ?",
-      sha256Hex(normalizeRecoveryCode(code)),
+      oneTimeCodeHash(code),
       userId,
     );
     return row?.ok === true;
@@ -377,11 +424,14 @@ export function createVendorAuth(db: Database, payloadCipher: PayloadCipher) {
     rotateRefreshToken,
     sessionOfRefreshToken,
     getSession,
-    isSessionActive,
+    activeSessionRole,
     revokeSession,
     revokeAllSessions,
     resetMfa,
     checkResetCode,
+    issueEnrolmentCode,
+    recordLogin,
+    changePassword,
   };
 }
 

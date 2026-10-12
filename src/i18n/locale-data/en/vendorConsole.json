@@ -17,7 +17,8 @@
     "sync": "Sync operations",
     "rollouts": "Rollouts",
     "health": "Platform health",
-    "audit": "Audit & evidence"
+    "audit": "Audit & evidence",
+    "operators": "Operators"
   },
   "home": {
     "title": "Control plane overview",
@@ -554,11 +555,117 @@
       "title": "Your new recovery codes",
       "body": "Each code works once, if you lose your authenticator app. They are shown only now: print them or save them somewhere safe.",
       "done": "I have saved them"
+    },
+    "password": {
+      "menu": "Change password",
+      "title": "Change your password",
+      "body": "At least {{min}} characters. Your other sessions end; this one continues.",
+      "current": "Current password",
+      "next": "New password",
+      "confirmLabel": "New password again",
+      "confirm": "Change password",
+      "done_one": "Password changed. {{count}} other session ended.",
+      "done_other": "Password changed. {{count}} other sessions ended."
     }
   },
   "operatorAction": {
     "reasonLabel": "Reason (kept in the audit log)",
     "cancel": "Cancel",
     "working": "Working…"
+  },
+  "operators": {
+    "title": "Console operators",
+    "body": "Who can sign in to this console and what they may do. The server checks each operator's role on every request; every change here asks for a reason and a fresh authenticator code and is written to the audit log.",
+    "add": "Add operator",
+    "loading": "Loading operators…",
+    "empty": "No operators.",
+    "you": "(you)",
+    "never": "Never",
+    "roleFor": "Role of {{email}}",
+    "disable": "Disable",
+    "enable": "Enable",
+    "mfaReset": "Reset two-step verification",
+    "delete": "Delete",
+    "col": {
+      "name": "Operator",
+      "role": "Role",
+      "status": "Status",
+      "lastLogin": "Last sign-in",
+      "actions": "Actions"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "mfa": "Two-step on",
+      "noMfa": "Not enrolled yet"
+    },
+    "roles": {
+      "owner": "Owner",
+      "operations": "Operations",
+      "support": "Support",
+      "auditor": "Auditor"
+    },
+    "rolesTitle": "What each role may do",
+    "roleHelp": {
+      "owner": "everything, including managing operators.",
+      "operations": "customers, licences, machines, rollouts, sync and support; cannot manage operators.",
+      "support": "support tickets and diagnostic bundles, sync repair; reads the rest.",
+      "auditor": "reads the audit log and platform health; changes nothing."
+    },
+    "form": {
+      "email": "Email",
+      "name": "Name",
+      "role": "Role",
+      "password": "Initial password (at least {{min}} characters; give it to them yourself)"
+    },
+    "done": {
+      "role": "Role of {{email}} changed.",
+      "disabled": "{{email}} is disabled: their sessions ended and they cannot sign in.",
+      "enabled": "{{email}} can sign in again.",
+      "deleted": "{{email}} was deleted (the audit log keeps their actions)."
+    },
+    "dialog": {
+      "create": {
+        "title": "Add an operator",
+        "body": "They sign in with this email and password, then set up their own authenticator app with the one-time code shown next.",
+        "confirm": "Create"
+      },
+      "role": {
+        "title": "Change role?",
+        "body": "{{email}} becomes {{role}}. It applies to their next request.",
+        "confirm": "Change role"
+      },
+      "disable": {
+        "title": "Disable this operator?",
+        "body": "{{email}} is signed out everywhere and cannot sign in until enabled again. The account and its audit trail are kept.",
+        "confirm": "Disable"
+      },
+      "enable": {
+        "title": "Enable this operator?",
+        "body": "{{email}} can sign in again.",
+        "confirm": "Enable"
+      },
+      "mfaReset": {
+        "title": "Reset two-step verification?",
+        "body": "{{email}}'s authenticator and recovery codes stop working and they are signed out. Their next sign-in needs the one-time reset code shown next, then a new enrolment.",
+        "confirm": "Reset"
+      },
+      "delete": {
+        "title": "Delete this operator?",
+        "body": "{{email}} is signed out and deleted. Their past actions stay in the audit log.",
+        "confirm": "Delete"
+      }
+    },
+    "code": {
+      "enrolment": {
+        "title": "One-time enrolment code",
+        "body": "Give this code to {{email}} with their password (not by the same channel if you can). Their first sign-in asks for it before they set up their authenticator. It is shown only now."
+      },
+      "reset": {
+        "title": "One-time reset code",
+        "body": "Give this code to {{email}}. Their next sign-in asks for it, then they set up their authenticator again. It is shown only now."
+      },
+      "done": "I have given it"
+    }
   }
 }

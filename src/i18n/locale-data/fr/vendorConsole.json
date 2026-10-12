@@ -17,7 +17,8 @@
     "sync": "Synchronisation",
     "rollouts": "Déploiements",
     "health": "Santé plateforme",
-    "audit": "Audit et preuves"
+    "audit": "Audit et preuves",
+    "operators": "Opérateurs"
   },
   "home": {
     "title": "Vue d'ensemble du plan de contrôle",
@@ -554,11 +555,117 @@
       "title": "Vos nouveaux codes de secours",
       "body": "Chaque code sert une fois, si vous perdez votre application d'authentification. Ils ne sont affichés que maintenant : imprimez-les ou enregistrez-les en lieu sûr.",
       "done": "Je les ai enregistrés"
+    },
+    "password": {
+      "menu": "Changer le mot de passe",
+      "title": "Changer votre mot de passe",
+      "body": "Au moins {{min}} caractères. Vos autres sessions se terminent ; celle-ci continue.",
+      "current": "Mot de passe actuel",
+      "next": "Nouveau mot de passe",
+      "confirmLabel": "Nouveau mot de passe (à nouveau)",
+      "confirm": "Changer le mot de passe",
+      "done_one": "Mot de passe changé. {{count}} autre session terminée.",
+      "done_other": "Mot de passe changé. {{count}} autres sessions terminées."
     }
   },
   "operatorAction": {
     "reasonLabel": "Motif (conservé dans le journal d'audit)",
     "cancel": "Annuler",
     "working": "En cours…"
+  },
+  "operators": {
+    "title": "Opérateurs de la console",
+    "body": "Qui peut se connecter à cette console et ce qu'il peut faire. Le serveur vérifie le rôle de chaque opérateur à chaque requête ; chaque modification ici demande un motif et un nouveau code d'authentification, et est inscrite au journal d'audit.",
+    "add": "Ajouter un opérateur",
+    "loading": "Chargement des opérateurs…",
+    "empty": "Aucun opérateur.",
+    "you": "(vous)",
+    "never": "Jamais",
+    "roleFor": "Rôle de {{email}}",
+    "disable": "Désactiver",
+    "enable": "Activer",
+    "mfaReset": "Réinitialiser la vérification en deux étapes",
+    "delete": "Supprimer",
+    "col": {
+      "name": "Opérateur",
+      "role": "Rôle",
+      "status": "État",
+      "lastLogin": "Dernière connexion",
+      "actions": "Actions"
+    },
+    "status": {
+      "active": "Actif",
+      "disabled": "Désactivé",
+      "mfa": "Deux étapes activées",
+      "noMfa": "Pas encore configuré"
+    },
+    "roles": {
+      "owner": "Propriétaire",
+      "operations": "Exploitation",
+      "support": "Support",
+      "auditor": "Auditeur"
+    },
+    "rolesTitle": "Ce que chaque rôle peut faire",
+    "roleHelp": {
+      "owner": "tout, y compris gérer les opérateurs.",
+      "operations": "clients, licences, machines, déploiements, synchronisation et support ; ne gère pas les opérateurs.",
+      "support": "tickets et paquets de diagnostic, réparation de synchronisation ; lit le reste.",
+      "auditor": "lit le journal d'audit et l'état de la plateforme ; ne modifie rien."
+    },
+    "form": {
+      "email": "E-mail",
+      "name": "Nom",
+      "role": "Rôle",
+      "password": "Mot de passe initial (au moins {{min}} caractères ; transmettez-le vous-même)"
+    },
+    "done": {
+      "role": "Rôle de {{email}} modifié.",
+      "disabled": "{{email}} est désactivé : ses sessions sont terminées et il ne peut plus se connecter.",
+      "enabled": "{{email}} peut de nouveau se connecter.",
+      "deleted": "{{email}} a été supprimé (le journal d'audit conserve ses actions)."
+    },
+    "dialog": {
+      "create": {
+        "title": "Ajouter un opérateur",
+        "body": "Il se connecte avec cet e-mail et ce mot de passe, puis configure sa propre application d'authentification avec le code à usage unique affiché ensuite.",
+        "confirm": "Créer"
+      },
+      "role": {
+        "title": "Changer le rôle ?",
+        "body": "{{email}} devient {{role}}. Cela s'applique dès sa prochaine requête.",
+        "confirm": "Changer le rôle"
+      },
+      "disable": {
+        "title": "Désactiver cet opérateur ?",
+        "body": "{{email}} est déconnecté partout et ne peut plus se connecter avant réactivation. Le compte et son historique d'audit sont conservés.",
+        "confirm": "Désactiver"
+      },
+      "enable": {
+        "title": "Activer cet opérateur ?",
+        "body": "{{email}} peut de nouveau se connecter.",
+        "confirm": "Activer"
+      },
+      "mfaReset": {
+        "title": "Réinitialiser la vérification en deux étapes ?",
+        "body": "L'application d'authentification et les codes de secours de {{email}} cessent de fonctionner et il est déconnecté. Sa prochaine connexion demande le code de réinitialisation affiché ensuite, puis une nouvelle configuration.",
+        "confirm": "Réinitialiser"
+      },
+      "delete": {
+        "title": "Supprimer cet opérateur ?",
+        "body": "{{email}} est déconnecté et supprimé. Ses actions passées restent dans le journal d'audit.",
+        "confirm": "Supprimer"
+      }
+    },
+    "code": {
+      "enrolment": {
+        "title": "Code d'activation à usage unique",
+        "body": "Remettez ce code à {{email}} avec son mot de passe (si possible par un autre canal). Sa première connexion le demande avant la configuration de l'application d'authentification. Il n'est affiché que maintenant."
+      },
+      "reset": {
+        "title": "Code de réinitialisation à usage unique",
+        "body": "Remettez ce code à {{email}}. Sa prochaine connexion le demande, puis il configure de nouveau son application d'authentification. Il n'est affiché que maintenant."
+      },
+      "done": "Je l'ai transmis"
+    }
   }
 }

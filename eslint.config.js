@@ -6,7 +6,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "api/dist/**", "node_modules/**", "api/node_modules/**", "coverage/**"] },
+  // .claude/: local agent worktrees of this repository (not part of it).
+  { ignores: ["dist/**", "api/dist/**", "node_modules/**", "api/node_modules/**", "coverage/**", ".claude/**"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
