@@ -46,7 +46,7 @@ export const STANDARD_RUNBOOKS: ReadonlyArray<{ runbook_id: string; title: strin
     "first_steps": [
       "Platform health shows the database size, sync log rows and the backup status from backup_runs.",
       "On the server: df -h, docker system df, and du -sh of the backup_data and pg_wal_archive volumes.",
-      "Shorten BACKUP_LOCAL_RETENTION_DAYS or SYNC_INGRESS_RETENTION_DAYS only after an off-site copy exists (deploy/BACKUP_AND_RESTORE.md).",
+      "Shorten BACKUP_LOCAL_RETENTION_DAYS or SYNC_INGRESS_RETENTION_DAYS only once the on-premise copy is pulled every night (deploy/backup-pull/README.md).",
       "Never run docker image prune -a: the MinIO images cannot be pulled again (deploy/CI.md)."
     ]
   },
@@ -66,8 +66,9 @@ export const STANDARD_RUNBOOKS: ReadonlyArray<{ runbook_id: string; title: strin
     "title": "Restore the database",
     "summary": "Recover lost or damaged data from the nightly dump or by point-in-time recovery.",
     "first_steps": [
+      "The backups are encrypted: ask the owner for the backup private key (password manager) and put it on the server in memory only, as deploy/BACKUP_AND_RESTORE.md section 4 shows; shred it afterwards.",
       "Follow deploy/BACKUP_AND_RESTORE.md section 4: restore.sh restores a dump into a new database and verifies row counts, migrations and the audit chain.",
-      "For a lost volume, use restore-physical.sh with the base backup and the WAL archive (point-in-time recovery).",
+      "For a lost volume, use restore-physical.sh with the base backup and the WAL archive (point-in-time recovery; the server needs the key while it replays the WAL).",
       "After any restore, run restore-drill.sh and a fresh backup.sh, then note the incident on a support ticket."
     ]
   }

@@ -131,6 +131,33 @@ async function main() {
     const mediaStored = await readObject(OFFSITE_BUCKET, `${prefix}/media/${mediaKey}.age`);
     assert.ok(!mediaStored.toString("latin1").includes(marker));
 
+    // Files already encrypted locally (BACKUP_LOCAL_ENCRYPTION=required) go up as they are, under
+    // the same remote names as in plaintext mode; a fake .age file is refused.
+    const sealed = join(work, "maintafox-20261013T000000Z.dump.age");
+    assert.equal(spawnSync("age", ["--encrypt", "--recipient", recipient, "--output", sealed, dump]).status, 0);
+    r = tool(["push-file", "--file", sealed, "--key", "pg_dump/maintafox-20261013T000000Z.dump"], env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(
+      await readObject(OFFSITE_BUCKET, `${prefix}/pg_dump/maintafox-20261013T000000Z.dump.age`),
+      readFileSync(sealed),
+      "an already encrypted file is uploaded byte for byte (not encrypted twice)",
+    );
+    const sealedWal = join(work, "wal-sealed");
+    mkdirSync(sealedWal);
+    const segPlain = join(work, "000000010000000000000009.gz");
+    writeFileSync(segPlain, "seg9");
+    const segSealed = join(sealedWal, "000000010000000000000009.gz.age");
+    assert.equal(spawnSync("age", ["--encrypt", "--recipient", recipient, "--output", segSealed, segPlain]).status, 0);
+    r = tool(["push-dir", "--dir", sealedWal, "--key-prefix", "wal"], env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).result, { uploaded: 1, already: 0 });
+    assert.ok((await listKeys(OFFSITE_BUCKET, `${prefix}/wal/`)).includes(`${prefix}/wal/000000010000000000000009.gz.age`));
+    const fake = join(work, "fake.dump.age");
+    writeFileSync(fake, `${marker} not encrypted`);
+    r = tool(["push-file", "--file", fake, "--key", "pg_dump/fake.dump"], env);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /is named \.age but is not an age-encrypted file/);
+
     // Refusals: missing setting, malformed recipient, path traversal.
     r = tool(["list", "--key-prefix", "wal"], { ...env, BACKUP_OFFSITE_S3_BUCKET: "" });
     assert.notEqual(r.status, 0);

@@ -13,13 +13,16 @@
  *
  * Remote keys are `${BACKUP_OFFSITE_S3_PREFIX}/<key>.age`. push-dir and push-media upload only the
  * files that are not off-site yet (WAL segments, base backups and media objects never change).
+ * A local file that is already age-encrypted (`*.age`, BACKUP_LOCAL_ENCRYPTION=required, encrypted
+ * to the same BACKUP_AGE_RECIPIENT) is uploaded as it is, under its name without `.age`, so the
+ * off-site layout is the same in both modes and nothing is encrypted twice.
  * Required environment (all of them, no defaults): BACKUP_OFFSITE_S3_ENDPOINT, _REGION, _BUCKET,
  * _ACCESS_KEY, _SECRET_KEY, _PREFIX, _FORCE_PATH_STYLE (true|false), BACKUP_AGE_RECIPIENT.
  * push-media also needs the media bucket settings the API uses (S3_ENDPOINT, S3_ACCESS_KEY, ...).
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { closeSync, createReadStream, createWriteStream, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -29,6 +32,7 @@ import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } fr
 import { TenantMediaObjectStore } from "../storage/object-store.js";
 
 const ENCRYPTED_SUFFIX = ".age";
+const AGE_HEADER = "age-encryption.org/v1\n";
 
 export type OffsiteConfig = {
   endpoint: string;
@@ -106,6 +110,18 @@ async function sha256File(path: string): Promise<string> {
   return hash.digest("hex");
 }
 
+/** The file starts with the age v1 header (it was encrypted before it reached this tool). */
+export function isAgeFile(path: string): boolean {
+  const fd = openSync(path, "r");
+  try {
+    const head = Buffer.alloc(AGE_HEADER.length);
+    const n = readSync(fd, head, 0, head.length, 0);
+    return n === head.length && head.toString("latin1") === AGE_HEADER;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export class OffsiteStore {
   private readonly client: S3Client;
 
@@ -142,8 +158,29 @@ export class OffsiteStore {
     return keys;
   }
 
-  /** Encrypts `plainPath` with age and uploads it as `key`; the plaintext SHA-256 travels as metadata. */
-  async pushFile(plainPath: string, key: string): Promise<{ key: string; bytes: number }> {
+  /**
+   * Uploads `path` as `key`: a plaintext file is encrypted with age first (its SHA-256 travels as
+   * metadata); a `*.age` file, already encrypted on this server to the same recipient, is uploaded
+   * as it is. A `*.age` name without the age header is refused, never uploaded as plaintext.
+   */
+  async pushFile(path: string, key: string): Promise<{ key: string; bytes: number }> {
+    if (path.endsWith(ENCRYPTED_SUFFIX)) {
+      if (!isAgeFile(path)) throw new Error(`${path} is named .age but is not an age-encrypted file`);
+      const remote = this.remoteKey(key);
+      const bytes = statSync(path).size;
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.config.bucket,
+          Key: remote,
+          Body: createReadStream(path),
+          ContentLength: bytes,
+          ContentType: "application/octet-stream",
+          Metadata: { "encrypted-on-server": "true" },
+        }),
+      );
+      return { key: remote, bytes };
+    }
+    const plainPath = path;
     const remote = this.remoteKey(key);
     const work = mkdtempSync(join(tmpdir(), "mfx-offsite-"));
     try {
@@ -191,7 +228,8 @@ export async function pushDirectory(store: OffsiteStore, dir: string, keyPrefix:
   let uploaded = 0;
   let already = 0;
   for (const file of listFilesRecursive(dir)) {
-    const key = `${assertRelativeKey(keyPrefix)}/${relative(dir, file).split(sep).join("/")}`;
+    const name = relative(dir, file).split(sep).join("/");
+    const key = `${assertRelativeKey(keyPrefix)}/${name.endsWith(ENCRYPTED_SUFFIX) ? name.slice(0, -ENCRYPTED_SUFFIX.length) : name}`;
     if (present.has(key)) {
       already += 1;
       continue;

@@ -78,10 +78,11 @@ jobs:
       - name: Install PostgreSQL 16 server and client programs
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-16 postgresql-client-16
+          sudo apt-get install -y postgresql-16 postgresql-client-16 age
           echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:backup-drill
+      - run: pnpm --filter maintafox-control-api run test:backup-keygen
 
   backup-offsite:
     name: Object storage (off-site backup copy, diagnostic bundle upload)
@@ -113,7 +114,7 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:support-bundles
 
   docker-images:
-    name: Docker images build (API + backup)
+    name: Docker images build (API + backup + postgres + backup pull)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -125,7 +126,11 @@ jobs:
           'pg_dump --version && pg_restore --version && pg_basebackup --version && pg_archivecleanup --version
           && psql --version && createdb --version && age --version && node --version
           && pg_dump --version | grep -q "PostgreSQL) 16\."
-          && test -f /opt/maintafox-backup/scheduler.sh && test -f dist/tools/verify-restored-database.js'
+          && test -f /opt/maintafox-backup/scheduler.sh && test -f /opt/maintafox-backup/keygen.sh
+          && test -f dist/tools/verify-restored-database.js'
+      - run: docker build -t maintafox-postgres:ci deploy/postgres
+      - name: Postgres image can encrypt WAL (age) and is still PostgreSQL 16
+        run: docker run --rm --entrypoint sh maintafox-postgres:ci -c 'age --version && postgres --version | grep -q "PostgreSQL) 16\."'
       # minio/* is excluded on purpose and listed as a known issue in deploy/CI.md: MinIO stopped
       # publishing images; every other image a fresh server needs must pull.
       - name: Images referenced by docker-compose.yml can be pulled (a fresh server must start)
@@ -161,3 +166,12 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           sudo mv gitleaks /usr/local/bin/gitleaks
       - run: gitleaks git . --redact --no-banner --verbose
+
+  backup-pull:
+    name: Read-only backup pull (SFTP container + Windows pull script under pwsh)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y age
+      - run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
+      - run: bash deploy/backup-pull/ci-test.sh

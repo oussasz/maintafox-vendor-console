@@ -2,23 +2,34 @@
  * Backup and restore drill against a real PostgreSQL 16 cluster (deploy/BACKUP_AND_RESTORE.md).
  *
  * Needs the PostgreSQL 16 server and client programs on PATH (initdb, pg_ctl, postgres, pg_dump,
- * pg_restore, pg_basebackup, pg_archivecleanup, psql, createdb, dropdb) and a POSIX `sh` with gzip
- * (Linux, or Git Bash on Windows). It refuses to run without them; it never pretends to pass.
+ * pg_restore, pg_basebackup, pg_archivecleanup, psql, createdb, dropdb), `age` + `age-keygen`, and
+ * a POSIX `sh` with gzip (Linux, or Git Bash on Windows). It refuses to run without them; it never
+ * pretends to pass.
  *
  * The cluster runs with the production WAL settings (archive_command = deploy/backup/wal-archive.sh,
  * hba_file = deploy/backup/pg_hba.conf). The real control API writes data into it, then:
- *   1. deploy/backup/backup.sh            -> dump + base backup + backup_runs row (off-site disabled)
- *   2. deploy/backup/restore-drill.sh     -> restore into a scratch DB, counts + migrations + audit
- *                                            chain verified, scratch DB dropped, drill recorded
- *   3. restore.sh refuses a corrupted dump (checksum) and an existing target database
- *   4. restore.sh detects a tampered audit ledger (chain broken -> exit 1)
- *   5. point-in-time recovery: base backup + archived WAL replayed into a new cluster contains the
- *      rows written AFTER the base backup; with a recovery target time before them it does not.
+ *   A. BACKUP_LOCAL_ENCRYPTION=disabled (the previous release): backup.sh writes plaintext dump,
+ *      base backup and WAL; the dump is restore-verified before it is stored.
+ *   B. The server is switched to required (as on deploy) and backup.sh runs again:
+ *      - refuses without a recipient (and so does wal-archive.sh)
+ *      - encrypts the plaintext left by A, deletes it; every artifact is *.age, files 600,
+ *        directories 700 (Linux), SHA256SUMS matches, the work directory is emptied (a stale
+ *        plaintext file left there by a "crash" is gone)
+ *   C. restore-drill.sh: fresh dump, scratch restore, verified, discarded, recorded
+ *   D. restore.sh with the owner's key restores an encrypted dump (new one and a migrated one);
+ *      without the key / with the wrong key: a clear error
+ *   E. corrupted dump (checksum) and existing target database refused; tampered audit ledger
+ *      detected
+ *   F. point-in-time recovery from the encrypted base backup + encrypted WAL archive with the key
+ *      mounted for the restore: full replay contains the rows written after the base backup, a
+ *      target time before them does not; without the key the base backup is refused and the
+ *      server stops recovery (it never promotes a database missing data)
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -37,6 +48,9 @@ const PG_USER = "mfx_drill";
 const PG_PASSWORD = "drill-password-not-secret";
 const DB_NAME = "maintafox";
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The current uid:gid as the scripts' `id` sees it (BACKUP_FILES_OWNER). */
+const FILES_OWNER = spawnSync("sh", ["-c", 'printf "%s:%s" "$(id -u)" "$(id -g)"'], { encoding: "utf8" }).stdout;
+const IS_WINDOWS = process.platform === "win32";
 /** Forward slashes: valid on Windows and inside postgresql.conf strings. */
 const fwd = (p) => p.replace(/\\/g, "/");
 
@@ -53,6 +67,11 @@ function requireTools() {
   }
   const sh = spawnSync("sh", ["-c", "command -v gzip && command -v awk && command -v sha256sum"], { encoding: "utf8" });
   if (sh.status !== 0) throw new Error("a POSIX sh with gzip, awk and sha256sum is required on PATH");
+  for (const tool of ["age", "age-keygen"]) {
+    if (spawnSync(tool, ["--version"], { encoding: "utf8" }).status !== 0) {
+      throw new Error(`${tool} is not on PATH: the encrypted backups need it (CI: apt-get install age)`);
+    }
+  }
 }
 
 function freePort() {
@@ -76,13 +95,15 @@ function run(cmd, args, env, { allowFail = false } = {}) {
 
 /** A Postgres cluster with the production WAL archiving settings, managed with pg_ctl. */
 class Cluster {
-  constructor(dataDir, port, walArchiveDir) {
+  /** serverEnv: the encryption settings of the postgres service (BACKUP_LOCAL_ENCRYPTION, ...). */
+  constructor(dataDir, port, walArchiveDir, serverEnv) {
     this.dataDir = dataDir;
     this.port = port;
     this.walArchiveDir = walArchiveDir;
+    this.serverEnv = serverEnv;
   }
   env() {
-    return { ...process.env, MFX_WAL_ARCHIVE_DIR: fwd(this.walArchiveDir), PGPASSWORD: PG_PASSWORD };
+    return { ...process.env, ...this.serverEnv, MFX_WAL_ARCHIVE_DIR: fwd(this.walArchiveDir), PGPASSWORD: PG_PASSWORD };
   }
   start() {
     // stdio ignored: the server inherits pg_ctl's handles, so captured pipes would never close
@@ -114,7 +135,7 @@ class Cluster {
   }
 }
 
-function initCluster(root, port, walArchiveDir) {
+function initCluster(root, port, walArchiveDir, serverEnv) {
   const dataDir = join(root, `data-${port}`);
   const pwfile = join(root, "pwfile");
   writeFileSync(pwfile, `${PG_PASSWORD}\n`);
@@ -136,13 +157,16 @@ function initCluster(root, port, walArchiveDir) {
       "",
     ].join("\n"),
   );
-  return new Cluster(dataDir, port, walArchiveDir);
+  return new Cluster(dataDir, port, walArchiveDir, serverEnv);
 }
 
-function backupEnv(cluster, backupDir) {
+function backupEnv(cluster, backupDir, workDir) {
   return {
     ...process.env,
+    ...cluster.serverEnv,
     BACKUP_DIR: fwd(backupDir),
+    BACKUP_WORK_DIR: fwd(workDir),
+    BACKUP_FILES_OWNER: FILES_OWNER,
     MFX_WAL_ARCHIVE_DIR: fwd(cluster.walArchiveDir),
     MFX_API_DIR: fwd(API_DIR),
     BACKUP_LOCAL_RETENTION_DAYS: "7",
@@ -199,7 +223,8 @@ async function startApi(cluster, port) {
   });
   proc.stdout.on("data", (b) => (output += String(b)));
   proc.stderr.on("data", (b) => (output += String(b)));
-  for (let i = 0; i < 160; i += 1) {
+  // Up to 2 minutes: the migrations run against a cluster that archives every WAL segment.
+  for (let i = 0; i < 480; i += 1) {
     try {
       if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return proc;
     } catch {
@@ -239,17 +264,57 @@ async function seedThroughApi(port) {
   }
 }
 
+/** Every file under `dir`, relative, with forward slashes. */
+function listFiles(dir, prefix = "") {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...listFiles(join(dir, entry.name), rel));
+    else out.push(rel);
+  }
+  return out.sort();
+}
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** Files 600 and directories 700 (POSIX permissions do not exist on Windows). */
+function assertPrivate(dir) {
+  if (IS_WINDOWS) return;
+  assert.equal(statSync(dir).mode & 0o777, 0o700, `${dir} must be mode 700`);
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) assertPrivate(full);
+    else assert.equal(statSync(full).mode & 0o777, 0o600, `${full} must be mode 600`);
+  }
+}
+
+function restore(env, dump, target, extra = {}) {
+  return run("sh", [join(BACKUP_SCRIPTS, "restore.sh"), fwd(dump), target], { ...env, ...extra }, { allowFail: true });
+}
+
 async function main() {
   requireTools();
   const root = mkdtempSync(join(tmpdir(), "mfx-backup-drill-"));
   const walArchive = join(root, "wal-archive");
   const backupDir = join(root, "backups");
+  const workDir = join(root, "backup-work");
   mkdirSync(walArchive);
   mkdirSync(backupDir);
+  // The owner's key pair: the private key stays with the "owner" (this test), never in the
+  // environment of the backup scripts.
+  const ownerKey = join(root, "owner.key");
+  run("age-keygen", ["-o", ownerKey], process.env);
+  const recipient = run("age-keygen", ["-y", ownerKey], process.env).stdout.trim();
+  const wrongKey = join(root, "wrong.key");
+  run("age-keygen", ["-o", wrongKey], process.env);
+  const plaintextMode = { BACKUP_LOCAL_ENCRYPTION: "disabled", BACKUP_AGE_RECIPIENT: "" };
+  const encryptedMode = { BACKUP_LOCAL_ENCRYPTION: "required", BACKUP_AGE_RECIPIENT: recipient };
   const clusters = [];
   let api = null;
   try {
-    const cluster = initCluster(root, await freePort(), walArchive);
+    const cluster = initCluster(root, await freePort(), walArchive, plaintextMode);
     clusters.push(cluster);
     cluster.start();
     run("createdb", ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", PG_USER, DB_NAME], cluster.env());
@@ -264,30 +329,113 @@ async function main() {
     const auditBefore = (await cluster.query("SELECT COUNT(*)::int AS c FROM audit_records"))[0].c;
     assert.ok(auditBefore >= 2, "seed must have written audit records");
 
-    // 1. Nightly backup, off-site disabled.
-    const env = backupEnv(cluster, backupDir);
-    const backup = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], env);
+    // A. The previous release: plaintext backups (the dump is restore-verified before it is stored).
+    let env = backupEnv(cluster, backupDir, workDir);
+    let backup = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], env);
     assert.match(backup.stderr, /off-site copy is disabled/);
-    const dumps = readdirSync(join(backupDir, "pg_dump")).filter((f) => f.endsWith(".dump"));
-    assert.equal(dumps.length, 1, "one dump file");
-    assert.ok(existsSync(join(backupDir, "pg_dump", `${dumps[0]}.sha256`)), "dump checksum file");
-    const bases = readdirSync(join(backupDir, "base"));
-    assert.equal(bases.length, 1, "one base backup");
-    assert.ok(existsSync(join(backupDir, "base", bases[0], "base.tar.gz")));
-    const [nightly] = await cluster.query("SELECT status, offsite_status, dump_file, detail FROM backup_runs WHERE kind = 'nightly'");
-    assert.equal(nightly.status, "succeeded", nightly.detail);
-    assert.equal(nightly.offsite_status, "disabled");
-    assert.equal(nightly.dump_file, dumps[0]);
-    assert.match(nightly.detail, /OFF-SITE COPY DISABLED/);
+    await waitArchived(cluster);
+    const legacyDumps = readdirSync(join(backupDir, "pg_dump")).filter((f) => f.endsWith(".dump"));
+    assert.equal(legacyDumps.length, 1, "one plaintext dump");
+    assert.ok(existsSync(join(backupDir, "pg_dump", `${legacyDumps[0]}.sha256`)), "dump checksum file");
+    const legacyBases = readdirSync(join(backupDir, "base"));
+    assert.equal(legacyBases.length, 1, "one base backup");
+    assert.ok(existsSync(join(backupDir, "base", legacyBases[0], "base.tar.gz")));
+    assert.ok(readdirSync(walArchive).some((f) => /^[0-9A-F]{24}\.gz$/.test(f)), "plaintext WAL archived");
+    const [legacyRun] = await cluster.query("SELECT status, offsite_status, dump_file, detail FROM backup_runs WHERE kind = 'nightly'");
+    assert.equal(legacyRun.status, "succeeded", legacyRun.detail);
+    assert.equal(legacyRun.offsite_status, "disabled");
+    assert.equal(legacyRun.dump_file, legacyDumps[0]);
+    assert.match(legacyRun.detail, /restored into a scratch database and verified \(\d+ tables\) before it was stored/);
+    assert.match(legacyRun.detail, /NOT ENCRYPTED at rest/);
+    assert.match(legacyRun.detail, /OFF-SITE COPY DISABLED/);
+    const verifyLeft = await cluster.query("SELECT datname FROM pg_database WHERE datname LIKE 'mfx_nightly_verify_%'", [], "postgres");
+    assert.equal(verifyLeft.length, 0, "nightly scratch database dropped");
 
-    // Rows written after the base backup (only recoverable through the WAL archive).
+    // B. Deploy: the server and the backup switch to BACKUP_LOCAL_ENCRYPTION=required.
+    const refused = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], { ...env, BACKUP_LOCAL_ENCRYPTION: "required", BACKUP_AGE_RECIPIENT: "" }, { allowFail: true });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /BACKUP_AGE_RECIPIENT is empty: run keygen\.sh first.*refusing to write unencrypted backups/);
+    const segment = join(root, "segment");
+    writeFileSync(segment, "not a real WAL segment");
+    const walRefused = run(
+      "sh",
+      [join(BACKUP_SCRIPTS, "wal-archive.sh"), fwd(segment), "000000010000000000000099"],
+      { ...cluster.env(), BACKUP_LOCAL_ENCRYPTION: "required", BACKUP_AGE_RECIPIENT: "" },
+      { allowFail: true },
+    );
+    assert.notEqual(walRefused.status, 0);
+    assert.match(walRefused.stderr, /refusing to archive unencrypted WAL/);
+    assert.ok(!existsSync(join(walArchive, "000000010000000000000099.gz")), "nothing archived without a recipient");
+
+    cluster.stop();
+    cluster.serverEnv = encryptedMode;
+    cluster.start();
+    env = backupEnv(cluster, backupDir, workDir);
+    // A run that "crashed" earlier left plaintext in the work directory.
+    mkdirSync(join(workDir, "nightly-crashed"), { recursive: true });
+    writeFileSync(join(workDir, "nightly-crashed", "maintafox-crashed.dump"), "PLAINTEXT LEFT BY A CRASH");
+    backup = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], env);
+    await waitArchived(cluster);
+    assert.deepEqual(readdirSync(workDir), [], "work directory emptied (stale plaintext removed, own files deleted)");
+    const files = listFiles(backupDir);
+    const walFiles = readdirSync(walArchive).sort();
+    for (const f of files) {
+      assert.ok(f.endsWith(".age") || f.endsWith("/start-wal") || f === "SHA256SUMS", `unexpected file in the backup volume: ${f}`);
+    }
+    for (const f of walFiles) {
+      assert.ok(/\.gz\.age(\.sha256)?$/.test(f), `unexpected file in the WAL archive: ${f}`);
+    }
+    const sealedFiles = [
+      ...files.filter((f) => f.endsWith(".age")).map((f) => join(backupDir, f)),
+      ...walFiles.filter((f) => f.endsWith(".age")).map((f) => join(walArchive, f)),
+    ];
+    for (const full of sealedFiles) {
+      assert.equal(readFileSync(full).subarray(0, 21).toString(), "age-encryption.org/v1", `${full} is an age file`);
+    }
+    assert.ok(files.includes(`pg_dump/${legacyDumps[0]}.age`) && files.includes(`pg_dump/${legacyDumps[0]}.sha256.age`), "legacy dump migrated");
+    assert.ok(files.includes(`base/${legacyBases[0]}/base.tar.gz.age`) && files.includes(`base/${legacyBases[0]}/start-wal`), "legacy base backup migrated");
+    assertPrivate(backupDir);
+    assertPrivate(walArchive);
+    const dumps = files
+      .filter((f) => /^pg_dump\/.*\.dump\.age$/.test(f) && f !== `pg_dump/${legacyDumps[0]}.age`)
+      .map((f) => f.slice("pg_dump/".length));
+    assert.equal(dumps.length, 1, "one new encrypted dump");
+    const bases = readdirSync(join(backupDir, "base")).sort();
+    assert.equal(bases.length, 2, "legacy + new base backup");
+    const newBase = bases[1];
+    assert.ok(existsSync(join(backupDir, "base", newBase, "base.tar.gz.age")));
+    assert.match(readFileSync(join(backupDir, "base", newBase, "start-wal"), "utf8"), /^[0-9A-F]{24}\n$/);
+    // SHA256SUMS: every encrypted file present at the end of the run, as the pull client sees it.
+    // (WAL archived after the run is listed by the next run.)
+    const sums = readFileSync(join(backupDir, "SHA256SUMS"), "utf8").trim().split("\n");
+    const listed = sums.map((line) => {
+      const m = /^([0-9a-f]{64}) {2}((?:backups|wal)\/\S+\.age)$/.exec(line);
+      assert.ok(m, `SHA256SUMS line: ${JSON.stringify(line)}`);
+      const [, hash, rel] = m;
+      const full = rel.startsWith("wal/") ? join(walArchive, rel.slice(4)) : join(backupDir, rel.slice("backups/".length));
+      assert.equal(sha256File(full), hash, `SHA256SUMS hash of ${rel}`);
+      return rel;
+    });
+    assert.deepEqual(
+      listed.filter((rel) => rel.startsWith("backups/")).sort(),
+      files.filter((f) => f.endsWith(".age")).map((f) => `backups/${f}`).sort(),
+    );
+    assert.ok(listed.some((rel) => rel.startsWith("wal/")), "WAL files listed");
+    const [encRun] = await cluster.query("SELECT status, dump_file, detail FROM backup_runs WHERE kind = 'nightly' ORDER BY started_at DESC LIMIT 1");
+    assert.equal(encRun.status, "succeeded", encRun.detail);
+    assert.equal(encRun.dump_file, dumps[0]);
+    assert.match(encRun.detail, /^Encrypted \d+ plaintext backup files left by an earlier release and deleted the plaintext\./);
+    assert.match(encRun.detail, /encrypted at rest \(age\)/);
+
+    // Rows written after the encrypted base backup (only recoverable through the encrypted WAL).
     await delay(1100);
     const [{ t: targetBeforeInsert }] = await cluster.query("SELECT now()::text AS t");
     await delay(1100);
     await cluster.query("INSERT INTO users (email, password_hash) VALUES ('after-base@maintafox.systems', 'x')");
     await waitArchived(cluster);
+    assert.ok(readdirSync(walArchive).every((f) => !/\.gz$/.test(f)), "new WAL is archived encrypted only");
 
-    // 2. Restore drill (scratch DB, verified, dropped, recorded).
+    // C. Restore drill: fresh dump, scratch restore, verified, discarded, recorded.
     const drill = run("sh", [join(BACKUP_SCRIPTS, "restore-drill.sh")], env);
     const report = JSON.parse(drill.stdout);
     assert.equal(report.ok, true, JSON.stringify(report.problems));
@@ -299,37 +447,62 @@ async function main() {
     const [drillRun] = await cluster.query("SELECT status, offsite_status, detail FROM backup_runs WHERE kind = 'restore_drill'");
     assert.equal(drillRun.status, "succeeded", drillRun.detail);
     assert.equal(drillRun.offsite_status, "not_applicable");
+    assert.match(drillRun.detail, /took a fresh dump .* then discarded both/);
     const scratch = await cluster.query("SELECT datname FROM pg_database WHERE datname LIKE 'mfx_restore_drill_%'", [], "postgres");
     assert.equal(scratch.length, 0, "scratch database dropped");
+    assert.deepEqual(readdirSync(workDir), [], "drill plaintext discarded");
 
-    // 3. Refusals: corrupted dump, existing target database.
-    const dumpPath = join(backupDir, "pg_dump", dumps[0]);
+    // D. Restoring an encrypted dump needs the owner's key.
+    const encDump = join(backupDir, "pg_dump", dumps[0]);
+    const noKey = restore(env, encDump, "mfx_nokey");
+    assert.notEqual(noKey.status, 0);
+    assert.match(noKey.stderr, /is encrypted: set AGE_IDENTITY_FILE to the file holding the owner's private key/);
+    const badKey = restore(env, encDump, "mfx_badkey", { AGE_IDENTITY_FILE: fwd(wrongKey) });
+    assert.notEqual(badKey.status, 0);
+    assert.match(badKey.stderr, /it is not the private key these backups were encrypted to/);
+    const withKey = restore(env, encDump, "mfx_withkey", { AGE_IDENTITY_FILE: fwd(ownerKey) });
+    assert.equal(withKey.status, 0, withKey.stderr);
+    assert.match(withKey.stderr, /checksum ok/);
+    assert.equal(JSON.parse(withKey.stdout).ok, true);
+    const migrated = restore(env, join(backupDir, "pg_dump", `${legacyDumps[0]}.age`), "mfx_migrated", { AGE_IDENTITY_FILE: fwd(ownerKey) });
+    assert.equal(migrated.status, 0, migrated.stderr);
+    assert.equal(JSON.parse(migrated.stdout).ok, true, "a migrated legacy dump decrypts and restores");
+    assert.deepEqual(readdirSync(workDir), [], "decrypted dumps removed after the restore");
+
+    // E. Refusals: corrupted dump, existing target database; tampered audit ledger detected.
+    const plainDump = join(root, "decrypted.dump");
+    run("age", ["--decrypt", "--identity", ownerKey, "--output", plainDump, encDump], process.env);
+    run("age", ["--decrypt", "--identity", ownerKey, "--output", `${plainDump}.sha256`, `${encDump.slice(0, -".dump.age".length)}.dump.sha256.age`], process.env);
     const corrupt = join(root, "corrupt.dump");
-    const bytes = readFileSync(dumpPath);
+    const bytes = readFileSync(plainDump);
     bytes[bytes.length - 10] ^= 0xff;
     writeFileSync(corrupt, bytes);
-    copyFileSync(`${dumpPath}.sha256`, `${corrupt}.sha256`);
-    const bad = run("sh", [join(BACKUP_SCRIPTS, "restore.sh"), corrupt, "mfx_corrupt"], env, { allowFail: true });
+    copyFileSync(`${plainDump}.sha256`, `${corrupt}.sha256`);
+    const bad = restore(env, corrupt, "mfx_corrupt");
     assert.notEqual(bad.status, 0);
     assert.match(bad.stderr, /checksum mismatch/);
-    const exists = run("sh", [join(BACKUP_SCRIPTS, "restore.sh"), dumpPath, DB_NAME], env, { allowFail: true });
+    const exists = restore(env, plainDump, DB_NAME);
     assert.notEqual(exists.status, 0);
     assert.match(exists.stderr, /already exists/);
-
-    // 4. A tampered audit ledger is detected.
-    run("sh", [join(BACKUP_SCRIPTS, "restore.sh"), dumpPath, "mfx_tamper_src"], env);
+    const tamperSrc = restore(env, plainDump, "mfx_tamper_src");
+    assert.equal(tamperSrc.status, 0, tamperSrc.stderr);
     await cluster.query("UPDATE audit_records SET actor_id = 'forged' WHERE sequence = 1", [], "mfx_tamper_src");
     const tamperedDump = join(root, "tampered.dump");
     run("pg_dump", ["-h", "127.0.0.1", "-p", String(cluster.port), "-U", PG_USER, "--format=custom", `--file=${tamperedDump}`, "mfx_tamper_src"], cluster.env());
-    const tampered = run("sh", [join(BACKUP_SCRIPTS, "restore.sh"), tamperedDump, "mfx_tamper_check"], env, { allowFail: true });
+    const tampered = restore(env, tamperedDump, "mfx_tamper_check");
     assert.equal(tampered.status, 1);
     assert.match(tampered.stdout, /audit chain integrity_mismatch at sequence 1/);
 
-    // 5. Point-in-time recovery from the base backup + WAL archive.
-    const baseDir = join(backupDir, "base", bases[0]);
+    // F. Point-in-time recovery from the encrypted base backup + encrypted WAL archive.
+    const baseDir = join(backupDir, "base", newBase);
     const walRestore = fwd(join(BACKUP_SCRIPTS, "wal-restore.sh"));
-    const full = new Cluster(join(root, "pitr-full"), await freePort(), walArchive);
-    run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(full.dataDir), walRestore], env);
+    const refusedBase = run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(join(root, "pitr-nokey")), walRestore], env, { allowFail: true });
+    assert.notEqual(refusedBase.status, 0);
+    assert.match(refusedBase.stderr, /is encrypted: set AGE_IDENTITY_FILE/);
+    // The key is mounted only for the restore: in the restore script's and the server's environment.
+    const restoreKey = { AGE_IDENTITY_FILE: fwd(ownerKey) };
+    const full = new Cluster(join(root, "pitr-full"), await freePort(), walArchive, { ...encryptedMode, ...restoreKey });
+    run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(full.dataDir), walRestore], { ...env, ...restoreKey });
     clusters.push(full);
     full.start();
     await waitPromoted(full);
@@ -338,8 +511,8 @@ async function main() {
     assert.equal((await full.query("SELECT COUNT(*)::int AS c FROM tenants"))[0].c, 2);
     full.stop();
 
-    const pit = new Cluster(join(root, "pitr-target"), await freePort(), walArchive);
-    run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(pit.dataDir), walRestore, targetBeforeInsert], env);
+    const pit = new Cluster(join(root, "pitr-target"), await freePort(), walArchive, { ...encryptedMode, ...restoreKey });
+    run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(pit.dataDir), walRestore, targetBeforeInsert], { ...env, ...restoreKey });
     clusters.push(pit);
     pit.start();
     await waitPromoted(pit);
@@ -348,7 +521,16 @@ async function main() {
     assert.equal((await pit.query("SELECT COUNT(*)::int AS c FROM tenants"))[0].c, 2);
     pit.stop();
 
-    console.log("backup-restore-drill: OK (backup, restore drill, refusals, audit tamper, point-in-time recovery)");
+    // The server without the key: recovery stops with a clear error instead of promoting early.
+    const keyless = new Cluster(join(root, "pitr-keyless"), await freePort(), walArchive, encryptedMode);
+    run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(keyless.dataDir), walRestore], { ...env, ...restoreKey });
+    clusters.push(keyless);
+    assert.throws(() => keyless.start(), /is encrypted: set AGE_IDENTITY_FILE \(the owner's private key file\) in the server environment/);
+
+    console.log(
+      "backup-restore-drill: OK (plaintext -> encrypted migration, verify-before-store, encrypted at rest, " +
+        "restore drill, restore with/without key, refusals, audit tamper, encrypted point-in-time recovery)",
+    );
   } finally {
     if (api) api.kill();
     for (const c of clusters) c.stop();

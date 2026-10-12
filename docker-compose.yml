@@ -19,7 +19,12 @@ services:
       - pg_wal_archive:/wal-archive
 
   postgres:
-    image: postgres:16-alpine
+    # postgres:16-alpine + the age program, which archive_command uses to encrypt every WAL segment
+    # (deploy/postgres/Dockerfile, deploy/BACKUP_AND_RESTORE.md §7).
+    image: maintafox-postgres:local
+    pull_policy: never
+    build:
+      context: deploy/postgres
     container_name: maintafox-sync-postgres
     restart: unless-stopped
     mem_limit: 512m
@@ -43,6 +48,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       MFX_WAL_ARCHIVE_DIR: /wal-archive
+      # wal-archive.sh: required = every archived segment is age-encrypted to the owner's key.
+      BACKUP_LOCAL_ENCRYPTION: ${BACKUP_LOCAL_ENCRYPTION:?set BACKUP_LOCAL_ENCRYPTION in .env (required or disabled)}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
     volumes:
       - sync_postgres_data:/var/lib/postgresql/data
       - pg_wal_archive:/wal-archive
@@ -182,6 +190,14 @@ services:
       PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB in .env}
       BACKUP_DIR: /backups
       MFX_WAL_ARCHIVE_DIR: /wal-archive
+      # Private scratch space (own volume, emptied at the start of every run): the only place
+      # plaintext dumps exist, while they are verified and encrypted.
+      BACKUP_WORK_DIR: /backup-work
+      # Owner of every backup file (files 600, directories 700): uid:gid 70:70 is the postgres
+      # user of the postgres image, which already owns the WAL archive; the read-only pull account
+      # (deploy/backup-pull) uses the same uid.
+      BACKUP_FILES_OWNER: "70:70"
+      BACKUP_LOCAL_ENCRYPTION: ${BACKUP_LOCAL_ENCRYPTION:?set BACKUP_LOCAL_ENCRYPTION in .env (required or disabled)}
       BACKUP_ENV_FILE: /run/maintafox/app.env
       BACKUP_DAILY_AT_UTC: ${BACKUP_DAILY_AT_UTC:?set BACKUP_DAILY_AT_UTC in .env}
       BACKUP_DRILL_DAY_OF_MONTH: ${BACKUP_DRILL_DAY_OF_MONTH:?set BACKUP_DRILL_DAY_OF_MONTH in .env}
@@ -195,6 +211,8 @@ services:
       BACKUP_OFFSITE_S3_SECRET_KEY: ${BACKUP_OFFSITE_S3_SECRET_KEY:-}
       BACKUP_OFFSITE_S3_PREFIX: ${BACKUP_OFFSITE_S3_PREFIX:-}
       BACKUP_OFFSITE_S3_FORCE_PATH_STYLE: ${BACKUP_OFFSITE_S3_FORCE_PATH_STYLE:-}
+      # The owner's public key (keygen.sh). Required when BACKUP_LOCAL_ENCRYPTION=required or
+      # BACKUP_OFFSITE_MODE=s3; the scripts refuse to run without it then.
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
       # Media bucket (read for the off-site media copy), same values as the api service.
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
@@ -205,6 +223,7 @@ services:
     volumes:
       - backup_data:/backups
       - pg_wal_archive:/wal-archive
+      - backup_work:/backup-work
       # The secrets file goes off-site too (encrypted): without it a restored server cannot sign
       # licences or accept existing device tokens.
       - ./.env:/run/maintafox/app.env:ro
@@ -253,3 +272,4 @@ volumes:
   sync_minio_data:
   pg_wal_archive:
   backup_data:
+  backup_work:

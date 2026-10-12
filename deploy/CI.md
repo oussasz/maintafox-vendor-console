@@ -6,9 +6,10 @@ Workflow: `.github/workflows/ci.yml`, on every push and pull request. All jobs m
 |---|---|---|
 | Lint, typecheck, console tests, build | ESLint (console + API + scripts, zero warnings), `tsc` for the console and the API, vitest, `vite build` | `pnpm lint`, `pnpm typecheck`, `pnpm --filter maintafox-control-api run typecheck`, `pnpm test`, `pnpm build` |
 | API integration scripts | every script of `test:all` against a `postgres:16-alpine` service container (`TEST_DATABASE_ADMIN_URL`) | `pnpm --filter maintafox-control-api run test:all` (embedded Postgres when the variable is unset) |
-| Backup and restore drill | `test:backup-drill` with the Ubuntu PostgreSQL 16 programs | needs the PostgreSQL 16 programs on PATH (see deploy/BACKUP_AND_RESTORE.md §5) |
+| Backup and restore drill | `test:backup-drill` (plaintext → encrypted migration, encrypted restore and PITR with/without the key) and `test:backup-keygen`, with the Ubuntu PostgreSQL 16 programs and `age` | needs the PostgreSQL 16 programs and `age` on PATH (see deploy/BACKUP_AND_RESTORE.md §5) |
 | Off-site backup copy | `test:backup-offsite` against a MinIO container with `age` | needs an S3-compatible server and `age` |
-| Docker images | builds the API image, the backup image (`--target backup`, checks the programs it needs) and the console image | `docker build -f api/Dockerfile [--target backup] .` |
+| Docker images | builds the API image, the backup image (`--target backup`, checks the programs it needs), the postgres image (`deploy/postgres`, checks `age` and PostgreSQL 16) and the console image | `docker build -f api/Dockerfile [--target backup] .`, `docker build deploy/postgres` |
+| Read-only backup pull | `deploy/backup-pull/ci-test.sh`: the real SFTP container and the real `Pull-MaintafoxBackups.ps1` under PowerShell 7 (download + SHA-256, idempotent, read-only / SFTP-only / key-only, tampered file refused, retention) | needs docker, pwsh, age, ssh and sudo (Linux) |
 | Dependency audit | `pnpm audit --audit-level high` | same |
 | Secret scan | gitleaks 8.30.1 over the full git history | `gitleaks git . --redact` |
 
