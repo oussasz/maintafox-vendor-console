@@ -13,7 +13,6 @@ import { once } from "node:events";
 import { startControlApi, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./lib/control-api.mjs";
 import { loginOperator } from "./lib/vendor-session.mjs";
 
-const SLICKPAY_PORT = 33232;
 const WEBHOOK_SECRET = "test-only-slickpay-webhook-secret";
 const invoices = new Map(); // invoice id -> { status, body }
 let nextInvoice = 1000;
@@ -37,8 +36,10 @@ const slickpay = createServer(async (req, res) => {
   res.statusCode = 404;
   res.end(JSON.stringify({ error: "not_found" }));
 });
-slickpay.listen(SLICKPAY_PORT, "127.0.0.1");
+// Port chosen by the OS: a fixed one in the ephemeral range can be held by any outgoing connection.
+slickpay.listen(0, "127.0.0.1");
 await once(slickpay, "listening");
+const SLICKPAY_PORT = slickpay.address().port;
 
 const api = await startControlApi({
   port: 33231,
