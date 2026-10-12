@@ -119,6 +119,21 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
          WHERE l.license_key = ?`, licenseKey) as ActivationLicenseRow | undefined;
   }
 
+  /** State of the (channel, cohort) a device follows; no governance row means active. */
+  async function rolloutGovernanceFor(
+    channel: string,
+    cohort: string,
+  ): Promise<{ rollout_governance: "active" | "paused" | "recalled"; rollout_recalled_version: string | null }> {
+    // Device requests run in their tenant's scope: the vendor-wide table is read through the
+    // SECURITY DEFINER function of migration 012.
+    const row = await db.get<{ state: "active" | "paused" | "recalled"; recalled_version: string | null }>(
+      "SELECT state, recalled_version FROM mfx_rollout_governance($1, $2)",
+      channel,
+      cohort,
+    );
+    return { rollout_governance: row?.state ?? "active", rollout_recalled_version: row?.recalled_version ?? null };
+  }
+
   async function buildEntitlementEnvelopeForLicense(
     lic: ActivationLicenseRow,
     opts?: { bumpLineage?: boolean; persistLineage?: boolean },
@@ -188,6 +203,10 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       force_update_required: resolvedPolicy.force_update_required,
       capabilities_digest: capabilitiesDigest(envelope.capabilities_json),
       feature_flags_digest: capabilitiesDigest(envelope.feature_flags_json),
+      // Rollout governance of the device's (channel, cohort), set by operators (routes/releases.ts):
+      // the desktop updater (master plan Phase 5) stops offering updates while paused and treats
+      // rollout_recalled_version as withdrawn. Additive fields; older desktops ignore them.
+      ...(await rolloutGovernanceFor(lic.update_channel, lic.rollout_cohort)),
       ...(includeEnvelope ? { entitlement_envelope: envelope } : {}),
     };
   }
@@ -479,23 +498,32 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       includeEnvelope: true,
       bumpLineage: true,
     });
-    // Rotate an ageing device token: the new one is stored, so the old one stops working at once
-    // (activationAuthMiddleware compares against the stored token).
+    // Rotate an ageing device token, or any token after an operator asked for a policy refresh (the
+    // desktop resumes sync only when its token changes): the new one is stored, so the old one stops
+    // working at once (activationAuthMiddleware compares against the stored token).
     let activationToken = activation.token;
     const tokenAgeSeconds = Math.floor(Date.now() / 1000) - activation.tokenIssuedAt;
-    if (tokenAgeSeconds >= DEVICE_TOKEN_ROTATE_AFTER_SECONDS) {
+    const refreshRequested = await db.get<{ policy_refresh_requested_at: string | null }>(
+      `SELECT policy_refresh_requested_at FROM machine_activations
+       WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`,
+      activation.tenantId,
+      activation.licenseId,
+      activation.machineFingerprint,
+    );
+    if (tokenAgeSeconds >= DEVICE_TOKEN_ROTATE_AFTER_SECONDS || refreshRequested?.policy_refresh_requested_at) {
       activationToken = signDeviceActivationToken(JWT_SECRET, {
         tenantId: activation.tenantId,
         licenseId: activation.licenseId,
         machineFingerprint: activation.machineFingerprint,
       });
-      await db.run(`UPDATE machine_activations SET activation_token = ?
+      await db.run(`UPDATE machine_activations SET activation_token = ?, policy_refresh_requested_at = NULL
          WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ?`, activationToken, activation.tenantId, activation.licenseId, activation.machineFingerprint);
       structuredLog("activation_token_rotated", {
         tenant_id: activation.tenantId,
         license_id: activation.licenseId,
         machine_fingerprint: activation.machineFingerprint,
         previous_token_age_seconds: tokenAgeSeconds,
+        operator_requested: Boolean(refreshRequested?.policy_refresh_requested_at),
       });
     }
     res.json({

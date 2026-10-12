@@ -2,10 +2,18 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { StepUpKinds } from "@/lib/step-up-kinds";
+import { setRolloutGovernance, type RolloutGovernanceAction } from "@/services/license-control-service";
 import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 
+import { useVendorConsole } from "../VendorConsoleContext";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
+import { OperatorActionDialog } from "./OperatorActionDialog";
+
+type CohortStage = RolloutOverviewV1["cohort_stages"][number];
 
 const CATEGORY_LABEL: Record<string, string> = {
   download: "Download",
@@ -20,6 +28,25 @@ export function RolloutOpsPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [governance, setGovernance] = useState<{ stage: CohortStage; action: RolloutGovernanceAction } | null>(null);
+  const [recalledVersion, setRecalledVersion] = useState("");
+  const { requireStepUp } = useVendorConsole();
+
+  /** Pause / resume: step-up rollout_publish; recall: forced_rollback. Audited server-side. */
+  const runGovernance = async (reason: string) => {
+    if (!governance) return;
+    const { stage, action } = governance;
+    setSuccess(null);
+    const stepUpToken = await requireStepUp(action === "recall" ? StepUpKinds.forcedRollback : StepUpKinds.rolloutPublish);
+    await setRolloutGovernance(stage.channel, stage.cohort_label, action, {
+      reason_code: reason,
+      step_up_token: stepUpToken,
+      recalled_version: action === "recall" ? recalledVersion.trim() : undefined,
+    });
+    setSuccess(t(`rollouts.governance.done.${action}`, { cohort: `${stage.channel} / ${stage.cohort_label}` }));
+    await loadOverview(true);
+  };
 
   const loadOverview = async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -51,6 +78,14 @@ export function RolloutOpsPanel() {
         </p>
       </header>
 
+      <ConsoleStatusBanner tone="info" role="status">
+        {t("rollouts.governance.deviceNotice")}
+      </ConsoleStatusBanner>
+      {success ? (
+        <ConsoleStatusBanner tone="success" role="status">
+          {success}
+        </ConsoleStatusBanner>
+      ) : null}
       {error ? (
         <ConsoleStatusBanner tone="error" role="alert">
           <p>{error}</p>
@@ -115,22 +150,32 @@ export function RolloutOpsPanel() {
                       {t("rollouts.cohorts.pausedAt", "Paused at")}: {c.paused_at_rfc3339}
                     </p>
                   ) : null}
+                  {c.recalled_version ? (
+                    <p className="text-xs text-text-secondary">
+                      {t("rollouts.cohorts.recalledVersion", { version: c.recalled_version })}
+                    </p>
+                  ) : null}
+                  {c.governance_reason ? (
+                    <p className="text-xs text-text-muted">{c.governance_reason}</p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2 pt-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled
-                      title={t("stepUp.notAvailable")}
-                    >
-                      {t("rollouts.cohorts.pause", "Pause stage")}
-                    </Button>
+                    {c.governance === "active" ? (
+                      <Button type="button" size="sm" variant="secondary" onClick={() => setGovernance({ stage: c, action: "pause" })}>
+                        {t("rollouts.cohorts.pause", "Pause stage")}
+                      </Button>
+                    ) : (
+                      <Button type="button" size="sm" variant="secondary" onClick={() => setGovernance({ stage: c, action: "resume" })}>
+                        {t("rollouts.cohorts.resume")}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="sm"
                       variant="destructive"
-                      disabled
-                      title={t("stepUp.notAvailable")}
+                      onClick={() => {
+                        setRecalledVersion(c.recalled_version ?? "");
+                        setGovernance({ stage: c, action: "recall" });
+                      }}
                     >
                       {t("rollouts.cohorts.recall", "Recall")}
                     </Button>
@@ -189,6 +234,35 @@ export function RolloutOpsPanel() {
           )}
         </div>
       </section>
+      <OperatorActionDialog
+        open={governance !== null}
+        title={governance ? t(`rollouts.governance.${governance.action}.title`) : ""}
+        description={
+          governance
+            ? t(`rollouts.governance.${governance.action}.body`, {
+                cohort: `${governance.stage.channel} / ${governance.stage.cohort_label}`,
+              })
+            : ""
+        }
+        confirmLabel={governance ? t(`rollouts.governance.${governance.action}.confirm`) : ""}
+        destructive={governance?.action === "recall"}
+        extraValid={governance?.action !== "recall" || recalledVersion.trim().length > 0}
+        onConfirm={runGovernance}
+        onClose={() => setGovernance(null)}
+      >
+        {governance?.action === "recall" ? (
+          <div className="grid gap-1">
+            <Label htmlFor="recalled-version">{t("rollouts.governance.recall.versionLabel")}</Label>
+            <Input
+              id="recalled-version"
+              autoComplete="off"
+              maxLength={32}
+              value={recalledVersion}
+              onChange={(e) => setRecalledVersion(e.target.value)}
+            />
+          </div>
+        ) : null}
+      </OperatorActionDialog>
     </div>
   );
 }

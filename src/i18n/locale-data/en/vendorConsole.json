@@ -113,7 +113,22 @@
       "buildPreview": "Build request payload"
     },
     "deleteTypeSlug": "Type the customer slug \"{{slug}}\" to confirm",
-    "deleteReason": "Reason (kept in the audit log)"
+    "deleteReason": "Reason (kept in the audit log)",
+    "suspended": "Suspended",
+    "suspendTenant": "Suspend customer",
+    "resumeTenant": "Lift suspension",
+    "suspendDone": "\"{{name}}\" is suspended: its devices are refused from their next request.",
+    "resumeDone": "\"{{name}}\" is active again: its devices resume at their next licence check.",
+    "suspendDialog": {
+      "title": "Suspend this customer?",
+      "body": "Every device of \"{{name}}\" is refused from its next request. Licences, machines and data are kept; you can lift the suspension at any time.",
+      "confirm": "Suspend"
+    },
+    "resumeDialog": {
+      "title": "Lift the suspension?",
+      "body": "Devices of \"{{name}}\" may sync again; each fetches a fresh policy at its next licence check.",
+      "confirm": "Lift suspension"
+    }
   },
   "editions": {
     "core": "Core",
@@ -195,7 +210,40 @@
     "revoked": "Device revoked.",
     "reinstated": "Device reinstated.",
     "working": "Working…",
-    "licenceRevoked": "Licence revoked"
+    "licenceRevoked": "Licence revoked",
+    "refreshRequested": "Policy refresh requested: the device fetches its policy at its next licence check (its sync pauses until then).",
+    "released": "Slot released. The device is refused from its next request and may activate again later.",
+    "rebound": "Slot moved to {{fingerprint}}. The old device is refused; the new one activates with the licence key.",
+    "slotReleased": "Slot released",
+    "refreshPending": "Refresh pending",
+    "dialog": {
+      "revoke": {
+        "title": "Revoke this device?",
+        "body": "{{fingerprint}} is refused from its next request and cannot reactivate itself with the licence key (reinstate it here).",
+        "confirm": "Revoke"
+      },
+      "reinstate": {
+        "title": "Reinstate this device?",
+        "body": "{{fingerprint}} may sync again. It needs a free slot on its licence.",
+        "confirm": "Reinstate"
+      },
+      "release": {
+        "title": "Release this slot?",
+        "body": "{{fingerprint}} is refused from its next request and its slot becomes free. Unlike a revocation, the device may activate again later with the licence key.",
+        "confirm": "Release slot"
+      },
+      "rebind": {
+        "title": "Move this slot to a replacement machine?",
+        "body": "{{fingerprint}} is refused at once. The replacement machine then activates with the licence key and finds its slot already held.",
+        "confirm": "Move slot",
+        "targetLabel": "Fingerprint of the replacement machine (shown on its activation screen)"
+      },
+      "refresh": {
+        "title": "Ask this device to refresh its policy?",
+        "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
+        "confirm": "Request refresh"
+      }
+    }
   },
   "sync": {
     "title": "Sync operations",
@@ -267,13 +315,39 @@
       "machines": "machines",
       "pausedAt": "Paused at",
       "pause": "Pause stage",
-      "recall": "Recall"
+      "recall": "Recall",
+      "resume": "Resume",
+      "recalledVersion": "Recalled version: {{version}}"
     },
     "diagnostics": {
       "title": "Release diagnostics (24h)",
       "hint": "Signature, migration, and post-deploy heartbeat failures in one view for containment decisions.",
       "count": "{{n}} events",
       "last": "Last"
+    },
+    "governance": {
+      "deviceNotice": "Pause and recall are recorded on the server, written to the audit log and sent to every device of the cohort with its policy. Desktops will act on them once the updater (master plan Phase 5) exists: today's desktops do not install updates by themselves, so nothing changes on them yet.",
+      "done": {
+        "pause": "{{cohort}} paused.",
+        "resume": "{{cohort}} resumed.",
+        "recall": "Version recalled for {{cohort}}."
+      },
+      "pause": {
+        "title": "Pause this rollout?",
+        "body": "{{cohort}}: devices stop being offered new updates until you resume.",
+        "confirm": "Pause"
+      },
+      "resume": {
+        "title": "Resume this rollout?",
+        "body": "{{cohort}}: devices are offered updates again (a recall is lifted too).",
+        "confirm": "Resume"
+      },
+      "recall": {
+        "title": "Recall a version?",
+        "body": "{{cohort}}: the version below is withdrawn; devices running it are told to leave it.",
+        "confirm": "Recall",
+        "versionLabel": "Version to recall (e.g. 1.4.2)"
+      }
     }
   },
   "health": {
@@ -416,9 +490,8 @@
       "intro": "Privileged actions require reason codes and step-up; high-blast-radius may require dual approval on the server.",
       "guards": {
         "title": "Privileged-action safeguards",
-        "body": "The control API enforces an audit reason code and a password step-up on privileged routes. Per-operator roles are not implemented yet (all operators have full access).",
-        "stepUpExport": "Step-up: compliance export",
-        "stepUpRecall": "Step-up: rollout recall"
+        "body": "The server refuses these actions without a reason and a fresh code from the authenticator app, valid for that kind of action only; every attempt is in the audit log.",
+        "kindsAria": "Actions that need a fresh authenticator code"
       },
       "runbooks": {
         "title": "Incident runbooks"
@@ -438,7 +511,6 @@
     "verifying": "Verifying…",
     "errorRateLimited": "Too many attempts. Wait a few minutes and try again.",
     "errorGeneric": "Could not verify: {{message}}",
-    "notAvailable": "Not available yet: this action has no server endpoint (planned in the vendor console completion phase).",
     "cancelled": "Action cancelled: confirmation was not completed.",
     "codeLabel": "6-digit code from your authenticator app",
     "errorInvalidCode": "Code refused. Check the phone's time, or wait for the next code (a code works only once).",
@@ -483,5 +555,10 @@
       "body": "Each code works once, if you lose your authenticator app. They are shown only now: print them or save them somewhere safe.",
       "done": "I have saved them"
     }
+  },
+  "operatorAction": {
+    "reasonLabel": "Reason (kept in the audit log)",
+    "cancel": "Cancel",
+    "working": "Working…"
   }
 }

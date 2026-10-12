@@ -50,7 +50,9 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
   /**
    * Device requests are accepted only while the token is the one most recently issued to this
    * machine and the machine, its licence and its tenant are all still valid. Denials:
-   * 401 missing_token | invalid_token | token_superseded;
+   * 401 missing_token | invalid_token | token_superseded | policy_refresh_required (sync routes only,
+   * after an operator asked for a policy refresh: the desktop re-checks its licence, gets a new
+   * token from POST /activation/policy-refresh and resumes);
    * 403 tenant_inactive | license_revoked | license_expired | activation_revoked.
    */
   async function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
@@ -68,6 +70,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     // The token is verified: from here on only this tenant's rows are visible.
     const scope = tenantScope(claims.tenantId);
     const row = await db.runInScope(scope, () => db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
+                a.policy_refresh_requested_at,
                 l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
                 t.is_active AS tenant_is_active
          FROM machine_activations a
@@ -79,6 +82,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
           revoked_at: string | null;
           activation_token: string;
           last_seen_at: string;
+          policy_refresh_requested_at: string | null;
           license_revoked_at: string | null;
           license_expires_at: string | null;
           tenant_is_active: number;
@@ -117,6 +121,10 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     }
     if (row.revoked_at) {
       deny(403, "activation_revoked");
+      return;
+    }
+    if (row.policy_refresh_requested_at && req.path.toLowerCase().startsWith("/api/v1/sync/")) {
+      deny(401, "policy_refresh_required");
       return;
     }
     const nowMs = Date.now();

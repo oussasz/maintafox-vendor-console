@@ -11,6 +11,9 @@ export type StepUpActionKind = string & { readonly [stepUpKindBrand]: true };
 
 const KNOWN = new Set(catalog.kinds.map((entry) => entry.kind));
 
+/** Every kind of the catalog, in catalog order (shown on the Audit page). */
+export const STEP_UP_KIND_NAMES: readonly string[] = catalog.kinds.map((entry) => entry.kind);
+
 function kind(name: string): StepUpActionKind {
   if (!KNOWN.has(name)) throw new Error(`step-up action kind '${name}' is not in shared/step-up-actions.v1.json`);
   return name as StepUpActionKind;

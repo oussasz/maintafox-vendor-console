@@ -79,6 +79,8 @@ export const CohortRolloutStageV1Schema = z.object({
   machine_count: z.number().nonnegative(),
   governance: z.enum(["active", "paused", "recalled"]),
   paused_at_rfc3339: z.string().nullable(),
+  recalled_version: z.string().nullable(),
+  governance_reason: z.string().nullable(),
 });
 
 export const RolloutDiagnosticsBucketV1Schema = z.object({

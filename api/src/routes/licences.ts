@@ -5,6 +5,7 @@ import type express from "express";
 import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
+import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
 import { parsePagination, resolveActorId, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey, structuredLog } from "../app/runtime.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
@@ -33,6 +34,12 @@ const RevokeLicenseBody = z.object({
 }).strict();
 
 const MachineActionBody = z.object({
+  reason: z.string().min(2).max(256).optional(),
+}).strict();
+
+const RebindBody = z.object({
+  /** Same bounds as the activation claim's machine_fingerprint. */
+  new_machine_fingerprint: z.string().trim().min(8).max(256),
   reason: z.string().min(2).max(256).optional(),
 }).strict();
 
@@ -309,6 +316,161 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       await db.run("UPDATE machine_activations SET revoked_at = NULL, revocation_kind = NULL WHERE id = ?", row.id);
       structuredLog("machine_activation_reinstated", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
       return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /**
+   * Slot release: frees the device's slot (decommissioned or reinstalled machine). The device is
+   * refused from its next request (`activation_revoked`) but, unlike a revocation, it may activate
+   * again later with the licence key if a slot is free.
+   */
+  app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/release", authMiddleware, async (req, res) => {
+    const parsed = MachineActionBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const { tenantId, machineFingerprint } = req.params;
+    await runIdempotent(req, res, async () => {
+      const row = await loadMachineActivation(tenantId, machineFingerprint);
+      if (!row) {
+        return { status: 404, body: { error: "activation_not_found" } };
+      }
+      if (row.revoked_at) {
+        return { status: 409, body: { error: "slot_not_held", revocation_kind: row.revocation_kind } };
+      }
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "machine_slot_release",
+        action_category: "entitlement",
+        step_up_kind: StepUpKinds.machineTrustChange,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId, entitlement_id: row.license_id, machine_id: machineFingerprint },
+        payload: { reason: parsed.data.reason ?? "slot released by operator" },
+      });
+      if (!guard.ok) {
+        return { status: guard.status, body: guard.body };
+      }
+      await db.lockXact("license-slots", row.license_id);
+      const now = new Date().toISOString();
+      await db.run("UPDATE machine_activations SET revoked_at = ?, revocation_kind = 'released' WHERE id = ?", now, row.id);
+      structuredLog("machine_slot_released", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          released_at: now,
+          active_slots: await countActiveActivations(row.license_id),
+          audit_record_id: guard.auditRecordId,
+        },
+      };
+    });
+  });
+
+  /**
+   * Rebind: moves the device's slot to its replacement machine (new hardware, new fingerprint).
+   * The old device is refused at once; the new one activates with the licence key and finds its
+   * slot already held, even when the licence has no free slot.
+   */
+  app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/rebind", authMiddleware, async (req, res) => {
+    const parsed = RebindBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const { tenantId, machineFingerprint } = req.params;
+    const target = parsed.data.new_machine_fingerprint;
+    if (target === machineFingerprint) {
+      res.status(400).json({ error: "same_fingerprint" });
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      const row = await loadMachineActivation(tenantId, machineFingerprint);
+      if (!row) {
+        return { status: 404, body: { error: "activation_not_found" } };
+      }
+      if (row.revoked_at) {
+        return { status: 409, body: { error: "slot_not_held", revocation_kind: row.revocation_kind } };
+      }
+      await db.lockXact("license-slots", row.license_id);
+      await db.lockXact("activation-device", `${tenantId}:${target}`);
+      const existing = await loadMachineActivation(tenantId, target);
+      // A target that is active holds its own slot; an operator-revoked one stays revoked. A target
+      // that only released its slot (or lost it with a licence revocation) gives way to the rebind.
+      if (existing && (existing.revoked_at === null || existing.revocation_kind === "machine")) {
+        return { status: 409, body: { error: "target_fingerprint_in_use", revocation_kind: existing.revocation_kind } };
+      }
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "machine_rebind",
+        action_category: "entitlement",
+        step_up_kind: StepUpKinds.machineTrustChange,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId, entitlement_id: row.license_id, machine_id: machineFingerprint },
+        payload: {
+          reason: parsed.data.reason ?? "rebound by operator",
+          from_machine_fingerprint: machineFingerprint,
+          to_machine_fingerprint: target,
+        },
+      });
+      if (!guard.ok) {
+        return { status: guard.status, body: guard.body };
+      }
+      if (existing) {
+        await db.run("DELETE FROM machine_activations WHERE id = ?", existing.id);
+      }
+      // The stored token no longer matches any bearer (a JWT never equals this value), so the old
+      // device is refused; the new device's claim replaces it with its own token.
+      await db.run(
+        `UPDATE machine_activations
+         SET machine_fingerprint = ?, activation_token = ?, policy_refresh_requested_at = NULL
+         WHERE id = ?`,
+        target,
+        `rebound:${guard.auditRecordId}`,
+        row.id,
+      );
+      structuredLog("machine_rebound", { tenant_id: tenantId, from: machineFingerprint, to: target });
+      return { status: 200, body: { ok: true, machine_fingerprint: target, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /**
+   * Policy refresh: the device fetches its licence, edition and policies now instead of at its next
+   * scheduled check. Its sync requests are refused (401 policy_refresh_required) until it calls
+   * POST /activation/policy-refresh, which renews its token; the desktop then resumes syncing.
+   * Not dangerous (no step-up), but audited with a reason.
+   */
+  app.post("/api/v1/tenants/:tenantId/machines/:machineFingerprint/policy-refresh", authMiddleware, async (req, res) => {
+    const parsed = MachineActionBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const reason = req.header("X-Operator-Reason")?.trim() ?? "";
+    if (reason.length < PRIVILEGED_REASON_MIN_LENGTH) {
+      res.status(400).json({ error: "missing_reason_code" });
+      return;
+    }
+    const { tenantId, machineFingerprint } = req.params;
+    await runIdempotent(req, res, async () => {
+      const row = await loadMachineActivation(tenantId, machineFingerprint);
+      if (!row) {
+        return { status: 404, body: { error: "activation_not_found" } };
+      }
+      if (row.revoked_at) {
+        return { status: 409, body: { error: "slot_not_held", revocation_kind: row.revocation_kind } };
+      }
+      const now = new Date().toISOString();
+      await db.run("UPDATE machine_activations SET policy_refresh_requested_at = ? WHERE id = ?", now, row.id);
+      const auditRecordId = await appendAuditRecord({
+        actor_id: resolveActorId(req),
+        action_code: "machine_policy_refresh_requested",
+        action_category: "entitlement",
+        correlation_id: newId("corr"),
+        scope_tenant_id: tenantId,
+        reason_code: reason,
+        entity_refs: { tenant_id: tenantId, entitlement_id: row.license_id, machine_id: machineFingerprint },
+        payload: { note: parsed.data.reason ?? null },
+      });
+      return { status: 200, body: { ok: true, requested_at: now, audit_record_id: auditRecordId } };
     });
   });
 }
