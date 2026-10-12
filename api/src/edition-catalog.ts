@@ -39,6 +39,9 @@ export const MODULE_CAPABILITY_KEYS = [
   "finance",
   "sync",
   "erp",
+  // Email channel of desktop notifications (POST /api/v1/notifications/email). Off in every factory
+  // edition: the desktop offers email only when an operator turns this on explicitly.
+  "notifications.email",
 ] as const;
 
 export type ModuleCapabilityKey = (typeof MODULE_CAPABILITY_KEYS)[number];

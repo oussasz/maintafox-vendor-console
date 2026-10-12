@@ -320,7 +320,7 @@ async function main() {
     // A missing or malformed key stops the API.
     await stopApi();
     const bad = spawn(process.execPath, ["dist/index.js"], {
-      env: { ...process.env, PORT: String(port), DATABASE_URL: databaseUrl, ...TEST_SYNC_ENV, SYNC_PAYLOAD_ENCRYPTION_KEY: "dG9vLXNob3J0",
+      env: { ...process.env, PORT: String(port), DATABASE_URL: databaseUrl, ...TEST_SYNC_ENV, SYNC_PAYLOAD_ENCRYPTION_KEY: Buffer.from("too-short").toString("base64"),
         JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345", ...TEST_ENTITLEMENT_SIGNING_ENV, CORS_ORIGIN: "http://localhost:5174" },
       stdio: ["ignore", "pipe", "pipe"],
     });

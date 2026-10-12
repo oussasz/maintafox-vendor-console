@@ -43,6 +43,7 @@ function fullCaps(overrides = {}) {
     "finance",
     "sync",
     "erp",
+    "notifications.email",
   ];
   const out = {};
   for (const k of keys) out[k] = false;

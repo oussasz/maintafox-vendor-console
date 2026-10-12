@@ -39,6 +39,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBillingRoutes } from "./routes/billing.js";
 import { registerEditionsRoutes } from "./routes/editions.js";
 import { registerLicencesRoutes } from "./routes/licences.js";
+import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerReleasesRoutes } from "./routes/releases.js";
 import { registerSupportRoutes } from "./routes/support.js";
@@ -164,6 +165,7 @@ registerAuditRoutes(app, ctx);
 registerSupportRoutes(app, ctx);
 registerSyncRoutes(app, ctx);
 registerActivationRoutes(app, ctx);
+registerNotificationsRoutes(app, ctx);
 
 const port = Number(process.env.PORT ?? 3000);
 

@@ -24,6 +24,8 @@ export const TEST_SYNC_ENV = {
   // TEST-ONLY key (32 bytes, base64): encryption at rest of sensitive sync payloads.
   SYNC_PAYLOAD_ENCRYPTION_KEY: Buffer.from("maintafox-TEST-ONLY-payload-key!").toString("base64"),
   OPERATOR_ACCESS_LOG_RETENTION_DAYS: "365",
+  // Notification email: off unless a test configures its own SMTP server.
+  EMAIL_DELIVERY_MODE: "disabled",
 };
 
 function freePort() {

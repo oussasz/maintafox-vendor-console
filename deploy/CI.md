@@ -34,3 +34,8 @@ store**. The CI pull check skips `minio/*` for that reason only. Options for the
 same MinIO release from source into our own image, use a maintained community build pinned by
 digest, or move tenant media to another S3-compatible server (the API only needs S3 + presigned
 URLs). The off-site backup test uses Adobe S3Mock, which is enough to prove the S3 calls.
+
+## Accepted secret-scan findings
+
+`.gitleaksignore` lists exact finding fingerprints (commit:file:rule:line) with a reason each.
+Today: one test-only value (base64 of "too-short") in commit 300ae9c.

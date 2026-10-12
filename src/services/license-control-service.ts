@@ -23,6 +23,7 @@ const MODULE_CAPABILITY_KEYS = [
   "finance",
   "sync",
   "erp",
+  "notifications.email",
 ] as const;
 
 export type ModuleCapabilityKey = (typeof MODULE_CAPABILITY_KEYS)[number];

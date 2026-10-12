@@ -56,7 +56,7 @@ const MODULE_GROUPS: Array<{ key: string; labelKey: string; fallback: string; mo
     key: "control",
     labelKey: "editions.groups.control",
     fallback: "Control plane",
-    modules: ["sync", "erp"],
+    modules: ["sync", "erp", "notifications.email"],
   },
 ];
 

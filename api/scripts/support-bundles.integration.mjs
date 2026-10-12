@@ -39,8 +39,8 @@ try {
     const l = await api.call("POST", "/api/v1/licenses", admin, { tenant_id: t.json.id, max_machines: 2 });
     devices[name] = {
       tenantId: t.json.id,
-      one: await api.claimDevice(l.json.license_key, `${name}-1`),
-      two: await api.claimDevice(l.json.license_key, `${name}-2`),
+      one: await api.claimDevice(l.json.license_key, `${name}-device-1`),
+      two: await api.claimDevice(l.json.license_key, `${name}-device-2`),
     };
   }
   const bundleBytes = Buffer.from(JSON.stringify({ generated_at: new Date().toISOString(), log_lines: ["line 1", "line 2"] }));
@@ -87,7 +87,7 @@ try {
   const tickets = (await api.call("GET", "/api/v1/support/tickets", admin)).json;
   const ticket = tickets.find((t) => t.ticket_id === done.json.ticket_id);
   assert.equal(ticket.origin, "device");
-  assert.equal(ticket.created_by, "device:alpha-1");
+  assert.equal(ticket.created_by, "device:alpha-device-1");
   assert.equal(ticket.tenant_id, devices.alpha.tenantId);
   assert.equal(ticket.app_version_reported, "1.2.3");
   assert.deepEqual(ticket.diagnostic_bundle_ids, [bundleId]);
@@ -104,7 +104,7 @@ try {
   assert.deepEqual(list.map((b) => b.status).sort(), ["rejected", "uploaded"]);
   const uploaded = list.find((b) => b.bundle_id === bundleId);
   assert.equal(uploaded.content_sha256, sha256(bundleBytes));
-  assert.equal(uploaded.machine_id, "alpha-1");
+  assert.equal(uploaded.machine_id, "alpha-device-1");
   assert.equal(uploaded.artifacts[0].logical_path, "support-bundle.json");
   assert.equal((await api.call("GET", `/api/v1/support/diagnostic-bundles?tenant_id=${devices.beta.tenantId}`, admin)).json.length, 0);
   assert.equal((await api.call("GET", "/api/v1/support/diagnostic-bundles/latest", admin)).json.bundle_id, bundleId);

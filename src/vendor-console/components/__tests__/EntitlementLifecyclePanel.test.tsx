@@ -52,6 +52,7 @@ const coreEdition = {
     finance: false,
     sync: false,
     erp: false,
+    "notifications.email": false,
   },
 };
 

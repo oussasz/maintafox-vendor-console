@@ -130,6 +130,14 @@ services:
       OPERATOR_ACCESS_LOG_RETENTION_DAYS: ${OPERATOR_ACCESS_LOG_RETENTION_DAYS:?set OPERATOR_ACCESS_LOG_RETENTION_DAYS in .env}
       # Optional: bearer token for Prometheus scraping of /api/v1/ops/metrics (unset = operator tokens only).
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
+      # Notification email (deploy/NOTIFICATION_EMAIL.md): disabled | smtp. SMTP_* read only with smtp.
+      EMAIL_DELIVERY_MODE: ${EMAIL_DELIVERY_MODE:?set EMAIL_DELIVERY_MODE in .env (disabled or smtp)}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}

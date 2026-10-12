@@ -1,0 +1,4 @@
+# Accepted gitleaks findings: exact fingerprints only (commit:file:rule:line), each with its reason.
+# Test-only value: base64("too-short"), the malformed key the tenant-isolation test feeds the API
+# to prove it refuses to start (commit 300ae9c). The test now builds it in code.
+300ae9c79dcfa69ab5148296a2243813227220b3:api/scripts/tenant-isolation.integration.mjs:generic-api-key:323

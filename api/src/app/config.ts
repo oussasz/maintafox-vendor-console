@@ -5,6 +5,7 @@
 import "dotenv/config";
 
 import { loadEntitlementSigningKey } from "../entitlement-signer.js";
+import { loadEmailConfig, type EmailConfig } from "../notifications/email.js";
 import { fatal, requireEnv } from "./runtime.js";
 
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
@@ -97,6 +98,15 @@ export const METRICS_SCRAPE_TOKEN = (() => {
   if (!raw) return null;
   if (raw.length < 32) fatal("METRICS_SCRAPE_TOKEN must be at least 32 characters when set.");
   return raw;
+})();
+
+/** Email delivery of desktop notifications (notifications/email.ts); invalid settings stop startup. */
+export const EMAIL_CONFIG: EmailConfig = (() => {
+  try {
+    return loadEmailConfig();
+  } catch (err) {
+    fatal((err as Error).message);
+  }
 })();
 
 /** Rows of operator_scope_access (who acted across tenants) older than this are pruned. */
