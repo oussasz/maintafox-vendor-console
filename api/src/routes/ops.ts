@@ -1,15 +1,167 @@
 /**
- * Operations: health, SLO window, sync / rollout / platform overviews.
+ * Operations: health, SLO window, sync / rollout / platform overviews, Prometheus metrics.
+ * Every figure is measured (deploy/OPS_METRICS.md); none is estimated from another one.
  */
 import type express from "express";
 
 import type { ApiContext } from "../app/context.js";
-import { SEED_BEHAVIOR } from "../app/config.js";
-import { observabilityWindow, percentile } from "../app/observability.js";
-import { structuredLog, worstSeverity, type ForceUpdateMode, type OpsSeverity } from "../app/runtime.js";
+import { METRICS_SCRAPE_TOKEN, SEED_BEHAVIOR } from "../app/config.js";
+import { getMediaStore } from "../app/media.js";
+import { observabilityWindow, percentile, workerState } from "../app/observability.js";
+import { safeEqualUtf8, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { openOperatorScope } from "../app/scope.js";
+import { PROMETHEUS_CONTENT_TYPE, renderPrometheus, type MetricFamily } from "../ops/prometheus.js";
+import {
+  collectSyncHealth,
+  SYNC_SEVERITY_THRESHOLDS,
+  worse,
+  type Severity,
+  type SyncHealthSnapshot,
+} from "../ops/sync-health.js";
+
+/** A nightly backup older than this is late (24 h schedule + 2 h margin). */
+const BACKUP_MAX_AGE_HOURS = 26;
+/** The restore drill runs monthly; older than this it was missed. */
+const RESTORE_DRILL_MAX_AGE_DAYS = 35;
+/** Database round trip (SELECT 1) thresholds, milliseconds. */
+const DB_LATENCY_MS = { warn: 100, critical: 1000 };
+/** API 5xx share of requests since start, percent (SLO availability 99.9 %). */
+const API_5XX_PERCENT = { warn: 0.1, critical: 1 };
+
+type BackupStatus = {
+  kind: "nightly" | "restore_drill";
+  last_status: "succeeded" | "failed";
+  last_finished_at: Date;
+  last_success_at: Date | null;
+  last_offsite_upload_at: Date | null;
+  last_offsite_status: string;
+};
+
+function ageHours(at: Date | null, nowMs: number): number | null {
+  return at ? (nowMs - at.getTime()) / 3600_000 : null;
+}
+
+function syncOverview(snap: SyncHealthSnapshot) {
+  const th = SYNC_SEVERITY_THRESHOLDS;
+  const tenant_rows = snap.tenants.map((t) => ({
+    tenant_id: t.tenant_id,
+    lag_seconds: t.lag_seconds,
+    checkpoint_age_seconds: t.checkpoint_age_seconds,
+    rejection_rate_bps: t.rejection_rate_bps,
+    retry_pressure: t.retry_pressure,
+    dead_letter_count: t.dead_letter_count,
+    severity: t.severity,
+    device_count: t.device_count,
+    online_device_count: t.online_device_count,
+    online_lag_seconds: t.online_lag_seconds,
+    applied_items: t.applied_items,
+    rejected_items: t.rejected_items,
+    conflicts: t.conflicts,
+    exchanges: t.exchanges,
+    retries: t.retries,
+  }));
+
+  const repair_queue = snap.tenants.flatMap((t) => [
+    ...(t.dead_letter_count > 0
+      ? [
+          {
+            item_id: `rq_${t.tenant_id}_dead_letter`,
+            tenant_id: t.tenant_id,
+            queue_kind: "dead_letter",
+            severity: t.severity,
+            summary: `${t.dead_letter_count} item(s) refused in the last ${snap.window_hours} h and never applied since.`,
+            recommended_action: t.severity === "critical" ? ("escalate" as const) : ("acknowledge" as const),
+          },
+        ]
+      : []),
+    ...(t.retry_pressure >= th.retryPressurePercent.warn
+      ? [
+          {
+            item_id: `rq_${t.tenant_id}_retries`,
+            tenant_id: t.tenant_id,
+            queue_kind: "retry_pressure",
+            severity: t.severity,
+            summary: `${t.retries} of ${t.exchanges + t.retries} exchange requests in the last ${snap.window_hours} h were retries (${t.retry_pressure}%).`,
+            recommended_action: t.severity === "critical" ? ("escalate" as const) : ("acknowledge" as const),
+          },
+        ]
+      : []),
+  ]);
+
+  const heartbeat_anomalies = snap.devices.flatMap((d) => {
+    const codes: string[] = [];
+    if (d.protocol === "never_synced") codes.push("never_synced");
+    if (!d.online) codes.push("stale_heartbeat");
+    if (d.checkpoint_age_seconds > d.offline_grace_hours * 3600) codes.push("expired_offline_grace");
+    return codes.map((anomaly_code) => ({
+      tenant_id: d.tenant_id,
+      machine_id: d.machine_id,
+      anomaly_code,
+      detected_at_rfc3339: snap.generated_at_rfc3339,
+    }));
+  });
+
+  const exchanges = snap.tenants.reduce((s, t) => s + t.exchanges, 0);
+  const retries = snap.tenants.reduce((s, t) => s + t.retries, 0);
+  return {
+    generated_at_rfc3339: snap.generated_at_rfc3339,
+    window_hours: snap.window_hours,
+    aggregate: {
+      max_lag_seconds: snap.tenants.reduce((m, t) => Math.max(m, t.lag_seconds), 0),
+      checkpoint_p95_age_seconds: percentile(snap.devices.map((d) => d.checkpoint_age_seconds), 95) ?? 0,
+      aggregate_retry_pressure: exchanges + retries > 0 ? Math.round((retries * 100) / (exchanges + retries)) : 0,
+      dead_letter_total: snap.tenants.reduce((s, t) => s + t.dead_letter_count, 0),
+      worst_severity: snap.tenants.reduce<Severity>((acc, t) => worse(acc, t.severity), "info"),
+    },
+    tenant_rows,
+    device_rows: snap.devices,
+    repair_queue,
+    heartbeat_anomalies,
+    drill_by_tenant: snap.drill_by_tenant,
+  };
+}
 
 export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, authMiddleware } = ctx;
+
+  async function loadBackupStatus(): Promise<BackupStatus[]> {
+    return db.all<BackupStatus>(
+      `SELECT DISTINCT ON (kind) kind,
+              status AS last_status,
+              finished_at AS last_finished_at,
+              MAX(finished_at) FILTER (WHERE status = 'succeeded') OVER (PARTITION BY kind) AS last_success_at,
+              MAX(finished_at) FILTER (WHERE offsite_status = 'uploaded') OVER (PARTITION BY kind) AS last_offsite_upload_at,
+              offsite_status AS last_offsite_status
+       FROM backup_runs
+       ORDER BY kind, finished_at DESC`,
+    );
+  }
+
+  async function probeDatabase(): Promise<{ latency_ms: number; size_bytes: number; connections: number }> {
+    const started = process.hrtime.bigint();
+    await db.query("SELECT 1");
+    const latency_ms = Number(process.hrtime.bigint() - started) / 1e6;
+    const row = await db.get<{ size_bytes: number; connections: number }>(
+      `SELECT pg_database_size(current_database()) AS size_bytes,
+              (SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database()) AS connections`,
+    );
+    return { latency_ms: Math.round(latency_ms * 10) / 10, size_bytes: row?.size_bytes ?? 0, connections: row?.connections ?? 0 };
+  }
+
+  async function probeObjectStorage(): Promise<{ severity: Severity; detail: string }> {
+    const media = getMediaStore();
+    if (!media) return { severity: "critical", detail: "object storage is not configured (S3_* settings missing)" };
+    const started = Date.now();
+    try {
+      await media.headBucket();
+      return { severity: "info", detail: `bucket ${media.config.bucket} reachable (${Date.now() - started} ms)` };
+    } catch (err) {
+      return {
+        severity: "critical",
+        detail: `bucket ${media.config.bucket} unreachable: ${err instanceof Error ? err.name || err.message : String(err)}`,
+      };
+    }
+  }
 
   app.get("/health", async (_req, res) => {
     // All API data is in Postgres: report unhealthy (503) when it cannot be reached, so the
@@ -49,15 +201,11 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
          WHERE revoked_at IS NULL
            AND last_seen_at::timestamptz < now() - interval '5 minutes'`) as { c: number };
     const totalMachinesRow = await db.get("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NULL") as { c: number };
-    const revokedMachinesRow = await db.get("SELECT COUNT(*) as c FROM machine_activations WHERE revoked_at IS NOT NULL") as { c: number };
-    const channelMismatchRow = await db.get(`SELECT COUNT(*) as c
-         FROM machine_activations a
-         JOIN license_keys l ON l.id = a.license_id
-         JOIN tenants t ON t.id = a.tenant_id
-         WHERE l.update_channel != t.update_channel`) as { c: number };
     const staleMachines = staleRow.c;
     const totalMachines = totalMachinesRow.c;
-    const deadLetterTotal = revokedMachinesRow.c + channelMismatchRow.c;
+    const snap = await collectSyncHealth(db);
+    const refusedUnapplied = snap.tenants.reduce((s, t) => s + t.dead_letter_count, 0);
+    const conflicts = snap.tenants.reduce((s, t) => s + t.conflicts, 0);
     const staleRatioPercent = totalMachines > 0 ? Number(((staleMachines / totalMachines) * 100).toFixed(3)) : 0;
 
     const alerts = [
@@ -119,10 +267,11 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
         stale_machine_count: staleMachines,
         active_machine_count: totalMachines,
         stale_ratio_percent: staleRatioPercent,
-        dead_letter_total: deadLetterTotal,
+        window_hours: snap.window_hours,
+        dead_letter_total: refusedUnapplied,
         dead_letter_components: {
-          revoked_activations: revokedMachinesRow.c,
-          channel_mismatch: channelMismatchRow.c,
+          refused_unapplied: refusedUnapplied,
+          conflicts,
         },
         slo_target_stale_ratio_percent: 1,
       },
@@ -131,123 +280,7 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
   });
 
   app.get("/api/v1/ops/sync-overview", authMiddleware, async (_req, res) => {
-    const tenants = await db.all(`SELECT id, update_channel, force_min_app_version
-         FROM tenants
-         WHERE is_active = 1`) as Array<{ id: string; update_channel: string; force_min_app_version: string | null }>;
-
-    const nowMs = Date.now();
-    const tenantRows = await Promise.all(tenants.map(async (tenant) => {
-      const activations = await db.all(`SELECT a.last_seen_at, a.revoked_at, l.update_channel
-           FROM machine_activations a
-           JOIN license_keys l ON l.id = a.license_id
-           WHERE a.tenant_id = ?`, tenant.id) as Array<{ last_seen_at: string; revoked_at: string | null; update_channel: string }>;
-      const staleCount = activations.filter((a) => {
-        const ageMs = nowMs - new Date(a.last_seen_at).getTime();
-        return !Number.isFinite(ageMs) || ageMs > 15 * 60_000;
-      }).length;
-      const revokedCount = activations.filter((a) => a.revoked_at != null).length;
-      const channelMismatch = activations.filter((a) => a.update_channel !== tenant.update_channel).length;
-      const lagSeconds = staleCount === 0 ? 0 : Math.min(900, staleCount * 45);
-      const checkpointAgeSeconds = staleCount === 0 ? 30 : Math.min(1800, staleCount * 120);
-      const rejectionRateBps = Math.min(500, revokedCount * 25 + channelMismatch * 15);
-      const retryPressure = Math.min(100, staleCount * 12 + channelMismatch * 7);
-      const deadLetterCount = revokedCount + channelMismatch;
-      let severity: OpsSeverity = "info";
-      if (deadLetterCount > 0 || retryPressure >= 40 || lagSeconds >= 120) severity = "warn";
-      if (deadLetterCount >= 3 || retryPressure >= 70 || lagSeconds >= 240) severity = "critical";
-      return {
-        tenant_id: tenant.id,
-        lag_seconds: lagSeconds,
-        checkpoint_age_seconds: checkpointAgeSeconds,
-        rejection_rate_bps: rejectionRateBps,
-        retry_pressure: retryPressure,
-        dead_letter_count: deadLetterCount,
-        severity,
-      };
-    }));
-
-    const drillByTenant = Object.fromEntries(
-      tenantRows.map((row) => {
-        const rows: Array<{
-          batch_id: string;
-          entity_type: string;
-          failure_reason_code: string;
-          idempotency_key: string;
-          last_attempt_rfc3339: string;
-          attempt_count: number;
-        }> = [];
-        if (row.retry_pressure >= 30) {
-          rows.push({
-            batch_id: `batch_${row.tenant_id.slice(-6)}_sync`,
-            entity_type: "mutable_operational",
-            failure_reason_code: row.retry_pressure >= 70 ? "retry_timeout" : "transient_retry_pressure",
-            idempotency_key: `idem:${row.tenant_id}:sync:${row.dead_letter_count}`,
-            last_attempt_rfc3339: new Date().toISOString(),
-            attempt_count: Math.max(1, Math.floor(row.retry_pressure / 20)),
-          });
-        }
-        if (row.dead_letter_count > 0) {
-          rows.push({
-            batch_id: `batch_${row.tenant_id.slice(-6)}_dlq`,
-            entity_type: "append_only_event",
-            failure_reason_code: "dead_letter_backlog",
-            idempotency_key: `idem:${row.tenant_id}:dlq:${row.dead_letter_count}`,
-            last_attempt_rfc3339: new Date().toISOString(),
-            attempt_count: Math.max(1, row.dead_letter_count),
-          });
-        }
-        return [row.tenant_id, rows];
-      }),
-    );
-
-    const repairQueue = tenantRows
-      .filter((row) => row.dead_letter_count > 0 || row.retry_pressure >= 40)
-      .map((row, idx) => ({
-        item_id: `rq_${row.tenant_id}_${idx + 1}`,
-        tenant_id: row.tenant_id,
-        queue_kind: row.dead_letter_count > 0 ? "dead_letter" : "replay_repair",
-        severity: row.severity,
-        summary:
-          row.dead_letter_count > 0
-            ? `Dead-letter backlog detected (${row.dead_letter_count}).`
-            : `Retry pressure elevated (${row.retry_pressure}%).`,
-        recommended_action:
-          row.severity === "critical" ? "escalate" : row.dead_letter_count > 0 ? "requeue" : "replay",
-      }));
-
-    const heartbeatAnomalies = tenantRows
-      .filter((row) => row.lag_seconds > 0)
-      .slice(0, 20)
-      .map((row, idx) => ({
-        tenant_id: row.tenant_id,
-        machine_id: `machine_${row.tenant_id.slice(-4)}_${idx + 1}`,
-        anomaly_code: row.lag_seconds >= 240 ? "expired_offline_grace" : "stale_policy_snapshot",
-        detected_at_rfc3339: new Date().toISOString(),
-      }));
-
-    const aggregate = {
-      max_lag_seconds: tenantRows.reduce((m, row) => Math.max(m, row.lag_seconds), 0),
-      checkpoint_p95_age_seconds: tenantRows.length
-        ? Math.round(
-            tenantRows.map((r) => r.checkpoint_age_seconds).sort((a, b) => a - b)[
-              Math.max(0, Math.floor(tenantRows.length * 0.95) - 1)
-            ] ?? 0,
-          )
-        : 0,
-      aggregate_retry_pressure: tenantRows.length
-        ? Math.round(tenantRows.reduce((sum, row) => sum + row.retry_pressure, 0) / tenantRows.length)
-        : 0,
-      dead_letter_total: tenantRows.reduce((sum, row) => sum + row.dead_letter_count, 0),
-      worst_severity: tenantRows.reduce<OpsSeverity>((acc, row) => worstSeverity(acc, row.severity), "info"),
-    };
-
-    res.json({
-      aggregate,
-      tenant_rows: tenantRows,
-      repair_queue: repairQueue,
-      heartbeat_anomalies: heartbeatAnomalies,
-      drill_by_tenant: drillByTenant,
-    });
+    res.json(syncOverview(await collectSyncHealth(db)));
   });
 
   app.get("/api/v1/ops/rollout-overview", authMiddleware, async (_req, res) => {
@@ -270,7 +303,16 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
          JOIN tenants t ON t.id = l.tenant_id
          WHERE l.update_channel != t.update_channel`) as { c: number };
     const totalMachines = machineRows.reduce((sum, row) => sum + row.c, 0);
+    // Last forced-update policy change per tenant (when a cohort became "paused").
+    const policyChanges = new Map(
+      (
+        await db.all<{ tenant_id: string; changed_at: string }>(
+          "SELECT tenant_id, MAX(changed_at_rfc3339) AS changed_at FROM tenant_update_policy_history GROUP BY tenant_id",
+        )
+      ).map((r) => [r.tenant_id, r.changed_at]),
+    );
     const impact = {
+      // The release catalog (master plan Phase 5.3) replaces this identifier.
       release_id: process.env.ROLLOUT_RELEASE_ID ?? `rel_desktop_${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`,
       affected_tenants: tenants.length,
       affected_machines: totalMachines,
@@ -301,35 +343,38 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       existing.machine_count += machineCountsByTenant.get(tenant.id) ?? 0;
       if (tenant.force_update_mode === "required" || tenant.force_update_mode === "emergency" || tenant.force_min_app_version) {
         existing.governance = "paused";
-        existing.paused_at_rfc3339 = new Date().toISOString();
+        const changedAt = policyChanges.get(tenant.id) ?? null;
+        if (changedAt && (!existing.paused_at_rfc3339 || changedAt > existing.paused_at_rfc3339)) {
+          existing.paused_at_rfc3339 = changedAt;
+        }
       }
       groups.set(key, existing);
     }
 
+    // Only what the server measures. Download and signature-verification events are reported by
+    // the desktop updater, which does not exist yet (Phase 5): those buckets are not invented.
+    const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const heartbeats = await db.get<{ c: number; last: string | null }>(
+      `SELECT COUNT(*) AS c, MAX(last_seen_at) AS last FROM machine_activations
+       WHERE revoked_at IS NULL AND last_seen_at >= $1`,
+      since,
+    );
+    const migrationChanges = await db.get<{ c: number; last: string | null }>(
+      "SELECT COUNT(*) AS c, MAX(changed_at_rfc3339) AS last FROM tenant_update_policy_history WHERE changed_at_rfc3339 >= $1",
+      since,
+    );
     const diagnostics = [
       {
-        category: "download",
-        count_24h: Math.max(0, Math.round(totalMachines * 0.02)),
-        last_event_rfc3339: totalMachines > 0 ? new Date().toISOString() : null,
-        sample_correlation_ids: totalMachines > 0 ? ["dl_corr_01"] : [],
-      },
-      {
-        category: "signature_verification",
-        count_24h: mismatches.c,
-        last_event_rfc3339: mismatches.c > 0 ? new Date().toISOString() : null,
-        sample_correlation_ids: mismatches.c > 0 ? ["sig_corr_01"] : [],
-      },
-      {
         category: "migration",
-        count_24h: tenants.filter((t) => t.force_min_app_version != null).length,
-        last_event_rfc3339: tenants.some((t) => t.force_min_app_version != null) ? new Date().toISOString() : null,
-        sample_correlation_ids: tenants.some((t) => t.force_min_app_version != null) ? ["mig_corr_01"] : [],
+        count_24h: migrationChanges?.c ?? 0,
+        last_event_rfc3339: migrationChanges?.last ?? null,
+        sample_correlation_ids: [],
       },
       {
         category: "post_deploy_heartbeat",
-        count_24h: Math.max(0, Math.round(totalMachines * 0.015)),
-        last_event_rfc3339: totalMachines > 0 ? new Date().toISOString() : null,
-        sample_correlation_ids: totalMachines > 0 ? ["hb_corr_01"] : [],
+        count_24h: heartbeats?.c ?? 0,
+        last_event_rfc3339: heartbeats?.last ?? null,
+        sample_correlation_ids: [],
       },
     ];
 
@@ -341,59 +386,138 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
   });
 
   app.get("/api/v1/ops/platform-overview", authMiddleware, async (_req, res) => {
-    const syncRows = await db.all(`SELECT t.id as tenant_id,
+    const nowMs = Date.now();
+    const machineRows = await db.all(`SELECT t.id as tenant_id,
                 SUM(CASE WHEN a.revoked_at IS NULL THEN 0 ELSE 1 END) as revoked_count,
                 COUNT(a.id) as machine_count
          FROM tenants t
          LEFT JOIN machine_activations a ON a.tenant_id = t.id
          WHERE t.is_active = 1
          GROUP BY t.id`) as Array<{ tenant_id: string; revoked_count: number; machine_count: number }>;
-    const totalMachines = syncRows.reduce((sum, row) => sum + row.machine_count, 0);
-    const revokedMachines = syncRows.reduce((sum, row) => sum + row.revoked_count, 0);
-    const serviceSeverity: OpsSeverity = revokedMachines >= 5 ? "warn" : "info";
+    const totalMachines = machineRows.reduce((sum, row) => sum + row.machine_count, 0);
+    const revokedMachines = machineRows.reduce((sum, row) => sum + row.revoked_count, 0);
+    const activations24h = await db.get<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM machine_activations WHERE activated_at >= $1",
+      new Date(nowMs - 24 * 3600_000).toISOString(),
+    );
+    const syncRows = await db.get<{ log_rows: number; state_rows: number }>(
+      "SELECT (SELECT COUNT(*) FROM sync_mirror_ingress) AS log_rows, (SELECT COUNT(*) FROM sync_entity_state) AS state_rows",
+    );
 
+    const uptimeSeconds = Math.max(0, Math.round((nowMs - new Date(observabilityWindow.started_at_rfc3339).getTime()) / 1000));
+    const requestTotal = observabilityWindow.request_total;
+    const fiveXxPercent = requestTotal > 0 ? (observabilityWindow.request_5xx_total / requestTotal) * 100 : 0;
+    const apiSeverity: Severity =
+      fiveXxPercent >= API_5XX_PERCENT.critical ? "critical" : fiveXxPercent >= API_5XX_PERCENT.warn ? "warn" : "info";
+
+    let dbService: { severity: Severity; detail: string };
+    let dbSizeBytes: number | null = null;
+    try {
+      const probe = await probeDatabase();
+      dbSizeBytes = probe.size_bytes;
+      dbService = {
+        severity: probe.latency_ms >= DB_LATENCY_MS.critical ? "critical" : probe.latency_ms >= DB_LATENCY_MS.warn ? "warn" : "info",
+        detail: `round trip ${probe.latency_ms} ms, ${probe.connections} connections, ${(probe.size_bytes / 1048576).toFixed(1)} MiB`,
+      };
+    } catch (err) {
+      dbService = { severity: "critical", detail: `unreachable: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    const retention = workerState.last_sync_retention;
+    const workersService = retention
+      ? {
+          severity: (retention.ok ? "info" : "critical") as Severity,
+          detail: retention.ok
+            ? `last sync retention run ${retention.at_rfc3339}: ${JSON.stringify(retention.detail)}`
+            : `last sync retention run ${retention.at_rfc3339} FAILED: ${String(retention.detail.error)}`,
+        }
+      : { severity: "info" as Severity, detail: "sync retention has not run since this API process started" };
+
+    const backups = await loadBackupStatus();
+    const nightly = backups.find((b) => b.kind === "nightly");
+    const drill = backups.find((b) => b.kind === "restore_drill");
+    const nightlyAge = ageHours(nightly?.last_success_at ?? null, nowMs);
+    const drillAge = ageHours(drill?.last_success_at ?? null, nowMs);
+    let backupSeverity: Severity = "info";
+    const backupNotes: string[] = [];
+    if (nightlyAge === null) {
+      backupSeverity = "critical";
+      backupNotes.push("no successful nightly backup recorded");
+    } else {
+      backupNotes.push(`last nightly backup ${nightlyAge.toFixed(1)} h ago`);
+      if (nightlyAge > BACKUP_MAX_AGE_HOURS) backupSeverity = "critical";
+    }
+    if (nightly && nightly.last_status === "failed") {
+      backupSeverity = worse(backupSeverity, "warn");
+      backupNotes.push("the latest run failed");
+    }
+    if (nightly?.last_offsite_status === "disabled") {
+      backupSeverity = worse(backupSeverity, "warn");
+      backupNotes.push("off-site copy disabled: backups exist only on this server");
+    } else if (nightly?.last_offsite_status === "failed") {
+      backupSeverity = worse(backupSeverity, "critical");
+      backupNotes.push("off-site upload failed");
+    }
+    if (drillAge === null || drillAge > RESTORE_DRILL_MAX_AGE_DAYS * 24) {
+      backupSeverity = worse(backupSeverity, "warn");
+      backupNotes.push(drillAge === null ? "no successful restore drill recorded" : `last restore drill ${Math.round(drillAge / 24)} days ago`);
+    }
+
+    const objectStorage = await probeObjectStorage();
     const platformServices = [
-      { service: "api", severity: "info", detail: `active tenants: ${syncRows.length}` },
       {
-        service: "workers",
-        severity: serviceSeverity,
-        detail: revokedMachines > 0 ? `repair queue pressure from ${revokedMachines} revoked activations` : "worker backlog nominal",
+        service: "api",
+        severity: apiSeverity,
+        detail: `up ${uptimeSeconds} s, ${requestTotal} requests, ${fiveXxPercent.toFixed(3)} % 5xx, ${machineRows.length} active tenants`,
       },
-      { service: "postgresql", severity: "info", detail: "postgres control-plane backend healthy" },
-      { service: "redis", severity: "info", detail: "cache layer optional for v1 stack" },
-      {
-        service: "object_storage",
-        severity: totalMachines > 1000 ? "warn" : "info",
-        detail: `artifact growth tied to ${totalMachines} machine activations`,
-      },
-      { service: "admin_ui", severity: "info", detail: "console static delivery healthy" },
+      { service: "workers", ...workersService },
+      { service: "postgresql", ...dbService },
+      { service: "object_storage", ...objectStorage },
+      { service: "backups", severity: backupSeverity, detail: backupNotes.join("; ") },
     ];
 
     const infraPressure = [
       {
-        metric_code: "activation_volume_24h",
-        value: totalMachines,
+        metric_code: "activations_24h",
+        value: activations24h?.c ?? 0,
         unit: "activations",
-        threshold_hint: "warn > 1000/day",
-        trend: totalMachines > 1000 ? "up" : "flat",
+        threshold_hint: "review sudden spikes",
+        trend: "not_tracked",
       },
       {
         metric_code: "revoked_machine_ratio_pct",
         value: totalMachines === 0 ? 0 : Number(((revokedMachines / totalMachines) * 100).toFixed(1)),
         unit: "%",
         threshold_hint: "critical > 15%",
-        trend: revokedMachines > 0 ? "up" : "flat",
+        trend: "not_tracked",
       },
       {
         metric_code: "tenant_coverage",
-        value: syncRows.length,
+        value: machineRows.length,
         unit: "tenants",
         threshold_hint: "review sudden drops",
-        trend: "flat",
+        trend: "not_tracked",
       },
+      ...(dbSizeBytes !== null
+        ? [{ metric_code: "database_size_mib", value: Number((dbSizeBytes / 1048576).toFixed(1)), unit: "MiB", threshold_hint: "watch disk space", trend: "not_tracked" }]
+        : []),
+      { metric_code: "sync_log_rows", value: syncRows?.log_rows ?? 0, unit: "rows", threshold_hint: "compacted by retention", trend: "not_tracked" },
+      { metric_code: "sync_state_rows", value: syncRows?.state_rows ?? 0, unit: "rows", threshold_hint: "one per synced entity", trend: "not_tracked" },
     ];
 
     const alerts = [
+      ...platformServices
+        .filter((s) => s.severity !== "info")
+        .map((s) => ({
+          alert_id: `alt_${s.service}`,
+          title: `${s.service}: ${s.detail}`,
+          severity: s.severity,
+          state: "open",
+          owner_actor_id: null,
+          acknowledged_at_rfc3339: null,
+          notes: [],
+          drill_refs: {},
+        })),
       ...(revokedMachines > 0
         ? [
             {
@@ -431,5 +555,102 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       infra_pressure: infraPressure,
       alerts,
     });
+  });
+
+  /**
+   * Prometheus / OpenMetrics scrape. Accepts METRICS_SCRAPE_TOKEN as a bearer token (recorded as
+   * the system scope `system:metrics-scrape`) or a vendor operator token.
+   */
+  const metricsAuth = async (req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> => {
+    const h = req.headers.authorization;
+    if (METRICS_SCRAPE_TOKEN && h?.startsWith("Bearer ") && safeEqualUtf8(h.slice(7), METRICS_SCRAPE_TOKEN)) {
+      const scope = await openOperatorScope(db, "system:metrics-scrape", { method: req.method, path: req.path });
+      db.runInScope(scope, next);
+      return;
+    }
+    await authMiddleware(req, res, next);
+  };
+
+  app.get("/api/v1/ops/metrics", metricsAuth, async (_req, res) => {
+    const nowMs = Date.now();
+    const snap = await collectSyncHealth(db);
+    const backups = await loadBackupStatus();
+    const sizeRow = await db.get<{ size_bytes: number }>("SELECT pg_database_size(current_database()) AS size_bytes");
+    const sevValue = (s: Severity) => (s === "critical" ? 2 : s === "warn" ? 1 : 0);
+    const perTenant = (name: string, help: string, pick: (t: SyncHealthSnapshot["tenants"][number]) => number): MetricFamily => ({
+      name,
+      help,
+      type: "gauge",
+      samples: snap.tenants.map((t) => ({ labels: { tenant_id: t.tenant_id }, value: pick(t) })),
+    });
+    const perDevice = (name: string, help: string, pick: (d: SyncHealthSnapshot["devices"][number]) => number): MetricFamily => ({
+      name,
+      help,
+      type: "gauge",
+      samples: snap.devices.map((d) => ({ labels: { tenant_id: d.tenant_id, machine_id: d.machine_id }, value: pick(d) })),
+    });
+    const w = `${snap.window_hours} h`;
+    const families: MetricFamily[] = [
+      { name: "maintafox_api_uptime_seconds", help: "Seconds since this API process started.", type: "gauge", samples: [{ value: Math.round((nowMs - Date.parse(observabilityWindow.started_at_rfc3339)) / 1000) }] },
+      { name: "maintafox_api_requests_total", help: "HTTP requests answered since start.", type: "counter", samples: [{ value: observabilityWindow.request_total }] },
+      { name: "maintafox_api_requests_5xx_total", help: "HTTP 5xx responses since start.", type: "counter", samples: [{ value: observabilityWindow.request_5xx_total }] },
+      {
+        name: "maintafox_auth_logins_total",
+        help: "Vendor console password logins since start, by result.",
+        type: "counter",
+        samples: [
+          { labels: { result: "success" }, value: observabilityWindow.auth_success_total },
+          { labels: { result: "failure" }, value: observabilityWindow.auth_failure_total },
+        ],
+      },
+      {
+        name: "maintafox_activation_claims_total",
+        help: "Desktop activation claims/previews since start, by result.",
+        type: "counter",
+        samples: [
+          { labels: { result: "success" }, value: observabilityWindow.activation_success_total },
+          ...Array.from(observabilityWindow.activation_failures_by_reason.entries()).map(([reason, count]) => ({
+            labels: { result: reason },
+            value: count,
+          })),
+        ],
+      },
+      perTenant("maintafox_sync_devices", "Active devices of the tenant.", (t) => t.device_count),
+      perTenant("maintafox_sync_devices_online", "Devices with a heartbeat in the last 15 minutes.", (t) => t.online_device_count),
+      perTenant("maintafox_sync_applied_items", `Items applied in the last ${w}.`, (t) => t.applied_items),
+      perTenant("maintafox_sync_rejected_items", `Items refused in the last ${w}.`, (t) => t.rejected_items),
+      perTenant("maintafox_sync_conflicts", `Items refused as conflicts in the last ${w}.`, (t) => t.conflicts),
+      perTenant("maintafox_sync_dead_letters", `Distinct items refused in the last ${w} and never applied since.`, (t) => t.dead_letter_count),
+      perTenant("maintafox_sync_exchanges", `Exchange requests answered in the last ${w} (excluding retries).`, (t) => t.exchanges),
+      perTenant("maintafox_sync_retries", `Exchange retries answered from the stored response in the last ${w}.`, (t) => t.retries),
+      perTenant("maintafox_sync_rejection_rate_bps", `Refused / (applied + refused + conflicts) in the last ${w}, basis points.`, (t) => t.rejection_rate_bps),
+      perTenant("maintafox_sync_retry_pressure_percent", `Retries / exchange requests in the last ${w}, percent.`, (t) => t.retry_pressure),
+      perTenant("maintafox_sync_tenant_severity", "0 info, 1 warn, 2 critical (deploy/OPS_METRICS.md thresholds).", (t) => sevValue(t.severity)),
+      perDevice("maintafox_sync_device_lag_seconds", "Age of the oldest change the device has not acknowledged (0 = up to date).", (d) => d.lag_seconds),
+      perDevice("maintafox_sync_device_checkpoint_age_seconds", "Seconds since the device's last exchange (since activation if it never synced).", (d) => d.checkpoint_age_seconds),
+      {
+        name: "maintafox_backup_last_success_timestamp_seconds",
+        help: "Unix time of the last successful run, by kind (nightly, restore_drill).",
+        type: "gauge",
+        samples: backups.filter((b) => b.last_success_at).map((b) => ({ labels: { kind: b.kind }, value: Math.round(b.last_success_at!.getTime() / 1000) })),
+      },
+      {
+        name: "maintafox_backup_last_run_succeeded",
+        help: "1 when the latest run of the kind succeeded, else 0.",
+        type: "gauge",
+        samples: backups.map((b) => ({ labels: { kind: b.kind }, value: b.last_status === "succeeded" ? 1 : 0 })),
+      },
+      {
+        name: "maintafox_backup_offsite_last_upload_timestamp_seconds",
+        help: "Unix time of the last nightly run whose off-site copy was uploaded (absent: never).",
+        type: "gauge",
+        samples: backups
+          .filter((b) => b.kind === "nightly" && b.last_offsite_upload_at)
+          .map((b) => ({ value: Math.round(b.last_offsite_upload_at!.getTime() / 1000) })),
+      },
+      { name: "maintafox_database_size_bytes", help: "Size of the API database.", type: "gauge", samples: [{ value: sizeRow?.size_bytes ?? 0 }] },
+    ];
+    res.setHeader("Content-Type", PROMETHEUS_CONTENT_TYPE);
+    res.status(200).send(renderPrometheus(families));
   });
 }

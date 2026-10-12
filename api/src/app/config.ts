@@ -88,6 +88,17 @@ export const DEFAULT_JSON_BODY_LIMIT = "1mb";
 /** All API data lives in Postgres (versioned migrations in api/migrations). */
 export const DATABASE_URL = requireEnv("DATABASE_URL");
 
+/**
+ * Optional bearer token for Prometheus scraping of GET /api/v1/ops/metrics (>= 32 characters).
+ * Unset: the endpoint accepts only vendor operator tokens, like every other ops route.
+ */
+export const METRICS_SCRAPE_TOKEN = (() => {
+  const raw = process.env.METRICS_SCRAPE_TOKEN?.trim();
+  if (!raw) return null;
+  if (raw.length < 32) fatal("METRICS_SCRAPE_TOKEN must be at least 32 characters when set.");
+  return raw;
+})();
+
 /** Rows of operator_scope_access (who acted across tenants) older than this are pruned. */
 export const OPERATOR_ACCESS_LOG_RETENTION_DAYS = (() => {
   const raw = requireEnv("OPERATOR_ACCESS_LOG_RETENTION_DAYS");

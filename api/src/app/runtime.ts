@@ -2,7 +2,7 @@
  * Process-level helpers shared by the whole API: async error forwarding for Express 4, startup
  * failure, required environment, structured JSON logs, ids/hashes and small value helpers.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import type express from "express";
@@ -92,15 +92,12 @@ export function semverCompare(a?: string | null, b?: string | null): number {
   return 0;
 }
 
-export type OpsSeverity = "info" | "warn" | "critical";
 export type ForceUpdateMode = "off" | "required" | "emergency" | "inherit";
 
-export function severityRank(s: OpsSeverity): number {
-  if (s === "critical") return 2;
-  if (s === "warn") return 1;
-  return 0;
-}
-
-export function worstSeverity(a: OpsSeverity, b: OpsSeverity): OpsSeverity {
-  return severityRank(a) >= severityRank(b) ? a : b;
+/** Constant-time comparison of two secrets (webhook signature, scrape token). */
+export function safeEqualUtf8(a: string, b: string): boolean {
+  const ab = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }

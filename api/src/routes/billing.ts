@@ -2,14 +2,14 @@
  * Billing: SlickPay checkout (public, may create the tenant) and the payment webhook that renews
  * or issues the licence.
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 import type express from "express";
 import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { publicCheckoutRateLimiter, sendValidationError } from "../app/http.js";
-import { newId, randomLicenseKey } from "../app/runtime.js";
+import { newId, randomLicenseKey, safeEqualUtf8 } from "../app/runtime.js";
 import { systemScopeMiddleware } from "../app/scope.js";
 import { editionExists } from "../edition-catalog-store.js";
 
@@ -68,13 +68,6 @@ const SLICKPAY_EXTRA_SLOT_PRICE = Number.parseFloat(process.env.SLICKPAY_EXTRA_S
 
 function slickPayConfigured(): boolean {
   return SLICKPAY_PUBLIC_KEY.length > 0 && SLICKPAY_SECRET_KEY.length > 0;
-}
-
-function safeEqualUtf8(a: string, b: string): boolean {
-  const ab = Buffer.from(a, "utf8");
-  const bb = Buffer.from(b, "utf8");
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
 }
 
 function computeLicenseExpiresPlusOneYear(currentExpiresAt: string | null, now = new Date()): string {

@@ -164,13 +164,15 @@ export async function logRejection(
     rejectionCode: string;
     rejectionMessage: string;
     createdAt: string;
+    /** The exchange that refused the item (ops drill-down). */
+    serverBatchId: string;
   },
 ): Promise<void> {
   await db.run(
     `INSERT INTO sync_rejection_log
        (tenant_id, idempotency_key, entity_sync_id, rejection_code, rejection_message, created_at_rfc3339,
-        machine_fingerprint, entity_type)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        machine_fingerprint, entity_type, server_batch_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     input.tenantId,
     input.idempotencyKey,
     input.entitySyncId,
@@ -179,6 +181,7 @@ export async function logRejection(
     input.createdAt,
     input.machineFingerprint,
     input.entityType,
+    input.serverBatchId,
   );
 }
 

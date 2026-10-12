@@ -182,6 +182,14 @@ export async function runSyncExchangeV2(
           "idempotency_key was already used by this device with a different request body.",
         );
       }
+      // A retry of an exchange already answered (lost response): counted for the ops metrics.
+      await db.run(
+        `UPDATE sync_exchange_idempotency_v2 SET replay_count = replay_count + 1, last_replay_at = now()
+         WHERE tenant_id = $1 AND machine_fingerprint = $2 AND idempotency_key = $3`,
+        act.tenantId,
+        act.machineFingerprint,
+        body.idempotency_key,
+      );
       log("sync_exchange_idempotent_replay", {
         tenant_id: act.tenantId,
         machine_fingerprint: act.machineFingerprint,
@@ -222,6 +230,7 @@ export async function runSyncExchangeV2(
         rejectionCode: code,
         rejectionMessage: message,
         createdAt: nowIso,
+        serverBatchId,
       });
     };
 

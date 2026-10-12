@@ -95,7 +95,7 @@ export const RolloutOverviewV1Schema = z.object({
 });
 
 export const PlatformServiceStatusV1Schema = z.object({
-  service: z.enum(["api", "workers", "postgresql", "redis", "object_storage", "admin_ui"]),
+  service: z.enum(["api", "workers", "postgresql", "redis", "object_storage", "admin_ui", "backups"]),
   severity: SyncHealthSeverityV1Schema,
   detail: z.string(),
 });

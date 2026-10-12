@@ -131,6 +131,11 @@ export class TenantMediaObjectStore {
     };
   }
 
+  /** Health probe: the bucket answers HEAD (no creation). Throws with the provider's error. */
+  async headBucket(): Promise<void> {
+    await this.client.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
+  }
+
   /** Every object key in the bucket under `prefix` (paged; used by the off-site media backup). */
   async listObjectKeys(prefix = ""): Promise<string[]> {
     const keys: string[] = [];

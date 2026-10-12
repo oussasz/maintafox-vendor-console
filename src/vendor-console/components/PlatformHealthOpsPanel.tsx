@@ -18,6 +18,7 @@ const SERVICE_LABEL: Record<string, string> = {
   redis: "Redis",
   object_storage: "Object storage",
   admin_ui: "Admin UI",
+  backups: "Backups",
 };
 
 export function PlatformHealthOpsPanel() {

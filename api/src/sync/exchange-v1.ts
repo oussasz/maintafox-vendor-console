@@ -51,6 +51,13 @@ export async function runSyncExchangeV1(
       body.idempotency_key,
     );
     if (replay) {
+      // A retry of an exchange already answered (lost response): counted for the ops metrics.
+      await db.run(
+        `UPDATE sync_exchange_idempotency SET replay_count = replay_count + 1, last_replay_at = now()
+         WHERE tenant_id = $1 AND idempotency_key = $2`,
+        act.tenantId,
+        body.idempotency_key,
+      );
       log("sync_exchange_idempotent_replay", {
         tenant_id: act.tenantId,
         protocol_version: "v1",
@@ -90,6 +97,7 @@ export async function runSyncExchangeV1(
           rejectionCode: validation.rejection_code,
           rejectionMessage: validation.rejection_message,
           createdAt: nowIso,
+          serverBatchId,
         });
         continue;
       }

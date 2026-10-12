@@ -24,7 +24,7 @@ import type { ApiContext } from "./app/context.js";
 import { createGuards } from "./app/guards.js";
 import { corsOptionsDelegate, type AuthRequest } from "./app/http.js";
 import { getMediaStore } from "./app/media.js";
-import { observabilityWindow } from "./app/observability.js";
+import { observabilityWindow, workerState } from "./app/observability.js";
 import { fatal, forwardAsyncErrors, newId, structuredLog } from "./app/runtime.js";
 import { pruneOperatorScopeAccess, runAsSystem } from "./app/scope.js";
 import { createSeeder } from "./app/seed.js";
@@ -186,8 +186,15 @@ const syncRetentionTimer = setInterval(() => {
     ...(await runSyncRetention(db, syncConfig)),
     operator_scope_access_deleted: await pruneOperatorScopeAccess(db, OPERATOR_ACCESS_LOG_RETENTION_DAYS),
   }))
-    .then((report) => structuredLog("sync_retention_run", report))
-    .catch((err) => structuredLog("sync_retention_failed", { error: err instanceof Error ? err.message : String(err) }));
+    .then((report) => {
+      workerState.last_sync_retention = { at_rfc3339: new Date().toISOString(), ok: true, detail: report };
+      structuredLog("sync_retention_run", report);
+    })
+    .catch((err) => {
+      const error = err instanceof Error ? err.message : String(err);
+      workerState.last_sync_retention = { at_rfc3339: new Date().toISOString(), ok: false, detail: { error } };
+      structuredLog("sync_retention_failed", { error });
+    });
 }, syncConfig.retentionIntervalMinutes * 60_000);
 syncRetentionTimer.unref();
 

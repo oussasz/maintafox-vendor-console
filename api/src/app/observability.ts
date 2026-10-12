@@ -51,3 +51,8 @@ export function observeActivationOutcome(
   observabilityWindow.activation_failure_total += 1;
   incrementReasonBucket(observabilityWindow.activation_failures_by_reason, reason);
 }
+
+/** Outcome of the last sync retention run (hourly timer in index.ts), shown by the platform overview. */
+export const workerState: {
+  last_sync_retention: { at_rfc3339: string; ok: boolean; detail: Record<string, unknown> } | null;
+} = { last_sync_retention: null };
