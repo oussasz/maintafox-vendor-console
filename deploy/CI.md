@@ -36,4 +36,5 @@ window of the migration (deploy/OBJECT_STORAGE.md §5).
 ## Accepted secret-scan findings
 
 `.gitleaksignore` lists exact finding fingerprints (commit:file:rule:line) with a reason each.
-Today: one test-only value (base64 of "too-short") in commit 300ae9c.
+Today: one test-only value (base64 of "too-short") in commit 300ae9c; in commit 7702ed3 the
+`.env.example` placeholder for `S3_ACCESS_KEY` and the deliberately wrong secret of the media test.
