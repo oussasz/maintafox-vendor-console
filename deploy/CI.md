@@ -23,3 +23,14 @@ and removed as soon as a fixed version exists.
 
 Patched transitive versions are forced with `pnpm.overrides` (proxy-addr, undici 7, postcss,
 nanoid 3, browserslist, source-map-js); `vite` was raised to 6.4.4.
+
+## Known issue: MinIO images can no longer be pulled (found 2026-10-12)
+
+`minio/minio` and `minio/mc` (the releases in `docker-compose.yml`) are refused by Docker Hub
+("repository does not exist") and by `quay.io/minio` ("unauthorized"): MinIO stopped publishing
+free container images. The VPS keeps working because both images are in its local Docker cache
+(never run `docker image prune -a` there), but **a new or rebuilt server cannot start the media
+store**. The CI pull check skips `minio/*` for that reason only. Options for the owner: build the
+same MinIO release from source into our own image, use a maintained community build pinned by
+digest, or move tenant media to another S3-compatible server (the API only needs S3 + presigned
+URLs). The off-site backup test uses Adobe S3Mock, which is enough to prove the S3 calls.
