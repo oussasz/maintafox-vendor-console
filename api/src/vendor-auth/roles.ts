@@ -107,6 +107,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "GET /api/v1/ops/platform-overview": "platform.observe",
   "GET /api/v1/ops/observability/slo": "platform.observe",
   "GET /api/v1/ops/metrics": "platform.observe",
+  "GET /api/v1/ops/devices/:tenantId/:machineFingerprint/timeline": "sync.operate",
+  "POST /api/v1/ops/devices/:tenantId/:machineFingerprint/resync": "sync.operate",
 
   // Audit
   "GET /api/v1/audit/ledger": "audit.view",

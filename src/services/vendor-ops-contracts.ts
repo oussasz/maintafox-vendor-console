@@ -178,20 +178,3 @@ export function worstSeverity(a: SyncHealthSeverityV1, b: SyncHealthSeverityV1):
 }
 
 /** Mirrors Rust `repair_action_allowed` (UX hint; server enforces). */
-export function repairActionAllowed(
-  item: z.infer<typeof RepairQueueItemV1Schema>,
-  action: z.infer<typeof RepairQueueActionV1Schema>,
-): boolean {
-  const deadLetter = item.queue_kind.includes("dead") || item.queue_kind === "dead_letter";
-  switch (action) {
-    case "escalate":
-      return item.severity === "warn" || item.severity === "critical";
-    case "replay":
-    case "requeue":
-      return true;
-    case "acknowledge":
-      return item.severity !== "critical" || deadLetter;
-    default:
-      return false;
-  }
-}

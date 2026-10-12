@@ -14,10 +14,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-import { repairActionAllowed } from "@/services/vendor-ops-contracts";
 import { getSyncOverview, type SyncOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
+import { SyncDeviceTimeline } from "./SyncDeviceTimeline";
 
 export function SyncHealthPanel() {
   const { t } = useTranslation("vendorConsole");
@@ -183,7 +183,7 @@ export function SyncHealthPanel() {
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold">{t("sync.repair.title", "Repair queue")}</h2>
-        <p className="text-xs text-text-secondary">{t("sync.repair.hint", "Explicit actions; server validates RBAC.")}</p>
+        <p className="text-xs text-text-secondary">{t("sync.repair.hint")}</p>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
@@ -193,7 +193,7 @@ export function SyncHealthPanel() {
                 <th className="px-3 py-2">{t("sync.repair.col.queue", "Queue")}</th>
                 <th className="px-3 py-2">{t("sync.repair.col.sev", "Severity")}</th>
                 <th className="px-3 py-2">{t("sync.repair.col.summary", "Summary")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.actions", "Allowed actions")}</th>
+
               </tr>
             </thead>
             <tbody>
@@ -207,18 +207,12 @@ export function SyncHealthPanel() {
                       <OpsSeverityBadge severity={item.severity} />
                     </td>
                     <td className="max-w-xs px-3 py-2 text-xs text-text-secondary">{item.summary}</td>
-                    <td className="px-3 py-2">
-                      <p className="font-mono text-xs text-text-secondary">
-                        {(["replay", "requeue", "acknowledge", "escalate"] as const)
-                          .filter((act) => repairActionAllowed(item, act))
-                          .join(" · ") || "none"}
-                      </p>
-                    </td>
+
                   </tr>
                 ))
               ) : (
                 <tr className="border-b border-surface-border last:border-0">
-                  <td colSpan={6} className="px-3 py-4 text-center text-sm text-text-muted">
+                  <td colSpan={5} className="px-3 py-4 text-center text-sm text-text-muted">
                     {t("sync.repair.empty", "Repair queue is empty.")}
                   </td>
                 </tr>
@@ -263,6 +257,8 @@ export function SyncHealthPanel() {
           </table>
         </div>
       </section>
+
+      <SyncDeviceTimeline />
 
       <Sheet open={drillTenant !== null} onOpenChange={(o) => !o && setDrillTenant(null)}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">

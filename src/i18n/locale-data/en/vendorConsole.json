@@ -274,14 +274,13 @@
     },
     "repair": {
       "title": "Repair queue",
-      "hint": "Explicit actions; server validates RBAC.",
+      "hint": "Measured by the server. Refused items are replayed from the device itself (its Sync Center: the server keeps only their ids and reasons); a device whose copy is wrong can be fully resynchronised below.",
       "col": {
         "id": "Item",
         "tenant": "Tenant",
         "queue": "Queue",
         "sev": "Severity",
-        "summary": "Summary",
-        "actions": "Actions"
+        "summary": "Summary"
       }
     },
     "anomalies": {
@@ -297,6 +296,35 @@
       "title": "Failure drill-down",
       "empty": "No failure rows for this tenant.",
       "attempts": "Attempts"
+    },
+    "timeline": {
+      "title": "Device timeline",
+      "body": "Everything the server recorded for one device: exchanges (and retries), refused items, conflicts, resynchronisations and operator actions on it.",
+      "customer": "Customer",
+      "machine": "Machine",
+      "span": "Period",
+      "hours_one": "last {{count}} hour",
+      "hours_other": "last {{count}} hours",
+      "protocol": "Protocol",
+      "lag": "Lag",
+      "checkpointAge": "Checkpoint age",
+      "lastSeen": "Last seen",
+      "empty": "Nothing recorded in this period.",
+      "noMachine": "No activated machine for this customer.",
+      "resync": "Full resynchronisation",
+      "resyncTitle": "Fully resynchronise this device?",
+      "resyncBody": "At its next sync, {{machine}} is told its copy is out of date: it keeps its unsent changes, downloads all the data again, then sends them. Use it when the device's data looks wrong or incomplete.",
+      "resyncConfirm": "Resynchronise",
+      "resyncRequested": "Resynchronisation requested: it starts at the device's next sync.",
+      "resyncOpen": "Resynchronisation requested {{at}} by {{by}}: waiting for the device's next sync.",
+      "kind": {
+        "exchange": "Sync",
+        "rejection": "Refused",
+        "conflict": "Conflict",
+        "resync_requested": "Resync requested",
+        "resync_completed": "Resync done",
+        "operator_action": "Operator"
+      }
     }
   },
   "rollouts": {

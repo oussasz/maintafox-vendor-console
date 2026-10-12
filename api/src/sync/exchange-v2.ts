@@ -202,6 +202,25 @@ export async function runSyncExchangeV2(
       };
     }
 
+    // An operator asked for a full resynchronisation of this device (routes/ops.ts): refuse its
+    // checkpoint so the desktop bootstraps again from a full snapshot (its unsent changes stay in
+    // its outbox and are sent afterwards). A device already bootstrapping sends no checkpoint.
+    if (requestSeq > 0) {
+      const resync = await db.get<{ id: number }>(
+        `SELECT id FROM sync_device_resync_request
+         WHERE tenant_id = $1 AND machine_fingerprint = $2 AND completed_at IS NULL`,
+        act.tenantId,
+        act.machineFingerprint,
+      );
+      if (resync) {
+        throw new SyncRequestError(
+          400,
+          "invalid_checkpoint_token",
+          "An operator asked for a full resynchronisation of this device; bootstrap again with a snapshot.",
+        );
+      }
+    }
+
     const highWaterBefore = await tenantStateHighWater(db, act.tenantId);
     if (requestSeq > highWaterBefore) {
       throw new SyncRequestError(

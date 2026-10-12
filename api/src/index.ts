@@ -46,6 +46,7 @@ import { registerOpsRoutes } from "./routes/ops.js";
 import { registerReleasesRoutes } from "./routes/releases.js";
 import { registerSupportRoutes } from "./routes/support.js";
 import { registerSyncRoutes } from "./routes/sync.js";
+import { registerSyncOperationsRoutes } from "./routes/sync-operations.js";
 import { registerTenantsRoutes } from "./routes/tenants.js";
 import {
   loadPayloadCipher,
@@ -171,6 +172,7 @@ registerSyncRoutes(app, ctx);
 registerActivationRoutes(app, ctx);
 registerNotificationsRoutes(app, ctx);
 registerOperatorsRoutes(app, ctx);
+registerSyncOperationsRoutes(app, ctx);
 
 const port = Number(process.env.PORT ?? 3000);
 

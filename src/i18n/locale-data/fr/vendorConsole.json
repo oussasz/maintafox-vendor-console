@@ -274,14 +274,13 @@
     },
     "repair": {
       "title": "File de réparation",
-      "hint": "Actions explicites ; validation RBAC côté serveur.",
+      "hint": "Mesuré par le serveur. Les éléments refusés se rejouent depuis l'appareil lui-même (son centre de synchronisation : le serveur n'en garde que les identifiants et les motifs) ; un appareil dont la copie est fausse peut être entièrement resynchronisé ci-dessous.",
       "col": {
         "id": "Élément",
         "tenant": "Tenant",
         "queue": "File",
         "sev": "Gravité",
-        "summary": "Résumé",
-        "actions": "Actions"
+        "summary": "Résumé"
       }
     },
     "anomalies": {
@@ -297,6 +296,35 @@
       "title": "Détail des échecs",
       "empty": "Aucune ligne d'échec pour ce tenant.",
       "attempts": "Tentatives"
+    },
+    "timeline": {
+      "title": "Historique de l'appareil",
+      "body": "Tout ce que le serveur a enregistré pour un appareil : échanges (et nouvelles tentatives), éléments refusés, conflits, resynchronisations et actions d'opérateurs.",
+      "customer": "Client",
+      "machine": "Machine",
+      "span": "Période",
+      "hours_one": "dernière heure",
+      "hours_other": "{{count}} dernières heures",
+      "protocol": "Protocole",
+      "lag": "Retard",
+      "checkpointAge": "Âge du point de reprise",
+      "lastSeen": "Vu pour la dernière fois",
+      "empty": "Rien d'enregistré sur cette période.",
+      "noMachine": "Aucune machine activée pour ce client.",
+      "resync": "Resynchronisation complète",
+      "resyncTitle": "Resynchroniser entièrement cet appareil ?",
+      "resyncBody": "À sa prochaine synchronisation, {{machine}} apprend que sa copie n'est plus à jour : il garde ses modifications non envoyées, retélécharge toutes les données, puis les envoie. À utiliser quand les données de l'appareil semblent fausses ou incomplètes.",
+      "resyncConfirm": "Resynchroniser",
+      "resyncRequested": "Resynchronisation demandée : elle démarre à la prochaine synchronisation de l'appareil.",
+      "resyncOpen": "Resynchronisation demandée le {{at}} par {{by}} : en attente de la prochaine synchronisation de l'appareil.",
+      "kind": {
+        "exchange": "Synchro",
+        "rejection": "Refusé",
+        "conflict": "Conflit",
+        "resync_requested": "Resynchro demandée",
+        "resync_completed": "Resynchro faite",
+        "operator_action": "Opérateur"
+      }
     }
   },
   "rollouts": {
