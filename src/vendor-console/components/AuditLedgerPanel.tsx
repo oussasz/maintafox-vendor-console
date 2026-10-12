@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { VendorAdminAuditActionCategoryV1, VendorAdminAuditRecordV1 } from "@shared/ipc-types";
+import type { VendorAdminAuditActionCategoryV1, VendorAdminAuditRecordV1 } from "@maintafox/contracts";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

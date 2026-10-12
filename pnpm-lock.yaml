@@ -214,6 +214,8 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/contracts: {}
+
 packages:
 
   '@adobe/css-tools@4.4.4':

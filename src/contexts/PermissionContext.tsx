@@ -7,7 +7,7 @@ import {
   isPermissionsLoadError,
 } from "@/services/admin-permissions";
 import { endSession } from "@/lib/auth-session";
-import type { PermissionRecord } from "@shared/ipc-types";
+import type { PermissionRecord } from "@maintafox/contracts";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated" | "forbidden" | "error";
 

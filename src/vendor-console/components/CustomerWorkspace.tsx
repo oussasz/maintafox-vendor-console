@@ -15,7 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { BulkEntitlementOperationRequestV1 } from "@shared/ipc-types";
+import type { BulkEntitlementOperationRequestV1 } from "@maintafox/contracts";
 
 import { channelPolicyConsistent } from "@/services/customer-entitlement-machine-contracts";
 import { StepUpKinds } from "@/lib/step-up-kinds";

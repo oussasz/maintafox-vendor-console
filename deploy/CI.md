@@ -10,8 +10,26 @@ Workflow: `.github/workflows/ci.yml`, on every push and pull request. All jobs m
 | Off-site backup copy | `test:backup-offsite` against a MinIO container with `age` | needs an S3-compatible server and `age` |
 | Docker images | builds the API image, the backup image (`--target backup`, checks the programs it needs), the postgres image (`deploy/postgres`, checks `age` and PostgreSQL 16) and the console image | `docker build -f api/Dockerfile [--target backup] .`, `docker build deploy/postgres` |
 | Read-only backup pull | `deploy/backup-pull/ci-test.sh`: the real SFTP container and the real `Pull-MaintafoxBackups.ps1` under PowerShell 7 (download + SHA-256, idempotent, read-only / SFTP-only / key-only, tampered file refused, retention) | needs docker, pwsh, age, ssh and sudo (Linux) |
+| Contracts drift against the desktop | checks out `oussasz/maintafox-desktop` at `DESKTOP_CONTRACTS_REF` (today `phase0/security-hardening`, see below) and fails when the desktop and this repository disagree on: the desktop types the console uses (`packages/contracts`), the sync v2 entity registry (`shared/sync-entity-registry.v2.json` vs the desktop's `shared/sync/server-entity-allowlist.v2.json`), the step-up action kinds (`shared/step-up-actions.v1.json` vs the Rust `StepUpActionKind`) | `node packages/contracts/scripts/extract-desktop-types.mjs --desktop <desktop checkout> --check`, `node packages/contracts/scripts/sync-registry-drift.mjs --desktop <checkout>`, `node api/scripts/step-up-kinds-drift.mjs --rust <checkout>/src-tauri/src/vps/vendor_admin_console.rs` |
 | Dependency audit | `pnpm audit --audit-level high` | same |
 | Secret scan | gitleaks 8.30.1 over the full git history | `gitleaks git . --redact` |
+
+## Contracts shared with the desktop (Phase 4.6)
+
+`packages/contracts` (`@maintafox/contracts`) holds the desktop types the console imports, generated
+verbatim from the desktop's `shared/ipc-types.ts` (the replaced hand copy `shared/ipc-types.ts` is
+gone). When the desktop changes one of them, the drift job fails; regenerate and commit:
+
+    node packages/contracts/scripts/extract-desktop-types.mjs --desktop <desktop checkout>
+
+To use another desktop type in the console, add its name to `CONSOLE_TYPES` in that script, then
+regenerate (types it references come with it).
+
+The desktop ref is `phase0/security-hardening` because that branch carries the sync v2 allowlist
+and the IPC types this console and API are built against; desktop `main` does not have them yet.
+When the desktop merges that branch, set `DESKTOP_CONTRACTS_REF: main` in the workflow. The
+desktop types are hand-written TypeScript mirroring the Rust structs; generating them from Rust
+(e.g. ts-rs) is a desktop change, not done here.
 
 ## Accepted audit advisories
 

@@ -66,21 +66,35 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:all
 
   contracts-drift:
-    name: Contracts drift against the desktop (step-up action kinds)
+    name: Contracts drift against the desktop (IPC types, sync registry, step-up kinds)
     runs-on: ubuntu-24.04
+    env:
+      # The desktop branch this console is built against: phase0/security-hardening holds the
+      # sync v2 allowlist and the IPC types the console and API use (desktop main does not have
+      # them yet). Switch to main when the desktop merges that branch.
+      DESKTOP_CONTRACTS_REF: phase0/security-hardening
     steps:
       - uses: actions/checkout@v4
-      # The desktop repository is public: read-only checkout of its main branch, no secret needed.
+      # The desktop repository is public: read-only checkout, no secret needed.
       - uses: actions/checkout@v4
         with:
           repository: oussasz/maintafox-desktop
-          ref: main
+          ref: ${{ env.DESKTOP_CONTRACTS_REF }}
           path: desktop
-          sparse-checkout: src-tauri/src/vps
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            src-tauri/src/vps/vendor_admin_console.rs
+            shared/ipc-types.ts
+            shared/sync/server-entity-allowlist.v2.json
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
+      - name: Desktop types used by the console (packages/contracts)
+        run: node packages/contracts/scripts/extract-desktop-types.mjs --desktop desktop --check
+      - name: Sync entity registry
+        run: node packages/contracts/scripts/sync-registry-drift.mjs --desktop desktop
+      - name: Step-up action kinds
+        run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
 
   backup-drill:
     name: Backup and restore drill (real PostgreSQL 16 programs)

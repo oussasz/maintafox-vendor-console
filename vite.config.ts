@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "./src"),
       "@shared": resolve(__dirname, "./shared"),
+      "@maintafox/contracts": resolve(__dirname, "./packages/contracts/src/index.ts"),
     },
   },
   server: {

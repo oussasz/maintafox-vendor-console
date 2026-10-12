@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
-import type { SyncFailureDrillDownRowV1, TenantSyncHealthRowV1 } from "@shared/ipc-types";
+import type { SyncFailureDrillDownRowV1, TenantSyncHealthRowV1 } from "@maintafox/contracts";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

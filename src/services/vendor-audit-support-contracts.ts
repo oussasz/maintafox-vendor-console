@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { VendorAdminAuditRecordV1 } from "@shared/ipc-types";
+import type { VendorAdminAuditRecordV1 } from "@maintafox/contracts";
 
 /** Must match `vps::audit_support_hardening::audit_record_preimage`. */
 export function auditRecordPreimage(record: VendorAdminAuditRecordV1): string {

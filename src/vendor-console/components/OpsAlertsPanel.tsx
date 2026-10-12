@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 
-import type { OpsAlertV1 } from "@shared/ipc-types";
+import type { OpsAlertV1 } from "@maintafox/contracts";
 
 import { tenantSafeDrillThrough } from "@/services/vendor-ops-contracts";
 

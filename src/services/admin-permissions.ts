@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { PermissionRecord } from "@shared/ipc-types";
+import type { PermissionRecord } from "@maintafox/contracts";
 
 import { authFetch, SessionEndedError } from "@/lib/api-client";
 

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 
-import type { SignedClaimPreviewV1 } from "@shared/ipc-types";
+import type { SignedClaimPreviewV1 } from "@maintafox/contracts";
 
 import { Badge } from "@/components/ui/badge";
 
