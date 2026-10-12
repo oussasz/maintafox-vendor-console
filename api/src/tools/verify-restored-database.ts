@@ -151,7 +151,11 @@ async function main(): Promise<void> {
     new pg.Pool({ database: args.database, application_name: "maintafox-restore-verify", max: 2 }),
   );
   try {
-    const report = await verifyRestoredDatabase(db, args.database, expected);
+    // A scratch database, read-only check: an unrecorded operator scope (recording it would add a
+    // row and change the counts being verified).
+    const report = await db.runInScope({ kind: "operator", actor: "system:restore-verify" }, () =>
+      verifyRestoredDatabase(db, args.database, expected),
+    );
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     process.exitCode = report.ok ? 0 : 1;
   } finally {

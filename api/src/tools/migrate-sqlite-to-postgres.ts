@@ -25,6 +25,7 @@ import SqliteDatabase from "better-sqlite3";
 import { AUDIT_RECORD_COLUMNS, verifyAuditChain, type AuditRecordRow } from "../audit-chain.js";
 import { openDatabase, type Database, type SqlParam } from "../db/database.js";
 import { runMigrations } from "../db/migrate.js";
+import { runAsSystem } from "../app/scope.js";
 
 /** Copy order respects foreign keys. */
 const CONTROL_PLANE_TABLES = [
@@ -314,7 +315,8 @@ async function main(): Promise<void> {
 
     const migrations = await runMigrations(db, () => {});
 
-    const report = await db
+    // The import writes every tenant's rows: a recorded system scope (tenant isolation, migration 007).
+    const report = await runAsSystem(db, "sqlite-import", () => db
       .tx(async () => {
         await db.lockXact("mfx", "sqlite-import");
         const marker = await db.get<{ imported_at: Date; source_path: string }>(
@@ -408,7 +410,7 @@ async function main(): Promise<void> {
         const dryRunReport = (err as { dryRunReport?: unknown }).dryRunReport;
         if (dryRunReport) return dryRunReport;
         throw err;
-      });
+      }));
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } finally {
     src.close();

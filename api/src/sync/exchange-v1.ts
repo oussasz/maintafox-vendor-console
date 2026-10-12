@@ -12,8 +12,9 @@ import { randomBytes } from "node:crypto";
 
 import type { Database } from "../db/database.js";
 import { initialCheckpointToken, nextCheckpointToken, shouldAdvanceCheckpoint } from "./checkpoint.js";
+import { PayloadCipher, responseAad } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
-import { insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
+import { deliveredPayload, insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
 import {
   normalizePayloadHash,
   SYNC_INBOUND_BATCH_LIMIT,
@@ -33,11 +34,13 @@ export function newBatchId(): string {
 
 export async function runSyncExchangeV1(
   db: Database,
-  deps: { registry: SyncEntityRegistry },
+  deps: { registry: SyncEntityRegistry; cipher: PayloadCipher },
   act: ActivationSyncContext,
   body: SyncExchangeRequest,
   log: (event: string, fields: Record<string, unknown>) => void,
 ): Promise<SyncExchangeResponse> {
+  // v1 stored responses are keyed by tenant + idempotency key (no device), and so is their binding.
+  const v1ResponseAad = responseAad(act.tenantId, "", body.idempotency_key);
   return db.tx(async () => {
     await lockTenantSync(db, act.tenantId);
 
@@ -53,7 +56,7 @@ export async function runSyncExchangeV1(
         protocol_version: "v1",
         server_batch_id: replay.server_batch_id,
       });
-      return JSON.parse(replay.response_json) as SyncExchangeResponse;
+      return JSON.parse(deps.cipher.open(replay.response_json, v1ResponseAad)) as SyncExchangeResponse;
     }
 
     const nowIso = new Date().toISOString();
@@ -106,9 +109,9 @@ export async function runSyncExchangeV1(
         receivedAt: nowIso,
         protocolVersion: "v1",
       };
-      const ingressId = await insertIngress(db, ingress);
+      const ingressId = await insertIngress(db, deps.cipher, ingress);
       if (ingressId !== null && deps.registry.scopeOf(ingress.entityType) === "tenant") {
-        await upsertEntityState(db, ingressId, ingress);
+        await upsertEntityState(db, deps.cipher, ingressId, ingress);
       }
 
       acknowledged_items.push({
@@ -165,7 +168,7 @@ export async function runSyncExchangeV1(
       entity_sync_id: r.entity_sync_id,
       operation: r.operation,
       row_version: r.row_version,
-      payload_json: r.payload_json,
+      payload_json: deliveredPayload(deps.cipher, act.tenantId, r.entity_type, r.entity_sync_id, r.payload_json),
     }));
     let nextCursor: number;
     if (candidates.length > SYNC_INBOUND_BATCH_LIMIT) {
@@ -209,7 +212,7 @@ export async function runSyncExchangeV1(
       act.tenantId,
       body.idempotency_key,
       serverBatchId,
-      JSON.stringify(response),
+      deps.cipher.seal(JSON.stringify(response), v1ResponseAad),
       nowIso,
     );
 

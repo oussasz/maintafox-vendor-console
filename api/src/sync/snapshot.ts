@@ -6,6 +6,7 @@
  */
 import type { Database } from "../db/database.js";
 import { signCheckpointToken, signSnapshotPageToken, verifySnapshotPageToken } from "./checkpoint.js";
+import type { PayloadCipher } from "./payload-crypto.js";
 import { confirmDeviceUsers, listSnapshotPage, tenantStateHighWater } from "./store.js";
 import {
   sha256Hex,
@@ -17,7 +18,7 @@ import {
 
 export async function runSyncSnapshotV2(
   db: Database,
-  deps: { checkpointSecret: string },
+  deps: { checkpointSecret: string; cipher: PayloadCipher },
   act: ActivationSyncContext,
   body: SyncSnapshotRequestV2,
   log: (event: string, fields: Record<string, unknown>) => void,
@@ -51,7 +52,7 @@ export async function runSyncSnapshotV2(
     after = ["", ""];
   }
 
-  const rows = await listSnapshotPage(db, {
+  const rows = await listSnapshotPage(db, deps.cipher, {
     tenantId: act.tenantId,
     highWater,
     scope: body.scope,

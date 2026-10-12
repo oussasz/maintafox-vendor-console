@@ -16,6 +16,7 @@ import { once } from "node:events";
 
 import pg from "pg";
 
+import { runAsSystem } from "../dist/app/scope.js";
 import { openDatabase } from "../dist/db/database.js";
 import { runSyncRetention } from "../dist/sync/retention.js";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
@@ -663,10 +664,10 @@ async function run() {
       try {
         // An activated device that has never synced holds the whole log back (v1 has no snapshot).
         await claim("fp-never-synced");
-        const blocked = await runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 });
+        const blocked = await runAsSystem(db, "sync-v2-retention-test", () => runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 }));
         assert.equal(blocked.ingress_rows_deleted, 0, "a never-synced active device blocks compaction");
         await sql("UPDATE machine_activations SET revoked_at = now()::text, revocation_kind = 'machine' WHERE machine_fingerprint = 'fp-never-synced'");
-        const report = await runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 });
+        const report = await runAsSystem(db, "sync-v2-retention-test", () => runSyncRetention(db, { ingressRetentionDays: 1, idempotencyRetentionDays: 1 }));
         assert.equal(report.skipped_concurrent_run, false);
         assert.ok(report.ingress_rows_deleted > 0);
         assert.ok(blocked.idempotency_v2_deleted > 0, "old stored responses are pruned (not blocked by device positions)");

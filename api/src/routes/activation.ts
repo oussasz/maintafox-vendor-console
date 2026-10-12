@@ -9,6 +9,7 @@ import type { ApiContext } from "../app/context.js";
 import { JWT_SECRET } from "../app/config.js";
 import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { observeActivationOutcome } from "../app/observability.js";
+import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
 import { newId, semverCompare, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { DEVICE_TOKEN_ROTATE_AFTER_SECONDS, signDeviceActivationToken } from "../auth-tokens.js";
 import { editionExists, loadCapabilitiesJsonForSign } from "../edition-catalog-store.js";
@@ -285,7 +286,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     return { ok: true, lic };
   }
 
-  app.post("/api/v1/activation/preview", activationRateLimiter, async (req, res) => {
+  app.post("/api/v1/activation/preview", activationRateLimiter, licenceKeyTenantScopeMiddleware(db), async (req, res) => {
     const startedAt = Date.now();
     const parsed = ActivationClaimBody.safeParse(req.body);
     if (!parsed.success) {
@@ -323,7 +324,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     res.json(await buildActivationSummary(validated.lic, input, resolvedPolicy));
   });
 
-  app.post("/api/v1/activation/claim", activationRateLimiter, async (req, res) => {
+  app.post("/api/v1/activation/claim", activationRateLimiter, licenceKeyTenantScopeMiddleware(db), async (req, res) => {
     const startedAt = Date.now();
     const parsed = ActivationClaimBody.safeParse(req.body);
     if (!parsed.success) {

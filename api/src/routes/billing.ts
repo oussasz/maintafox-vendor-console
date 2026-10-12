@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { ApiContext } from "../app/context.js";
 import { publicCheckoutRateLimiter, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey } from "../app/runtime.js";
+import { systemScopeMiddleware } from "../app/scope.js";
 import { editionExists } from "../edition-catalog-store.js";
 
 const SlickPayUserInfoSchema = z
@@ -237,7 +238,7 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
   }
 
   /** Public payment proxy: create SlickPay invoice and return checkout_url. */
-  app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, async (req, res) => {
+  app.post("/api/v1/payments/slickpay/initiate", publicCheckoutRateLimiter, systemScopeMiddleware(db, "slickpay-checkout"), async (req, res) => {
     if (!slickPayConfigured()) {
       res.status(503).json({
         error: "slickpay_not_configured",
@@ -429,7 +430,7 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
   });
 
   /** SlickPay webhook: verify signature, extend license +1 year, bump entitlement lineage. */
-  app.post("/api/v1/webhooks/slickpay", async (req, res) => {
+  app.post("/api/v1/webhooks/slickpay", systemScopeMiddleware(db, "slickpay-webhook"), async (req, res) => {
     if (!slickPayConfigured() || !SLICKPAY_WEBHOOK_SECRET) {
       res.status(503).json({ error: "slickpay_not_configured" });
       return;

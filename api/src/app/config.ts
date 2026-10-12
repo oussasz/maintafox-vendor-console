@@ -87,3 +87,13 @@ export const DEFAULT_JSON_BODY_LIMIT = "1mb";
 
 /** All API data lives in Postgres (versioned migrations in api/migrations). */
 export const DATABASE_URL = requireEnv("DATABASE_URL");
+
+/** Rows of operator_scope_access (who acted across tenants) older than this are pruned. */
+export const OPERATOR_ACCESS_LOG_RETENTION_DAYS = (() => {
+  const raw = requireEnv("OPERATOR_ACCESS_LOG_RETENTION_DAYS");
+  const days = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!(days >= 1 && days <= 3650)) {
+    fatal(`OPERATOR_ACCESS_LOG_RETENTION_DAYS must be an integer 1..3650, got '${raw}'.`);
+  }
+  return days;
+})();

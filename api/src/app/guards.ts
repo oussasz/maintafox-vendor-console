@@ -11,6 +11,7 @@ import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
+import { openOperatorScope, tenantScope } from "./scope.js";
 
 export function createGuards(db: Database, { appendAuditRecord }: AuditAppender) {
   /**
@@ -35,7 +36,9 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
       return;
     }
     (req as AuthRequest).userId = String(claims.userId);
-    next();
+    // Console routes act across tenants: an explicit, recorded operator scope for this request.
+    const scope = await openOperatorScope(db, resolveActorId(req), { method: req.method, path: req.path });
+    db.runInScope(scope, next);
   }
 
   /** `last_seen_at` is written at most this often per device (the sync heartbeat runs every ~15 s). */
@@ -59,13 +62,15 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
       res.status(401).json({ error: "invalid_token" });
       return;
     }
-    const row = await db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
+    // The token is verified: from here on only this tenant's rows are visible.
+    const scope = tenantScope(claims.tenantId);
+    const row = await db.runInScope(scope, () => db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
                 l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
                 t.is_active AS tenant_is_active
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          JOIN tenants t ON t.id = a.tenant_id
-         WHERE a.tenant_id = ? AND a.license_id = ? AND a.machine_fingerprint = ?`, claims.tenantId, claims.licenseId, claims.machineFingerprint) as
+         WHERE a.tenant_id = ? AND a.license_id = ? AND a.machine_fingerprint = ?`, claims.tenantId, claims.licenseId, claims.machineFingerprint)) as
       | {
           id: string;
           revoked_at: string | null;
@@ -114,7 +119,9 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
     const nowMs = Date.now();
     const lastSeenMs = Date.parse(row.last_seen_at);
     if (!Number.isFinite(lastSeenMs) || nowMs - lastSeenMs >= LAST_SEEN_TOUCH_INTERVAL_MS) {
-      await db.run("UPDATE machine_activations SET last_seen_at = ? WHERE id = ?", new Date(nowMs).toISOString(), row.id);
+      await db.runInScope(scope, () =>
+        db.run("UPDATE machine_activations SET last_seen_at = ? WHERE id = ?", new Date(nowMs).toISOString(), row.id),
+      );
     }
     (req as express.Request & { activation?: ActivationAuthContext }).activation = {
       tenantId: claims.tenantId,
@@ -123,7 +130,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender)
       token,
       tokenIssuedAt: claims.issuedAt,
     };
-    next();
+    db.runInScope(scope, next);
   }
 
   /**

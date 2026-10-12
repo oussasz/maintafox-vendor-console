@@ -7,6 +7,10 @@
  *   so every helper called inside `fn` (audit append, catalog reads, ...) joins it without having
  *   to receive a client argument. A nested `tx` joins the outer transaction.
  * - `lockXact(namespace, key)` takes a transaction-scoped advisory lock.
+ * - Tenant isolation (migration 007): every statement runs in a transaction as the role mfx_app,
+ *   with the data scope of the current async context (`runInScope`): a tenant (device requests)
+ *   or an operator actor (console and system tasks). Without a scope, row-level security makes
+ *   every tenant-scoped table look empty. A statement outside `tx` gets its own transaction.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -26,6 +30,21 @@ pg.types.setTypeParser(20, (value: string) => {
 export type SqlParam = string | number | boolean | null | undefined | Date | Buffer | readonly string[];
 
 export type RunResult = { changes: number };
+
+/** Role every API transaction runs as (migration 007); subject to row-level security. */
+export const APP_DB_ROLE = "mfx_app";
+
+/**
+ * Data scope of a request or task. `tenant`: only that tenant's rows (device requests).
+ * `operator`: all tenants, for an identified vendor operator or system task (cross-tenant work
+ * must be explicit; the API records each operator scope it opens in operator_scope_access).
+ */
+export type DbScope = { kind: "tenant"; tenantId: string } | { kind: "operator"; actor: string };
+
+function sameScope(a: DbScope | undefined, b: DbScope): boolean {
+  if (!a || a.kind !== b.kind) return false;
+  return a.kind === "tenant" ? a.tenantId === (b as { tenantId: string }).tenantId : a.actor === (b as { actor: string }).actor;
+}
 
 /**
  * Rewrites `?` placeholders to `$1..$n`, skipping string literals, quoted identifiers and
@@ -70,23 +89,43 @@ function normalizeParams(params: SqlParam[]): unknown[] {
 
 export class Database {
   private readonly txClient = new AsyncLocalStorage<pg.PoolClient>();
+  private readonly scopeStore = new AsyncLocalStorage<DbScope>();
 
   constructor(readonly pool: pg.Pool) {}
+
+  /** The data scope of the current async context, if any. */
+  currentScope(): DbScope | undefined {
+    return this.scopeStore.getStore();
+  }
+
+  /**
+   * Runs `fn` (and everything it calls, including later middleware when used as
+   * `runInScope(scope, next)`) with this data scope. The scope of an open transaction is fixed.
+   */
+  runInScope<T>(scope: DbScope, fn: () => T): T {
+    if (scope.kind === "tenant" && !scope.tenantId) throw new Error("tenant scope needs a tenant id");
+    if (scope.kind === "operator" && !scope.actor) throw new Error("operator scope needs an actor");
+    if (this.inTransaction() && !sameScope(this.currentScope(), scope)) {
+      throw new Error("the data scope cannot change inside an open transaction");
+    }
+    return this.scopeStore.run(scope, fn);
+  }
 
   /** True when called inside `tx`. */
   inTransaction(): boolean {
     return this.txClient.getStore() !== undefined;
   }
 
-  private executor(): pg.Pool | pg.PoolClient {
-    return this.txClient.getStore() ?? this.pool;
-  }
-
   async query<T extends pg.QueryResultRow = pg.QueryResultRow>(
     sql: string,
     params: SqlParam[] = [],
   ): Promise<pg.QueryResult<T>> {
-    return this.executor().query<T>(toPgPlaceholders(sql), normalizeParams(params));
+    const client = this.txClient.getStore();
+    if (!client) {
+      // Role and scope are transaction-local settings: a lone statement gets its own transaction.
+      return this.tx(() => this.query<T>(sql, params));
+    }
+    return client.query<T>(toPgPlaceholders(sql), normalizeParams(params));
   }
 
   async get<T>(sql: string, ...params: SqlParam[]): Promise<T | undefined> {
@@ -113,6 +152,11 @@ export class Database {
     let brokenConnection: Error | undefined;
     try {
       await client.query("BEGIN");
+      const scope = this.currentScope();
+      await client.query(
+        "SELECT set_config('role', $1, true), set_config('mfx.tenant_id', $2, true), set_config('mfx.operator_actor', $3, true)",
+        [APP_DB_ROLE, scope?.kind === "tenant" ? scope.tenantId : "", scope?.kind === "operator" ? scope.actor : ""],
+      );
       const result = await this.txClient.run(client, fn);
       await client.query("COMMIT");
       return result;
@@ -194,6 +238,7 @@ export async function openDatabase(databaseUrl: string, applicationName: string)
     );
   });
   const db = new Database(pool);
-  await db.query("SELECT 1");
+  // Connectivity only, as the connection user: the mfx_app role does not exist before migration 007.
+  await pool.query("SELECT 1");
   return db;
 }

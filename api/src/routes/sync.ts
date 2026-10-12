@@ -65,7 +65,7 @@ function sendSyncRequestError(res: express.Response, err: SyncRequestError): voi
 }
 
 export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void {
-  const { db, syncConfig, syncEntityRegistry, activationAuthMiddleware } = ctx;
+  const { db, syncConfig, syncEntityRegistry, payloadCipher, activationAuthMiddleware } = ctx;
 
   /**
    * Tenant-runtime sync: push local outbox rows and pull inbound changes with the activation token.
@@ -89,7 +89,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         }
         const outcome = await runSyncExchangeV2(
           db,
-          { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret },
+          { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret, cipher: payloadCipher },
           syncAct,
           req.body,
           parsed.data,
@@ -104,7 +104,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
         return;
       }
-      res.json(await runSyncExchangeV1(db, { registry: syncEntityRegistry }, syncAct, parsed.data, structuredLog));
+      res.json(await runSyncExchangeV1(db, { registry: syncEntityRegistry, cipher: payloadCipher }, syncAct, parsed.data, structuredLog));
     } catch (e) {
       if (e instanceof SyncRequestError) {
         structuredLog("sync_exchange_refused", {
@@ -140,7 +140,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     try {
       const response = await runSyncSnapshotV2(
         db,
-        { checkpointSecret: syncConfig.checkpointSecret },
+        { checkpointSecret: syncConfig.checkpointSecret, cipher: payloadCipher },
         { tenantId: act.tenantId, licenseId: act.licenseId, machineFingerprint: act.machineFingerprint },
         parsed.data,
         structuredLog,

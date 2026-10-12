@@ -22,6 +22,7 @@ import {
   seedEditionCatalogIfEmpty,
   updateEdition,
 } from "../dist/edition-catalog-store.js";
+import { runAsSystem } from "../dist/app/scope.js";
 import { openDatabase } from "../dist/db/database.js";
 import { runMigrations } from "../dist/db/migrate.js";
 import { buildSignedEntitlementEnvelope } from "../dist/entitlement-signer.js";
@@ -35,6 +36,8 @@ const testPg = await startTestPostgres();
 const db = await openDatabase(await testPg.createDatabase(), "edition-catalog-store-test");
 try {
 await runMigrations(db, () => {});
+// Catalog work spans tenants (edition_in_use): the system scope the API uses at startup.
+await runAsSystem(db, "edition-catalog-store-test", async () => {
 
 await seedEditionCatalogIfEmpty(db);
 await ensureSystemEditionsPresent(db);
@@ -151,6 +154,7 @@ try {
 }
 
 console.log("edition-catalog store checks ok");
+});
 } finally {
   await db.close();
   await testPg.stop();

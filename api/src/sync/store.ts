@@ -3,7 +3,29 @@
  * (Database.tx); the exchange holds the per-tenant lock for its whole transaction.
  */
 import type { Database } from "../db/database.js";
+import { entityAad, isSensitiveSyncEntityType, PayloadCipher, responseAad, SENSITIVE_SYNC_ENTITY_TYPES } from "./payload-crypto.js";
 import type { SyncInboundItemV2, SyncOperation } from "./types.js";
+
+/** The payload as stored: sealed for sensitive entity types, verbatim otherwise. */
+function storedPayload(
+  cipher: PayloadCipher,
+  input: { tenantId: string; entityType: string; entitySyncId: string; payloadJson: string },
+): string {
+  return isSensitiveSyncEntityType(input.entityType)
+    ? cipher.seal(input.payloadJson, entityAad(input.tenantId, input.entityType, input.entitySyncId))
+    : input.payloadJson;
+}
+
+/** The payload as delivered (opens a sealed value; plaintext rows are returned unchanged). */
+export function deliveredPayload(
+  cipher: PayloadCipher,
+  tenantId: string,
+  entityType: string,
+  entitySyncId: string,
+  stored: string,
+): string {
+  return cipher.open(stored, entityAad(tenantId, entityType, entitySyncId));
+}
 
 /** Per-tenant writer lock: serializes exchanges so server_seq values become visible in order. */
 export async function lockTenantSync(db: Database, tenantId: string): Promise<void> {
@@ -36,7 +58,7 @@ export type IngressInsert = {
 };
 
 /** Appends to the log. Returns the new server_seq, or null when the item key already exists. */
-export async function insertIngress(db: Database, input: IngressInsert): Promise<number | null> {
+export async function insertIngress(db: Database, cipher: PayloadCipher, input: IngressInsert): Promise<number | null> {
   const row = await db.get<{ id: number }>(
     `INSERT INTO sync_mirror_ingress (
        tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
@@ -51,7 +73,7 @@ export async function insertIngress(db: Database, input: IngressInsert): Promise
     input.entitySyncId,
     input.operation,
     input.rowVersion,
-    input.payloadJson,
+    storedPayload(cipher, input),
     input.payloadHash,
     input.machineFingerprint,
     input.receivedAt,
@@ -62,8 +84,16 @@ export async function insertIngress(db: Database, input: IngressInsert): Promise
   return row ? row.id : null;
 }
 
-/** Writes the entity's latest state from a log row. A delete stores a tombstone. */
-export async function upsertEntityState(db: Database, ingressId: number, input: IngressInsert): Promise<void> {
+/**
+ * Writes the entity's latest state from a log row. A delete stores a tombstone. A sealed payload
+ * is not JSON, so its queryable payload_json copy is NULL.
+ */
+export async function upsertEntityState(
+  db: Database,
+  cipher: PayloadCipher,
+  ingressId: number,
+  input: IngressInsert,
+): Promise<void> {
   await db.run(
     `INSERT INTO sync_entity_state (
        tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json,
@@ -85,7 +115,7 @@ export async function upsertEntityState(db: Database, ingressId: number, input: 
     input.entitySyncId,
     input.rowVersion,
     input.operation,
-    input.payloadJson,
+    storedPayload(cipher, input),
     input.payloadHash,
     input.operation === "delete",
     input.ownerUserSyncId,
@@ -104,13 +134,15 @@ export type EntityStateRow = {
   last_ingress_id: number;
 };
 
+/** Current state of one entity, payload opened. */
 export async function getEntityState(
   db: Database,
+  cipher: PayloadCipher,
   tenantId: string,
   entityType: string,
   entitySyncId: string,
 ): Promise<EntityStateRow | undefined> {
-  return db.get<EntityStateRow>(
+  const row = await db.get<EntityStateRow>(
     `SELECT row_version, operation, payload_raw, payload_hash, deleted, owner_user_sync_id, last_ingress_id
      FROM sync_entity_state
      WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3`,
@@ -118,6 +150,7 @@ export async function getEntityState(
     entityType,
     entitySyncId,
   );
+  return row && { ...row, payload_raw: deliveredPayload(cipher, tenantId, entityType, entitySyncId, row.payload_raw) };
 }
 
 export async function logRejection(
@@ -161,14 +194,14 @@ type StateDeliveryRow = {
   deleted: boolean;
 };
 
-export function toInboundItemV2(row: StateDeliveryRow): SyncInboundItemV2 {
+export function toInboundItemV2(cipher: PayloadCipher, tenantId: string, row: StateDeliveryRow): SyncInboundItemV2 {
   return {
     server_seq: row.last_ingress_id,
     entity_type: row.entity_type,
     entity_sync_id: row.entity_sync_id,
     operation: row.operation,
     row_version: row.row_version,
-    payload_json: row.payload_raw,
+    payload_json: deliveredPayload(cipher, tenantId, row.entity_type, row.entity_sync_id, row.payload_raw),
     payload_hash: row.payload_hash,
     owner_user_sync_id: row.owner_user_sync_id,
     deleted: row.deleted,
@@ -184,6 +217,7 @@ const STATE_DELIVERY_COLUMNS = `last_ingress_id, entity_type, entity_sync_id, op
  */
 export async function listDeltaForDevice(
   db: Database,
+  cipher: PayloadCipher,
   input: { tenantId: string; machineFingerprint: string; afterSeq: number; userSyncIds: string[]; limit: number },
 ): Promise<SyncInboundItemV2[]> {
   const rows = await db.all<StateDeliveryRow>(
@@ -201,12 +235,13 @@ export async function listDeltaForDevice(
     input.userSyncIds,
     input.limit,
   );
-  return rows.map(toInboundItemV2);
+  return rows.map((row) => toInboundItemV2(cipher, input.tenantId, row));
 }
 
 /** One snapshot page: non-deleted rows changed at or before `highWater`, keyset-ordered. */
 export async function listSnapshotPage(
   db: Database,
+  cipher: PayloadCipher,
   input: {
     tenantId: string;
     highWater: number;
@@ -237,7 +272,7 @@ export async function listSnapshotPage(
     input.after[1],
     input.limit,
   );
-  return rows.map(toInboundItemV2);
+  return rows.map((row) => toInboundItemV2(cipher, input.tenantId, row));
 }
 
 /**
@@ -323,4 +358,93 @@ export async function purgeTenantSyncData(db: Database, tenantId: string): Promi
     deleted[table] = (await db.run(`DELETE FROM ${table} WHERE tenant_id = $1`, tenantId)).changes;
   }
   return deleted;
+}
+
+const SEAL_BATCH_ROWS = 500;
+
+/**
+ * Seals sensitive payloads and stored exchange responses written before encryption at rest
+ * existed (idempotent: values already sealed are skipped). Runs at startup in a system scope.
+ */
+export async function sealExistingSyncData(db: Database, cipher: PayloadCipher): Promise<Record<string, number>> {
+  const types = [...SENSITIVE_SYNC_ENTITY_TYPES];
+  const sealed: Record<string, number> = {};
+  const inBatches = async (table: string, step: () => Promise<number>) => {
+    sealed[table] = 0;
+    for (;;) {
+      const n = await db.tx(step);
+      sealed[table] += n;
+      if (n < SEAL_BATCH_ROWS) break;
+    }
+  };
+  await inBatches("sync_mirror_ingress", async () => {
+    const rows = await db.all<{ id: number; tenant_id: string; entity_type: string; entity_sync_id: string; payload_json: string }>(
+      `SELECT id, tenant_id, entity_type, entity_sync_id, payload_json FROM sync_mirror_ingress
+       WHERE entity_type = ANY($1::text[]) AND payload_json NOT LIKE 'mfxenc:v1:%'
+       ORDER BY id LIMIT $2 FOR UPDATE`,
+      types,
+      SEAL_BATCH_ROWS,
+    );
+    for (const r of rows) {
+      const value = cipher.seal(r.payload_json, entityAad(r.tenant_id, r.entity_type, r.entity_sync_id));
+      await db.run("UPDATE sync_mirror_ingress SET payload_json = $1 WHERE id = $2", value, r.id);
+    }
+    return rows.length;
+  });
+  await inBatches("sync_entity_state", async () => {
+    const rows = await db.all<{ tenant_id: string; entity_type: string; entity_sync_id: string; payload_raw: string }>(
+      `SELECT tenant_id, entity_type, entity_sync_id, payload_raw FROM sync_entity_state
+       WHERE entity_type = ANY($1::text[]) AND payload_raw NOT LIKE 'mfxenc:v1:%'
+       LIMIT $2 FOR UPDATE`,
+      types,
+      SEAL_BATCH_ROWS,
+    );
+    for (const r of rows) {
+      const value = cipher.seal(r.payload_raw, entityAad(r.tenant_id, r.entity_type, r.entity_sync_id));
+      await db.run(
+        `UPDATE sync_entity_state SET payload_raw = $1, payload_json = NULL
+         WHERE tenant_id = $2 AND entity_type = $3 AND entity_sync_id = $4`,
+        value,
+        r.tenant_id,
+        r.entity_type,
+        r.entity_sync_id,
+      );
+    }
+    return rows.length;
+  });
+  await inBatches("sync_exchange_idempotency", async () => {
+    const rows = await db.all<{ tenant_id: string; idempotency_key: string; response_json: string }>(
+      `SELECT tenant_id, idempotency_key, response_json FROM sync_exchange_idempotency
+       WHERE response_json NOT LIKE 'mfxenc:v1:%' LIMIT $1 FOR UPDATE`,
+      SEAL_BATCH_ROWS,
+    );
+    for (const r of rows) {
+      await db.run(
+        "UPDATE sync_exchange_idempotency SET response_json = $1 WHERE tenant_id = $2 AND idempotency_key = $3",
+        cipher.seal(r.response_json, responseAad(r.tenant_id, "", r.idempotency_key)),
+        r.tenant_id,
+        r.idempotency_key,
+      );
+    }
+    return rows.length;
+  });
+  await inBatches("sync_exchange_idempotency_v2", async () => {
+    const rows = await db.all<{ tenant_id: string; machine_fingerprint: string; idempotency_key: string; response_json: string }>(
+      `SELECT tenant_id, machine_fingerprint, idempotency_key, response_json FROM sync_exchange_idempotency_v2
+       WHERE response_json NOT LIKE 'mfxenc:v1:%' LIMIT $1 FOR UPDATE`,
+      SEAL_BATCH_ROWS,
+    );
+    for (const r of rows) {
+      await db.run(
+        `UPDATE sync_exchange_idempotency_v2 SET response_json = $1
+         WHERE tenant_id = $2 AND machine_fingerprint = $3 AND idempotency_key = $4`,
+        cipher.seal(r.response_json, responseAad(r.tenant_id, r.machine_fingerprint, r.idempotency_key)),
+        r.tenant_id,
+        r.machine_fingerprint,
+        r.idempotency_key,
+      );
+    }
+    return rows.length;
+  });
+  return sealed;
 }

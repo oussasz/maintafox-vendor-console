@@ -21,6 +21,9 @@ export const TEST_SYNC_ENV = {
   SYNC_INGRESS_RETENTION_DAYS: "30",
   SYNC_IDEMPOTENCY_RETENTION_DAYS: "7",
   SYNC_RETENTION_INTERVAL_MINUTES: "60",
+  // TEST-ONLY key (32 bytes, base64): encryption at rest of sensitive sync payloads.
+  SYNC_PAYLOAD_ENCRYPTION_KEY: Buffer.from("maintafox-TEST-ONLY-payload-key!").toString("base64"),
+  OPERATOR_ACCESS_LOG_RETENTION_DAYS: "365",
 };
 
 function freePort() {

@@ -1,3 +1,4 @@
+import { isSensitiveSyncEntityType } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
 import {
   isValidSha256Hex,
@@ -133,5 +134,5 @@ export function toRejectedV2(
 }
 
 export function shouldRedactPayloadLog(entityType: string): boolean {
-  return entityType === "user_accounts";
+  return isSensitiveSyncEntityType(entityType);
 }

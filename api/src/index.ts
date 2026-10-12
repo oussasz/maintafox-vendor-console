@@ -16,6 +16,7 @@ import { createAuditAppender } from "./app/audit.js";
 import {
   DATABASE_URL,
   DEFAULT_JSON_BODY_LIMIT,
+  OPERATOR_ACCESS_LOG_RETENTION_DAYS,
   SEED_BEHAVIOR,
   SYNC_EXCHANGE_BODY_LIMIT,
 } from "./app/config.js";
@@ -25,6 +26,7 @@ import { corsOptionsDelegate, type AuthRequest } from "./app/http.js";
 import { getMediaStore } from "./app/media.js";
 import { observabilityWindow } from "./app/observability.js";
 import { fatal, forwardAsyncErrors, newId, structuredLog } from "./app/runtime.js";
+import { pruneOperatorScopeAccess, runAsSystem } from "./app/scope.js";
 import { createSeeder } from "./app/seed.js";
 import { createTenantStore } from "./app/tenant-store.js";
 import { openDatabase, type Database } from "./db/database.js";
@@ -42,19 +44,24 @@ import { registerSupportRoutes } from "./routes/support.js";
 import { registerSyncRoutes } from "./routes/sync.js";
 import { registerTenantsRoutes } from "./routes/tenants.js";
 import {
+  loadPayloadCipher,
   loadSyncConfig,
   loadSyncEntityRegistry,
   removeStateOutsideTenantScope,
   runSyncRetention,
+  sealExistingSyncData,
+  type PayloadCipher,
   type SyncConfig,
   type SyncEntityRegistry,
 } from "./sync/index.js";
 
 let syncConfig: SyncConfig;
 let syncEntityRegistry: SyncEntityRegistry;
+let payloadCipher: PayloadCipher;
 try {
   syncConfig = loadSyncConfig();
   syncEntityRegistry = loadSyncEntityRegistry();
+  payloadCipher = loadPayloadCipher();
 } catch (err) {
   fatal((err as Error).message);
 }
@@ -71,26 +78,34 @@ try {
   fatal(`database startup failed: ${(err as Error).message}`);
 }
 
-{
+const audit = createAuditAppender(db);
+const { seedAdminIfEmpty, shouldSeedDomainData, seedTenantIfEmpty, seedAuditSupportIfEmpty } = createSeeder(db, audit);
+
+// Startup maintenance and seeds touch every tenant: one recorded system scope.
+await runAsSystem(db, "startup", async () => {
   const removed = await removeStateOutsideTenantScope(db, syncEntityRegistry.tenantScopedTypes());
   if (removed > 0) {
     structuredLog("sync_state_outside_tenant_scope_removed", { rows: removed });
   }
-}
 
-await seedEditionCatalogIfEmpty(db);
-await ensureSystemEditionsPresent(db);
-await repairAllEditionCapabilities(db);
+  // Rows written before encryption at rest existed (no-op once done).
+  const sealed = await sealExistingSyncData(db, payloadCipher);
+  if (Object.values(sealed).some((n) => n > 0)) {
+    structuredLog("sync_data_sealed_at_rest", sealed);
+  }
 
-const audit = createAuditAppender(db);
-const { seedAdminIfEmpty, shouldSeedDomainData, seedTenantIfEmpty, seedAuditSupportIfEmpty } = createSeeder(db, audit);
-await seedAdminIfEmpty();
-if (shouldSeedDomainData()) {
-  await seedTenantIfEmpty();
-  await seedAuditSupportIfEmpty();
-} else {
-  console.info(`Seed behavior '${SEED_BEHAVIOR}' active: domain bootstrap seeds are skipped.`);
-}
+  await seedEditionCatalogIfEmpty(db);
+  await ensureSystemEditionsPresent(db);
+  await repairAllEditionCapabilities(db);
+
+  await seedAdminIfEmpty();
+  if (shouldSeedDomainData()) {
+    await seedTenantIfEmpty();
+    await seedAuditSupportIfEmpty();
+  } else {
+    console.info(`Seed behavior '${SEED_BEHAVIOR}' active: domain bootstrap seeds are skipped.`);
+  }
+});
 
 const app = express();
 forwardAsyncErrors(app);
@@ -132,6 +147,7 @@ const ctx: ApiContext = {
   db,
   syncConfig,
   syncEntityRegistry,
+  payloadCipher,
   ...audit,
   ...createGuards(db, audit),
   ...createTenantStore(db),
@@ -166,7 +182,10 @@ app.use((err: unknown, req: express.Request, res: express.Response, next: expres
 
 /** Sync retention (log compaction + idempotency pruning) every SYNC_RETENTION_INTERVAL_MINUTES. */
 const syncRetentionTimer = setInterval(() => {
-  runSyncRetention(db, syncConfig)
+  runAsSystem(db, "sync-retention", async () => ({
+    ...(await runSyncRetention(db, syncConfig)),
+    operator_scope_access_deleted: await pruneOperatorScopeAccess(db, OPERATOR_ACCESS_LOG_RETENTION_DAYS),
+  }))
     .then((report) => structuredLog("sync_retention_run", report))
     .catch((err) => structuredLog("sync_retention_failed", { error: err instanceof Error ? err.message : String(err) }));
 }, syncConfig.retentionIntervalMinutes * 60_000);

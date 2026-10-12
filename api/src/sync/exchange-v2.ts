@@ -7,6 +7,7 @@ import { assertTenantOwnsObjectKey } from "../storage/object-store.js";
 import type { Database } from "../db/database.js";
 import { signCheckpointToken, verifyCheckpointToken } from "./checkpoint.js";
 import { newBatchId } from "./exchange-v1.js";
+import { PayloadCipher, responseAad } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
 import {
   getEntityState,
@@ -149,7 +150,7 @@ export type SyncExchangeV2Outcome = { response: SyncExchangeResponseV2; replayed
 
 export async function runSyncExchangeV2(
   db: Database,
-  deps: { registry: SyncEntityRegistry; checkpointSecret: string },
+  deps: { registry: SyncEntityRegistry; checkpointSecret: string; cipher: PayloadCipher },
   act: ActivationSyncContext,
   rawBody: unknown,
   body: SyncExchangeRequestV2,
@@ -161,6 +162,7 @@ export async function runSyncExchangeV2(
   const tenantConfig = parseTenantConfig(body.tenant_config, act.tenantId);
   const mediaManifest = parseMediaManifest(body.media_manifest, act.tenantId);
   const currentUsers = [...new Set(body.current_user_sync_ids)].sort();
+  const storedResponseAad = responseAad(act.tenantId, act.machineFingerprint, body.idempotency_key);
 
   return db.tx(async () => {
     await lockTenantSync(db, act.tenantId);
@@ -186,7 +188,10 @@ export async function runSyncExchangeV2(
         protocol_version: "v2",
         server_batch_id: stored.server_batch_id,
       });
-      return { response: JSON.parse(stored.response_json) as SyncExchangeResponseV2, replayed: true };
+      return {
+        response: JSON.parse(deps.cipher.open(stored.response_json, storedResponseAad)) as SyncExchangeResponseV2,
+        replayed: true,
+      };
     }
 
     const highWaterBefore = await tenantStateHighWater(db, act.tenantId);
@@ -274,7 +279,7 @@ export async function runSyncExchangeV2(
         continue;
       }
 
-      const state = await getEntityState(db, act.tenantId, item.entity_type, item.entity_sync_id);
+      const state = await getEntityState(db, deps.cipher, act.tenantId, item.entity_type, item.entity_sync_id);
       if (state && state.row_version === item.row_version && state.payload_hash === payloadHash) {
         // Already the current state (e.g. a retry after its log row was compacted): nothing to apply.
         acknowledged_items.push({
@@ -336,12 +341,12 @@ export async function runSyncExchangeV2(
         receivedAt: nowIso,
         protocolVersion: "v2",
       };
-      const serverSeq = await insertIngress(db, ingress);
+      const serverSeq = await insertIngress(db, deps.cipher, ingress);
       if (serverSeq === null) {
         // The key was checked above under the tenant lock; reaching this means a broken invariant.
         throw new Error(`item idempotency_key ${item.idempotency_key} appeared concurrently`);
       }
-      await upsertEntityState(db, serverSeq, ingress);
+      await upsertEntityState(db, deps.cipher, serverSeq, ingress);
       acknowledged_items.push({
         idempotency_key: item.idempotency_key,
         entity_type: item.entity_type,
@@ -359,7 +364,7 @@ export async function runSyncExchangeV2(
       userSyncIds: currentUsers,
     });
 
-    const candidates = await listDeltaForDevice(db, {
+    const candidates = await listDeltaForDevice(db, deps.cipher, {
       tenantId: act.tenantId,
       machineFingerprint: act.machineFingerprint,
       afterSeq: requestSeq,
@@ -441,7 +446,7 @@ export async function runSyncExchangeV2(
       body.idempotency_key,
       requestHash,
       serverBatchId,
-      JSON.stringify(response),
+      deps.cipher.seal(JSON.stringify(response), storedResponseAad),
       now,
     );
 

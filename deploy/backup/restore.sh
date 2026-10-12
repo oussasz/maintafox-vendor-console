@@ -55,9 +55,21 @@ dump_row_counts "$dump" > "$work/expected-counts"
 exists=$(psql --no-psqlrc -d postgres -Atc "SELECT 1 FROM pg_database WHERE datname = '$target'")
 [ -z "$exists" ] || die "database $target already exists; choose a new name (this script never overwrites)"
 
+# The API runs every transaction as the role mfx_app (migration 007). Roles are not part of a
+# dump: create it on this server when it is missing, so the dump's GRANTs to it restore.
+psql --no-psqlrc -v ON_ERROR_STOP=1 -d postgres -q <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mfx_app') THEN
+    CREATE ROLE mfx_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOINHERIT;
+  END IF;
+END
+$$;
+SQL
+
 log "creating database $target and restoring $(basename "$src")"
 createdb "$target"
-pg_restore --dbname="$target" --no-owner --no-privileges --exit-on-error --single-transaction "$dump"
+pg_restore --dbname="$target" --no-owner --exit-on-error --single-transaction "$dump"
 
 log "verifying $target"
 node "$MFX_API_DIR/dist/tools/verify-restored-database.js" --database "$target" \
