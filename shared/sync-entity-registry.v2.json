@@ -790,6 +790,10 @@
     {
       "entity_type": "library_documents",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "unit_conversions",
+      "scope": "tenant"
     }
   ]
 }
