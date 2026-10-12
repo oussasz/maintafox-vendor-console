@@ -102,6 +102,19 @@ function item(entityType, entitySyncId, rowVersion, baseRowVersion, payload, ext
   };
 }
 
+/** The v1 wire item: the v2 item without base_row_version / owner_user_sync_id. */
+function toV1Item(i) {
+  return {
+    idempotency_key: i.idempotency_key,
+    entity_type: i.entity_type,
+    entity_sync_id: i.entity_sync_id,
+    operation: i.operation,
+    row_version: i.row_version,
+    payload_json: i.payload_json,
+    payload_hash: i.payload_hash,
+  };
+}
+
 /** A device: its activation token, its last checkpoint and the users it reports. */
 function device(token, users = []) {
   return { token, checkpoint: null, users };
@@ -378,7 +391,7 @@ async function run() {
           protocol_version: "v1",
           idempotency_key: `v1-${randomUUID()}`,
           checkpoint_token: null,
-          outbox_batch: outbox.map(({ base_row_version, owner_user_sync_id, ...rest }) => rest),
+          outbox_batch: outbox.map(toV1Item),
         });
         assert.equal(res.status, 200, JSON.stringify(res.json));
         assert.equal(res.json.protocol_version, "v1");
@@ -443,7 +456,7 @@ async function run() {
       // A v1 push of a user-scoped type has no owner: it stays in the log (v1 devices) but never
       // enters the v2 state, so it is not delivered to every device.
       const v1Dismissal = item("user_dismissals", "ud-v1", 1, null, { banner: "y" });
-      const { base_row_version: _b, ...v1Item } = v1Dismissal;
+      const v1Item = toV1Item(v1Dismissal);
       const v1res = await exchangeRaw(V1, {
         protocol_version: "v1",
         idempotency_key: `v1-${randomUUID()}`,

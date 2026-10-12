@@ -163,6 +163,10 @@ async function run() {
     assert.equal(postRevoke.length, 1);
     assert.ok(postRevoke[0].revoked_at, "revoked key must include revoked timestamp");
     assert.equal(postRevoke[0].revoked_reason, "tenant onboarding correction");
+  } catch (err) {
+    // The API output explains most failures (startup refusal, unhandled route error).
+    console.error(serverOutput);
+    throw err;
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);

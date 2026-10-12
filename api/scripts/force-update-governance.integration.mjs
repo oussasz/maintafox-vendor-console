@@ -156,6 +156,10 @@ async function run() {
       body: JSON.stringify({}),
     });
     assert.equal(rollbackRes.status, 200, "tenant policy rollback must succeed");
+  } catch (err) {
+    // The API output explains most failures (startup refusal, unhandled route error).
+    console.error(serverOutput);
+    throw err;
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -49,13 +49,12 @@ export function MachineActivationPanel() {
     [tenants, selectedTenantId],
   );
 
-  const loadTenants = async () => {
+  // Keeps the current selection; selects the first tenant only when none is selected yet.
+  const loadTenants = useCallback(async () => {
     const list = await listTenants();
     setTenants(list);
-    if (list.length > 0 && !selectedTenantId) {
-      setSelectedTenantId(list[0]!.id);
-    }
-  };
+    setSelectedTenantId((current) => current || (list[0]?.id ?? ""));
+  }, []);
 
   const loadRowsAndPolicy = async (tenantId: string) => {
     if (!tenantId) {
@@ -87,7 +86,7 @@ export function MachineActivationPanel() {
         setLiveError(err instanceof Error ? err.message : "Failed to load tenants");
       }
     })();
-  }, []);
+  }, [loadTenants]);
 
   useEffect(() => {
     void loadRowsAndPolicy(selectedTenantId);

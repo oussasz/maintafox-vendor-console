@@ -44,7 +44,6 @@ export function PlatformHealthOpsPanel() {
 
   useEffect(() => {
     void loadOverview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

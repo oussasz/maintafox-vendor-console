@@ -3161,7 +3161,6 @@ app.get("/api/v1/ops/sync-overview", authMiddleware, async (_req, res) => {
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          WHERE a.tenant_id = ?`, tenant.id) as Array<{ last_seen_at: string; revoked_at: string | null; update_channel: string }>;
-    const machineCount = activations.length;
     const staleCount = activations.filter((a) => {
       const ageMs = nowMs - new Date(a.last_seen_at).getTime();
       return !Number.isFinite(ageMs) || ageMs > 15 * 60_000;

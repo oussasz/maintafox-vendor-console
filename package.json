@@ -12,6 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5174",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "api:build": "pnpm --filter maintafox-control-api build",
@@ -38,6 +39,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.1",
     "@tailwindcss/forms": "^0.5.0",
     "@tailwindcss/typography": "^0.5.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -48,11 +50,30 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react-swc": "^3.7.0",
     "autoprefixer": "^10.4.0",
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "globals": "16.5.0",
     "jsdom": "^29.0.2",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0",
+    "typescript-eslint": "8.46.4",
+    "vite": "^6.4.4",
     "vitest": "^4.1.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "proxy-addr": "^2.0.8",
+      "undici@7": "^7.30.0",
+      "postcss": "^8.5.29",
+      "nanoid@3": "^3.3.20",
+      "browserslist": "^4.29.3",
+      "source-map-js": "^1.2.2"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-vfj7-8cjw-p6xm"
+      ]
+    }
   }
 }

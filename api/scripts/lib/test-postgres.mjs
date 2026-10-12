@@ -6,8 +6,9 @@
  * - Otherwise an embedded PostgreSQL 16 server (npm `embedded-postgres`, dev dependency) is started
  *   in a temporary directory on a free port and removed again by stop().
  */
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,7 +85,24 @@ export async function startTestPostgres() {
     },
     async stop() {
       if (embedded) {
+        // On Windows an auxiliary process forked during shutdown can outlive the postmaster and
+        // keep the data directory open (EPERM on delete, and a leaked process). End the stopped
+        // server's remaining children by parent PID before deleting.
+        const pidFile = join(dataDir, "data", "postmaster.pid");
+        const postmasterPid = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8").split(/\r?\n/)[0]) : NaN;
         await embedded.stop();
+        if (process.platform === "win32" && Number.isSafeInteger(postmasterPid) && postmasterPid > 0) {
+          const r = spawnSync(
+            "powershell",
+            [
+              "-NoProfile",
+              "-Command",
+              `Get-CimInstance Win32_Process -Filter "ParentProcessId=${postmasterPid} and Name='postgres.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`,
+            ],
+            { encoding: "utf8" },
+          );
+          if (r.status !== 0) process.stderr.write(`[embedded-postgres] could not end leftover children of ${postmasterPid}: ${r.stderr}\n`);
+        }
         if (dataDir) rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
         return;
       }

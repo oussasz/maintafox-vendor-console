@@ -1,0 +1,152 @@
+# Continuous integration for the vendor console and the control API (master plan Phase 3.6).
+# Every job must pass; nothing here is allowed to fail silently.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  lint-typecheck-test:
+    name: Lint, typecheck, console tests, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm --filter maintafox-control-api run typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  api-integration:
+    name: API integration scripts (Postgres 16)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # api/scripts/lib/test-postgres.mjs creates one fresh database per script on this server.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:all
+
+  backup-drill:
+    name: Backup and restore drill (real PostgreSQL 16 programs)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install PostgreSQL 16 server and client programs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16 postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:backup-drill
+
+  backup-offsite:
+    name: Off-site backup copy (MinIO + age)
+    runs-on: ubuntu-24.04
+    env:
+      OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      OFFSITE_TEST_S3_ACCESS_KEY: ci-minio-user
+      OFFSITE_TEST_S3_SECRET_KEY: ci-minio-password-not-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Start MinIO (same release as docker-compose.yml)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER="$OFFSITE_TEST_S3_ACCESS_KEY" -e MINIO_ROOT_PASSWORD="$OFFSITE_TEST_S3_SECRET_KEY" \
+            minio/minio:RELEASE.2025-01-20T14-49-07Z server /data
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && exit 0; sleep 2; done
+          docker logs minio; exit 1
+      - run: sudo apt-get update && sudo apt-get install -y age
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:backup-offsite
+
+  docker-images:
+    name: Docker images build (API + backup)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f api/Dockerfile -t maintafox-control-api:ci .
+      - run: docker build -f api/Dockerfile --target backup -t maintafox-backup:ci .
+      - name: Backup image has the programs the scripts call
+        run: >
+          docker run --rm maintafox-backup:ci sh -c
+          'pg_dump --version && pg_restore --version && pg_basebackup --version && pg_archivecleanup --version
+          && psql --version && createdb --version && age --version && node --version
+          && pg_dump --version | grep -q "PostgreSQL) 16\."
+          && test -f /opt/maintafox-backup/scheduler.sh && test -f dist/tools/verify-restored-database.js'
+      - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_DEV_MOCK_AUTH=false --build-arg VITE_BASE_PATH=/ .
+
+  dependency-audit:
+    name: Dependency audit (fails on high)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # package.json pnpm.auditConfig.ignoreGhsas lists the advisories accepted on purpose
+      # (each one explained in deploy/CI.md).
+      - run: pnpm audit --audit-level high
+
+  secret-scan:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks 8.30.1
+        run: |
+          curl -sSfL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks git . --redact --no-banner --verbose

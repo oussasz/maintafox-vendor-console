@@ -42,7 +42,7 @@ export function VendorConsoleOpsHubCard() {
     void load();
   }, [load]);
 
-  const alerts = platform?.alerts ?? [];
+  const alerts = useMemo(() => platform?.alerts ?? [], [platform]);
   const openAlerts = useMemo(() => alerts.filter((a) => a.state === "open").length, [alerts]);
   const worst = useMemo(
     () =>
