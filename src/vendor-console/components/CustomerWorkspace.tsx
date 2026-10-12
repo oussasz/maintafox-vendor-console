@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pause, Pencil, Play, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,9 +20,12 @@ import type { BulkEntitlementOperationRequestV1 } from "@shared/ipc-types";
 import { channelPolicyConsistent } from "@/services/customer-entitlement-machine-contracts";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { StepUpCancelledError, useVendorConsole } from "../VendorConsoleContext";
+import { OperatorActionDialog } from "./OperatorActionDialog";
 import {
   createTenant,
   deleteTenant,
+  resumeTenant,
+  suspendTenant,
   PRIVILEGED_REASON_MIN_LENGTH,
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
@@ -108,6 +111,7 @@ export function CustomerWorkspace() {
   const [deleteConfirmTenant, setDeleteConfirmTenant] = useState<ControlTenant | null>(null);
   const [deletingTenant, setDeletingTenant] = useState(false);
   const [deleteSlugTyped, setDeleteSlugTyped] = useState("");
+  const [suspension, setSuspension] = useState<{ tenant: ControlTenant; action: "suspend" | "resume" } | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [createTenantError, setCreateTenantError] = useState<string | null>(null);
   /** Set when POST /tenants returns 409 for duplicate slug (shown on slug field). */
@@ -344,6 +348,20 @@ export function CustomerWorkspace() {
     }
   };
 
+  /** Soft suspend (step-up entitlement_suspension) or resume (tenant_restore); audited. */
+  const runSuspension = async (reason: string) => {
+    if (!suspension) return;
+    const { tenant, action } = suspension;
+    const privileged = {
+      reason_code: reason,
+      step_up_token: await requireStepUp(action === "suspend" ? StepUpKinds.entitlementSuspension : StepUpKinds.tenantRestore),
+    };
+    if (action === "suspend") await suspendTenant(tenant.id, privileged);
+    else await resumeTenant(tenant.id, privileged);
+    setTenantSuccess(t(`customers.${action}Done`, { name: tenant.display_name }));
+    await loadTenants();
+  };
+
   const handleConfirmDeleteTenant = async () => {
     if (!deleteConfirmTenant) return;
     setDeletingTenant(true);
@@ -545,7 +563,17 @@ export function CustomerWorkspace() {
                       setTenantSuccess(null);
                     }}
                   >
-                    <TableCell className="font-medium">{tenant.slug}</TableCell>
+                    <TableCell className="font-medium">
+                      {tenant.slug}
+                      {tenant.suspended_at ? (
+                        <span
+                          className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-200"
+                          title={tenant.suspended_reason ?? undefined}
+                        >
+                          {t("customers.suspended")}
+                        </span>
+                      ) : null}
+                    </TableCell>
                     <TableCell>{tenant.display_name}</TableCell>
                     <TableCell className="font-mono text-xs">{tenant.id}</TableCell>
                     <TableCell>
@@ -567,6 +595,19 @@ export function CustomerWorkspace() {
                         >
                           <Pencil className="h-4 w-4" aria-hidden />
                           <span className="sr-only">{t("customers.editTenant", "Edit")}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2"
+                          title={tenant.suspended_at ? t("customers.resumeTenant") : t("customers.suspendTenant")}
+                          onClick={() => setSuspension({ tenant, action: tenant.suspended_at ? "resume" : "suspend" })}
+                        >
+                          {tenant.suspended_at ? <Play className="h-4 w-4" aria-hidden /> : <Pause className="h-4 w-4" aria-hidden />}
+                          <span className="sr-only">
+                            {tenant.suspended_at ? t("customers.resumeTenant") : t("customers.suspendTenant")}
+                          </span>
                         </Button>
                         <Button
                           type="button"
@@ -1187,6 +1228,15 @@ export function CustomerWorkspace() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <OperatorActionDialog
+        open={suspension !== null}
+        title={suspension ? t(`customers.${suspension.action}Dialog.title`) : ""}
+        description={suspension ? t(`customers.${suspension.action}Dialog.body`, { name: suspension.tenant.display_name }) : ""}
+        confirmLabel={suspension ? t(`customers.${suspension.action}Dialog.confirm`) : ""}
+        destructive={suspension?.action === "suspend"}
+        onConfirm={runSuspension}
+        onClose={() => setSuspension(null)}
+      />
     </div>
   );
 }

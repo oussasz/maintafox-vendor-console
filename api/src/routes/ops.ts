@@ -303,13 +303,13 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
          JOIN tenants t ON t.id = l.tenant_id
          WHERE l.update_channel != t.update_channel`) as { c: number };
     const totalMachines = machineRows.reduce((sum, row) => sum + row.c, 0);
-    // Last forced-update policy change per tenant (when a cohort became "paused").
-    const policyChanges = new Map(
+    // Governance set by operators (pause / recall, routes/releases.ts); no row = active.
+    const governance = new Map(
       (
-        await db.all<{ tenant_id: string; changed_at: string }>(
-          "SELECT tenant_id, MAX(changed_at_rfc3339) AS changed_at FROM tenant_update_policy_history GROUP BY tenant_id",
+        await db.all<{ channel: string; cohort_label: string; state: "active" | "paused" | "recalled"; recalled_version: string | null; reason: string; changed_at: string }>(
+          "SELECT channel, cohort_label, state, recalled_version, reason, changed_at FROM rollout_cohort_governance",
         )
-      ).map((r) => [r.tenant_id, r.changed_at]),
+      ).map((r) => [`${r.channel}::${r.cohort_label}`, r]),
     );
     const impact = {
       // The release catalog (master plan Phase 5.3) replaces this identifier.
@@ -326,9 +326,22 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       ],
     };
 
-    const groups = new Map<string, { channel: string; cohort_label: string; tenant_count: number; machine_count: number; governance: "active" | "paused" | "recalled"; paused_at_rfc3339: string | null }>();
+    const groups = new Map<
+      string,
+      {
+        channel: string;
+        cohort_label: string;
+        tenant_count: number;
+        machine_count: number;
+        governance: "active" | "paused" | "recalled";
+        paused_at_rfc3339: string | null;
+        recalled_version: string | null;
+        governance_reason: string | null;
+      }
+    >();
     for (const tenant of tenants) {
       const key = `${tenant.update_channel}::${tenant.rollout_cohort}`;
+      const set = governance.get(key);
       const existing =
         groups.get(key) ??
         {
@@ -336,18 +349,13 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
           cohort_label: tenant.rollout_cohort,
           tenant_count: 0,
           machine_count: 0,
-          governance: "active" as const,
-          paused_at_rfc3339: null,
+          governance: set?.state ?? "active",
+          paused_at_rfc3339: set && set.state !== "active" ? set.changed_at : null,
+          recalled_version: set?.recalled_version ?? null,
+          governance_reason: set?.reason ?? null,
         };
       existing.tenant_count += 1;
       existing.machine_count += machineCountsByTenant.get(tenant.id) ?? 0;
-      if (tenant.force_update_mode === "required" || tenant.force_update_mode === "emergency" || tenant.force_min_app_version) {
-        existing.governance = "paused";
-        const changedAt = policyChanges.get(tenant.id) ?? null;
-        if (changedAt && (!existing.paused_at_rfc3339 || changedAt > existing.paused_at_rfc3339)) {
-          existing.paused_at_rfc3339 = changedAt;
-        }
-      }
       groups.set(key, existing);
     }
 

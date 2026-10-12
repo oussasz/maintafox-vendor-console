@@ -10,7 +10,10 @@ import {
   getTenantOfflinePolicy,
   listTenantActivations,
   listTenants,
+  rebindMachine,
   reinstateMachine,
+  releaseMachineSlot,
+  requestMachinePolicyRefresh,
   revokeMachine,
   updateTenantOfflinePolicy,
   type ActivationRow,
@@ -19,6 +22,7 @@ import {
 } from "@/services/license-control-service";
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
+import { OperatorActionDialog } from "./OperatorActionDialog";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { useVendorConsole } from "../VendorConsoleContext";
 
@@ -44,7 +48,11 @@ export function MachineActivationPanel() {
   }>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
   const [claimBusy, setClaimBusy] = useState(false);
-  const [machineBusyId, setMachineBusyId] = useState<string | null>(null);
+  const [slotAction, setSlotAction] = useState<{
+    row: ActivationRow;
+    action: "revoke" | "reinstate" | "release" | "rebind" | "refresh";
+  } | null>(null);
+  const [rebindTarget, setRebindTarget] = useState("");
   const selectedTenant = useMemo(
     () => tenants.find((tenant) => tenant.id === selectedTenantId) ?? null,
     [tenants, selectedTenantId],
@@ -93,36 +101,35 @@ export function MachineActivationPanel() {
     void loadRowsAndPolicy(selectedTenantId);
   }, [selectedTenantId]);
 
-  const runMachineAction = async (row: ActivationRow, action: "revoke" | "reinstate") => {
-    const confirmText =
-      action === "revoke"
-        ? t(
-            "machines.revokeConfirm",
-            "Revoke this device? It is blocked within minutes and cannot reactivate itself with the licence key.",
-          )
-        : t("machines.reinstateConfirm", "Reinstate this device? It needs a free slot on its licence.");
-    if (!window.confirm(`${confirmText}\n\n${row.machine_id}`)) return;
-    setMachineBusyId(row.machine_id);
+  /**
+   * Revoke / reinstate / release / rebind (step-up machine_trust_change) and policy refresh
+   * (audited, no step-up). The operator's reason goes to the audit ledger.
+   */
+  const runSlotAction = async (reason: string) => {
+    if (!slotAction) return;
+    const { row, action } = slotAction;
     setLiveError(null);
     setLiveSuccess(null);
-    try {
-      const privileged = {
-        reason_code: action === "revoke" ? "machine-revoke" : "machine-reinstate",
-        step_up_token: await requireStepUp(StepUpKinds.machineTrustChange),
-      };
+    if (action === "refresh") {
+      await requestMachinePolicyRefresh(row.tenant_id, row.machine_id, reason);
+      setLiveSuccess(t("machines.refreshRequested"));
+    } else {
+      const privileged = { reason_code: reason, step_up_token: await requireStepUp(StepUpKinds.machineTrustChange) };
       if (action === "revoke") {
-        await revokeMachine(row.tenant_id, row.machine_id, "revoked from vendor console", privileged);
+        await revokeMachine(row.tenant_id, row.machine_id, reason, privileged);
         setLiveSuccess(t("machines.revoked", "Device revoked."));
-      } else {
-        await reinstateMachine(row.tenant_id, row.machine_id, "reinstated from vendor console", privileged);
+      } else if (action === "reinstate") {
+        await reinstateMachine(row.tenant_id, row.machine_id, reason, privileged);
         setLiveSuccess(t("machines.reinstated", "Device reinstated."));
+      } else if (action === "release") {
+        await releaseMachineSlot(row.tenant_id, row.machine_id, privileged);
+        setLiveSuccess(t("machines.released"));
+      } else {
+        await rebindMachine(row.tenant_id, row.machine_id, rebindTarget.trim(), privileged);
+        setLiveSuccess(t("machines.rebound", { fingerprint: rebindTarget.trim() }));
       }
-      await loadRowsAndPolicy(row.tenant_id);
-    } catch (err) {
-      setLiveError(err instanceof Error ? err.message : "Machine action failed");
-    } finally {
-      setMachineBusyId(null);
     }
+    await loadRowsAndPolicy(row.tenant_id);
   };
 
   return (
@@ -367,61 +374,70 @@ export function MachineActivationPanel() {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled
-                      title={t("stepUp.notAvailable")}
-                    >
-                      {t("machines.action.slotRelease", "Slot release")}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled
-                      title={t("stepUp.notAvailable")}
-                    >
-                      {t("machines.action.rebind", "Rebind")}
-                    </Button>
+                    {row.revocation_kind === "released" ? (
+                      <Badge variant="secondary">{t("machines.slotReleased")}</Badge>
+                    ) : null}
+                    {row.policy_refresh_requested_at ? (
+                      <Badge variant="secondary" title={row.policy_refresh_requested_at}>
+                        {t("machines.refreshPending")}
+                      </Badge>
+                    ) : null}
+                    {row.trusted_device ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSlotAction({ row, action: "release" })}
+                        >
+                          {t("machines.action.slotRelease", "Slot release")}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setRebindTarget("");
+                            setSlotAction({ row, action: "rebind" });
+                          }}
+                        >
+                          {t("machines.action.rebind", "Rebind")}
+                        </Button>
+                      </>
+                    ) : null}
                     {row.trusted_device ? (
                       <Button
                         type="button"
                         size="sm"
                         variant="destructive"
-                        disabled={machineBusyId !== null}
-                        onClick={() => void runMachineAction(row, "revoke")}
+                        onClick={() => setSlotAction({ row, action: "revoke" })}
                       >
-                        {machineBusyId === row.machine_id
-                          ? t("machines.working", "Working…")
-                          : t("machines.action.revoke", "Revoke")}
+                        {t("machines.action.revoke", "Revoke")}
                       </Button>
                     ) : row.revocation_kind === "machine" ? (
                       <Button
                         type="button"
                         size="sm"
                         variant="secondary"
-                        disabled={machineBusyId !== null}
-                        onClick={() => void runMachineAction(row, "reinstate")}
+                        onClick={() => setSlotAction({ row, action: "reinstate" })}
                       >
-                        {machineBusyId === row.machine_id
-                          ? t("machines.working", "Working…")
-                          : t("machines.action.reinstate", "Reinstate")}
+                        {t("machines.action.reinstate", "Reinstate")}
                       </Button>
                     ) : (
                       <span className="self-center text-xs text-text-muted">
                         {t("machines.licenceRevoked", "Licence revoked")}
                       </span>
                     )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled
-                      title={t("stepUp.notAvailable")}
-                    >
-                      {t("machines.action.policyRefresh", "Policy refresh")}
-                    </Button>
+                    {row.trusted_device ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={Boolean(row.policy_refresh_requested_at)}
+                        onClick={() => setSlotAction({ row, action: "refresh" })}
+                      >
+                        {t("machines.action.policyRefresh", "Policy refresh")}
+                      </Button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -441,6 +457,34 @@ export function MachineActivationPanel() {
           "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn.",
         )}
       </p>
+      <OperatorActionDialog
+        open={slotAction !== null}
+        title={slotAction ? t(`machines.dialog.${slotAction.action}.title`) : ""}
+        description={
+          slotAction ? t(`machines.dialog.${slotAction.action}.body`, { fingerprint: slotAction.row.machine_id }) : ""
+        }
+        confirmLabel={slotAction ? t(`machines.dialog.${slotAction.action}.confirm`) : ""}
+        destructive={slotAction?.action !== "refresh" && slotAction?.action !== "reinstate"}
+        extraValid={
+          slotAction?.action !== "rebind" ||
+          (rebindTarget.trim().length >= 8 && rebindTarget.trim() !== slotAction.row.machine_id)
+        }
+        onConfirm={runSlotAction}
+        onClose={() => setSlotAction(null)}
+      >
+        {slotAction?.action === "rebind" ? (
+          <div className="grid gap-1">
+            <Label htmlFor="rebind-target">{t("machines.dialog.rebind.targetLabel")}</Label>
+            <Input
+              id="rebind-target"
+              autoComplete="off"
+              className="font-mono"
+              value={rebindTarget}
+              onChange={(e) => setRebindTarget(e.target.value)}
+            />
+          </div>
+        ) : null}
+      </OperatorActionDialog>
     </div>
   );
 }

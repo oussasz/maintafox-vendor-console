@@ -10,6 +10,8 @@
  *   - activation         : desktop machines (activation claim) → sync / activation routes
  *   - step_up            : short-lived proof of a fresh TOTP code for one privileged action kind
  */
+import { randomUUID } from "node:crypto";
+
 import jwt from "jsonwebtoken";
 
 export const TOKEN_ISSUER = "maintafox-control-api";
@@ -113,6 +115,9 @@ export function signDeviceActivationToken(secret: string, claims: DeviceActivati
       issuer: TOKEN_ISSUER,
       audience: AUD_DESKTOP_DEVICE,
       expiresIn: DEVICE_ACTIVATION_TTL_SECONDS,
+      // Unique per issue: a token renewed within the same second still differs (the desktop
+      // resumes a refused sync only when its token changes, routes/activation.ts policy-refresh).
+      jwtid: randomUUID(),
     },
   );
 }

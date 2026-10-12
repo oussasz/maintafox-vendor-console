@@ -113,7 +113,22 @@
       "buildPreview": "Construire la charge utile"
     },
     "deleteTypeSlug": "Saisissez l'identifiant du client « {{slug}} » pour confirmer",
-    "deleteReason": "Motif (conservé dans le journal d'audit)"
+    "deleteReason": "Motif (conservé dans le journal d'audit)",
+    "suspended": "Suspendu",
+    "suspendTenant": "Suspendre le client",
+    "resumeTenant": "Lever la suspension",
+    "suspendDone": "« {{name}} » est suspendu : ses appareils sont refusés dès leur prochaine requête.",
+    "resumeDone": "« {{name}} » est de nouveau actif : ses appareils reprennent à leur prochaine vérification de licence.",
+    "suspendDialog": {
+      "title": "Suspendre ce client ?",
+      "body": "Chaque appareil de « {{name}} » est refusé dès sa prochaine requête. Licences, machines et données sont conservées ; vous pouvez lever la suspension à tout moment.",
+      "confirm": "Suspendre"
+    },
+    "resumeDialog": {
+      "title": "Lever la suspension ?",
+      "body": "Les appareils de « {{name}} » peuvent de nouveau synchroniser ; chacun récupère une politique à jour à sa prochaine vérification de licence.",
+      "confirm": "Lever la suspension"
+    }
   },
   "editions": {
     "core": "Core",
@@ -195,7 +210,40 @@
     "revoked": "Appareil révoqué.",
     "reinstated": "Appareil rétabli.",
     "working": "En cours…",
-    "licenceRevoked": "Licence révoquée"
+    "licenceRevoked": "Licence révoquée",
+    "refreshRequested": "Rafraîchissement demandé : l'appareil récupère sa politique à sa prochaine vérification de licence (sa synchronisation est en pause jusque-là).",
+    "released": "Emplacement libéré. L'appareil est refusé dès sa prochaine requête et pourra être réactivé plus tard.",
+    "rebound": "Emplacement transféré à {{fingerprint}}. L'ancien appareil est refusé ; le nouveau s'active avec la clé de licence.",
+    "slotReleased": "Emplacement libéré",
+    "refreshPending": "Rafraîchissement en attente",
+    "dialog": {
+      "revoke": {
+        "title": "Révoquer cet appareil ?",
+        "body": "{{fingerprint}} est refusé dès sa prochaine requête et ne peut pas se réactiver avec la clé de licence (rétablissez-le ici).",
+        "confirm": "Révoquer"
+      },
+      "reinstate": {
+        "title": "Rétablir cet appareil ?",
+        "body": "{{fingerprint}} pourra de nouveau synchroniser. Un emplacement libre est nécessaire sur sa licence.",
+        "confirm": "Rétablir"
+      },
+      "release": {
+        "title": "Libérer cet emplacement ?",
+        "body": "{{fingerprint}} est refusé dès sa prochaine requête et son emplacement devient libre. Contrairement à une révocation, l'appareil pourra se réactiver plus tard avec la clé de licence.",
+        "confirm": "Libérer l'emplacement"
+      },
+      "rebind": {
+        "title": "Transférer cet emplacement à une machine de remplacement ?",
+        "body": "{{fingerprint}} est refusé immédiatement. La machine de remplacement s'active ensuite avec la clé de licence et trouve son emplacement déjà réservé.",
+        "confirm": "Transférer",
+        "targetLabel": "Empreinte de la machine de remplacement (affichée sur son écran d'activation)"
+      },
+      "refresh": {
+        "title": "Demander à cet appareil de rafraîchir sa politique ?",
+        "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
+        "confirm": "Demander le rafraîchissement"
+      }
+    }
   },
   "sync": {
     "title": "Synchronisation",
@@ -267,13 +315,39 @@
       "machines": "machines",
       "pausedAt": "En pause depuis",
       "pause": "Mettre en pause",
-      "recall": "Rappel"
+      "recall": "Rappel",
+      "resume": "Reprendre",
+      "recalledVersion": "Version rappelée : {{version}}"
     },
     "diagnostics": {
       "title": "Diagnostics release (24h)",
       "hint": "Signature, migration et heartbeats post-déploiement dans une même vue.",
       "count": "{{n}} événements",
       "last": "Dernier"
+    },
+    "governance": {
+      "deviceNotice": "La pause et le rappel sont enregistrés sur le serveur, inscrits au journal d'audit et transmis à chaque appareil de la cohorte avec sa politique. Les postes de travail agiront dessus quand le module de mise à jour (phase 5 du plan) existera : aujourd'hui ils n'installent pas de mises à jour d'eux-mêmes, donc rien ne change encore pour eux.",
+      "done": {
+        "pause": "{{cohort}} en pause.",
+        "resume": "{{cohort}} reprise.",
+        "recall": "Version rappelée pour {{cohort}}."
+      },
+      "pause": {
+        "title": "Mettre ce déploiement en pause ?",
+        "body": "{{cohort}} : les appareils ne se voient plus proposer de nouvelles mises à jour jusqu'à la reprise.",
+        "confirm": "Mettre en pause"
+      },
+      "resume": {
+        "title": "Reprendre ce déploiement ?",
+        "body": "{{cohort}} : les mises à jour sont de nouveau proposées (un rappel est aussi levé).",
+        "confirm": "Reprendre"
+      },
+      "recall": {
+        "title": "Rappeler une version ?",
+        "body": "{{cohort}} : la version ci-dessous est retirée ; les appareils qui l'utilisent sont invités à la quitter.",
+        "confirm": "Rappeler",
+        "versionLabel": "Version à rappeler (ex. 1.4.2)"
+      }
     }
   },
   "health": {
@@ -416,9 +490,8 @@
       "intro": "Actions privilégiées : codes motif et rehaussement ; double approbation possible côté serveur.",
       "guards": {
         "title": "Garde-fous actions privilégiées",
-        "body": "L’API de contrôle impose un code motif d’audit et un rehaussement par mot de passe sur les routes privilégiées. Les rôles par opérateur ne sont pas encore implémentés (tous les opérateurs ont un accès complet).",
-        "stepUpExport": "Rehaussement : export conformité",
-        "stepUpRecall": "Rehaussement : rappel déploiement"
+        "body": "Le serveur refuse ces actions sans motif et sans nouveau code de l'application d'authentification, valable pour ce type d'action uniquement ; chaque tentative figure au journal d'audit.",
+        "kindsAria": "Actions qui demandent un nouveau code d'authentification"
       },
       "runbooks": {
         "title": "Guides d'incident"
@@ -438,7 +511,6 @@
     "verifying": "Vérification…",
     "errorRateLimited": "Trop de tentatives. Patientez quelques minutes puis réessayez.",
     "errorGeneric": "Vérification impossible : {{message}}",
-    "notAvailable": "Pas encore disponible : cette action n’a pas encore de point d’API serveur (prévu dans la phase de finalisation de la console).",
     "cancelled": "Action annulée : la confirmation n’a pas été effectuée.",
     "codeLabel": "Code à 6 chiffres de l'application d'authentification",
     "errorInvalidCode": "Code refusé. Vérifiez l'heure du téléphone ou attendez le code suivant (un code ne sert qu'une fois).",
@@ -483,5 +555,10 @@
       "body": "Chaque code sert une fois, si vous perdez votre application d'authentification. Ils ne sont affichés que maintenant : imprimez-les ou enregistrez-les en lieu sûr.",
       "done": "Je les ai enregistrés"
     }
+  },
+  "operatorAction": {
+    "reasonLabel": "Motif (conservé dans le journal d'audit)",
+    "cancel": "Annuler",
+    "working": "En cours…"
   }
 }

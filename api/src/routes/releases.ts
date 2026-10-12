@@ -26,6 +26,19 @@ const TenantUpdatePolicyBody = z
   })
   .strict();
 
+const UPDATE_CHANNELS = ["stable", "pilot", "internal"] as const;
+
+const GovernanceBody = z.object({ reason: z.string().trim().min(4).max(512) }).strict();
+const RecallBody = z
+  .object({
+    reason: z.string().trim().min(4).max(512),
+    /** The app version withdrawn from the cohort (same bounds as force_min_app_version). */
+    recalled_version: z.string().trim().min(1).max(32),
+  })
+  .strict();
+
+type GovernanceState = "active" | "paused" | "recalled";
+
 export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, authMiddleware, runIdempotent, requirePrivilegedAction } = ctx;
 
@@ -354,6 +367,111 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
           audit_record_id: guard.auditRecordId,
         },
       };
+    });
+  });
+
+  /**
+   * Rollout governance of one (channel, cohort): pause (stop offering updates), resume, recall (a
+   * version is withdrawn). Persisted, audited, and delivered to the cohort's devices with their
+   * policy (routes/activation.ts); the desktop updater (master plan Phase 5) acts on it — today's
+   * desktops have no updater, so nothing changes on them yet. Pause/resume: step-up
+   * `rollout_publish`; recall: `forced_rollback`.
+   */
+  async function setGovernance(
+    req: express.Request,
+    res: express.Response,
+    next: { state: GovernanceState; reason: string; recalled_version: string | null },
+  ): Promise<void> {
+    const channel = req.params.channel;
+    const cohort = req.params.cohort;
+    if (!(UPDATE_CHANNELS as readonly string[]).includes(channel)) {
+      res.status(400).json({ error: "invalid_channel" });
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      await db.lockXact("rollout-governance", `${channel}:${cohort}`);
+      const current = await db.get<{ state: GovernanceState; recalled_version: string | null }>(
+        "SELECT state, recalled_version FROM rollout_cohort_governance WHERE channel = ? AND cohort_label = ?",
+        channel,
+        cohort,
+      );
+      const from = current?.state ?? "active";
+      if (from === next.state && (current?.recalled_version ?? null) === next.recalled_version) {
+        return { status: 409, body: { error: "governance_unchanged", state: from } };
+      }
+      const guard = await requirePrivilegedAction(req, {
+        action_code: `rollout_${next.state === "active" ? "resume" : next.state === "paused" ? "pause" : "recall"}`,
+        action_category: "rollout",
+        step_up_kind: next.state === "recalled" ? StepUpKinds.forcedRollback : StepUpKinds.rolloutPublish,
+        payload: {
+          channel,
+          cohort_label: cohort,
+          from_state: from,
+          to_state: next.state,
+          recalled_version: next.recalled_version,
+          reason: next.reason,
+        },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const now = new Date().toISOString();
+      await db.run(
+        `INSERT INTO rollout_cohort_governance
+           (channel, cohort_label, state, recalled_version, reason, changed_at, changed_by, audit_record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (channel, cohort_label) DO UPDATE SET
+           state = EXCLUDED.state, recalled_version = EXCLUDED.recalled_version, reason = EXCLUDED.reason,
+           changed_at = EXCLUDED.changed_at, changed_by = EXCLUDED.changed_by, audit_record_id = EXCLUDED.audit_record_id`,
+        channel,
+        cohort,
+        next.state,
+        next.recalled_version,
+        next.reason,
+        now,
+        resolveActorId(req),
+        guard.auditRecordId,
+      );
+      return {
+        status: 200,
+        body: {
+          channel,
+          cohort_label: cohort,
+          state: next.state,
+          recalled_version: next.recalled_version,
+          changed_at: now,
+          audit_record_id: guard.auditRecordId,
+        },
+      };
+    });
+  }
+
+  app.post("/api/v1/rollouts/:channel/:cohort/pause", authMiddleware, async (req, res) => {
+    const parsed = GovernanceBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    await setGovernance(req, res, { state: "paused", reason: parsed.data.reason, recalled_version: null });
+  });
+
+  app.post("/api/v1/rollouts/:channel/:cohort/resume", authMiddleware, async (req, res) => {
+    const parsed = GovernanceBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    await setGovernance(req, res, { state: "active", reason: parsed.data.reason, recalled_version: null });
+  });
+
+  app.post("/api/v1/rollouts/:channel/:cohort/recall", authMiddleware, async (req, res) => {
+    const parsed = RecallBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    await setGovernance(req, res, {
+      state: "recalled",
+      reason: parsed.data.reason,
+      recalled_version: parsed.data.recalled_version,
     });
   });
 }

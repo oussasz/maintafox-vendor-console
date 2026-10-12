@@ -38,6 +38,8 @@ const UpdateTenantBody = z
   .refine((b) => Object.keys(b).length > 0, { message: "empty_patch" });
 
 /** Typed confirmation: the operator retypes the slug of the tenant being deleted. */
+const SuspendTenantBody = z.object({ reason: z.string().trim().min(4).max(512) }).strict();
+
 const DeleteTenantBody = z.object({ confirm_slug: z.string().min(1).max(64) }).strict();
 
 const OfflinePolicyUpdateBody = z.object({
@@ -59,7 +61,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       rows = await db.all(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                   COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                   offline_grace_hours, trust_revocation_disconnects_immediately,
-                  reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
+                  reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, suspended_at, suspended_reason, created_at
            FROM tenants
            WHERE (created_at < ?) OR (created_at = ? AND id < ?)
            ORDER BY created_at DESC, id DESC
@@ -68,7 +70,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       rows = await db.all(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                   COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
                   offline_grace_hours, trust_revocation_disconnects_immediately,
-                  reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, created_at
+                  reconnect_requires_fresh_heartbeat, is_initialized, has_demo_data, is_active, suspended_at, suspended_reason, created_at
            FROM tenants
            ORDER BY created_at DESC, id DESC
            LIMIT ?`, pageSize) as Array<Record<string, unknown>>;
@@ -190,7 +192,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     }
     const out = await db.get(`SELECT id, slug, display_name, force_min_app_version, force_update_mode, force_update_reason, rollout_cohort, update_channel,
                 COALESCE(edition, 'core') AS edition, COALESCE(entitlement_lineage, 0) AS entitlement_lineage,
-                offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat, is_active, created_at
+                offline_grace_hours, trust_revocation_disconnects_immediately, reconnect_requires_fresh_heartbeat, is_active, suspended_at, suspended_reason, created_at
          FROM tenants WHERE id = ?`, tenantId) as Record<string, unknown>;
     res.json(out);
   });
@@ -324,7 +326,8 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     const tenantId = req.params.tenantId;
     const { cursor, limit, withPagination } = parsePagination(req.query);
     const effectiveLimit = withPagination ? limit : 10_000;
-    const rows = await db.all(`SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind, l.update_channel
+    const rows = await db.all(`SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind,
+                a.policy_refresh_requested_at, l.update_channel
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          WHERE a.tenant_id = ?
@@ -332,6 +335,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
         machine_fingerprint: string;
         last_seen_at: string;
         app_version: string | null;
+        policy_refresh_requested_at: string | null;
         revoked_at: string | null;
         revocation_kind: string | null;
         update_channel: string;
@@ -356,8 +360,10 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
         last_heartbeat_rfc3339: row.last_seen_at,
         app_version: row.app_version,
         trusted_device: row.revoked_at == null,
-        // 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked, null = active.
+        // 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked,
+        // 'released' = slot freed by an operator (the device may activate again), null = active.
         revocation_kind: row.revoked_at ? (row.revocation_kind ?? "license") : null,
+        policy_refresh_requested_at: row.policy_refresh_requested_at,
         activation_source: "license_claim",
         anomaly_flags: row.revoked_at ? ["revoked"] : [],
         heartbeat_freshness,
@@ -375,5 +381,88 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       return;
     }
     res.json(mapped);
+  });
+
+  /**
+   * Soft suspension (unpaid invoice, contract dispute...): every device of the tenant is refused
+   * (403 tenant_inactive) from its next request; licences, activations and data are kept.
+   * Reversed by /resume. Step-up `entitlement_suspension`, audited.
+   */
+  app.post("/api/v1/tenants/:tenantId/suspend", authMiddleware, async (req, res) => {
+    const parsed = SuspendTenantBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const tenantId = req.params.tenantId;
+    await runIdempotent(req, res, async () => {
+      const tenant = await db.get<{ id: string; is_active: number; suspended_at: string | null }>(
+        "SELECT id, is_active, suspended_at FROM tenants WHERE id = ? FOR UPDATE",
+        tenantId,
+      );
+      if (!tenant) return { status: 404, body: { error: "tenant_not_found" } };
+      if (tenant.is_active !== 1) return { status: 409, body: { error: "tenant_already_suspended", suspended_at: tenant.suspended_at } };
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "tenant_suspend",
+        action_category: "tenant",
+        step_up_kind: StepUpKinds.entitlementSuspension,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId },
+        payload: { reason: parsed.data.reason },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const now = new Date().toISOString();
+      await db.run(
+        "UPDATE tenants SET is_active = 0, suspended_at = ?, suspended_reason = ? WHERE id = ?",
+        now,
+        parsed.data.reason,
+        tenantId,
+      );
+      structuredLog("tenant_suspended", { tenant_id: tenantId });
+      return { status: 200, body: { ok: true, suspended_at: now, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /**
+   * Lifts a soft suspension. Desktops stopped syncing when they were refused and resume only with a
+   * new token, so every active device is asked for a policy refresh (it gets one at its next
+   * licence check). Step-up `tenant_restore`, audited.
+   */
+  app.post("/api/v1/tenants/:tenantId/resume", authMiddleware, async (req, res) => {
+    const parsed = SuspendTenantBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const tenantId = req.params.tenantId;
+    await runIdempotent(req, res, async () => {
+      const tenant = await db.get<{ id: string; is_active: number; suspended_at: string | null }>(
+        "SELECT id, is_active, suspended_at FROM tenants WHERE id = ? FOR UPDATE",
+        tenantId,
+      );
+      if (!tenant) return { status: 404, body: { error: "tenant_not_found" } };
+      if (tenant.is_active === 1) return { status: 409, body: { error: "tenant_not_suspended" } };
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "tenant_resume",
+        action_category: "tenant",
+        step_up_kind: StepUpKinds.tenantRestore,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId },
+        payload: { reason: parsed.data.reason, suspended_at: tenant.suspended_at },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const now = new Date().toISOString();
+      await db.run("UPDATE tenants SET is_active = 1, suspended_at = NULL, suspended_reason = NULL WHERE id = ?", tenantId);
+      const flagged = await db.run(
+        "UPDATE machine_activations SET policy_refresh_requested_at = ? WHERE tenant_id = ? AND revoked_at IS NULL",
+        now,
+        tenantId,
+      );
+      structuredLog("tenant_resumed", { tenant_id: tenantId, devices_asked_to_refresh: flagged.changes });
+      return {
+        status: 200,
+        body: { ok: true, resumed_at: now, devices_asked_to_refresh: flagged.changes, audit_record_id: guard.auditRecordId },
+      };
+    });
   });
 }

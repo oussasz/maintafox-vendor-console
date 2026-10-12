@@ -10,6 +10,8 @@ import {
   type ReadinessCheckItem,
 } from "@/services/vendor-audit-support-service";
 
+import { STEP_UP_KIND_NAMES } from "@/lib/step-up-kinds";
+
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 
 export function ConsoleHardeningPanel() {
@@ -54,17 +56,17 @@ export function ConsoleHardeningPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("audit.harden.guards.title", "Privileged-action safeguards")}</CardTitle>
-          <CardDescription>
-            {t("audit.harden.guards.body", "Client hints only — VPS enforces RBAC, step-up window, and audit append.")}
-          </CardDescription>
+          <CardDescription>{t("audit.harden.guards.body")}</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="secondary" disabled title={t("stepUp.notAvailable")}>
-            {t("audit.harden.guards.stepUpExport", "Step-up: compliance export")}
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled title={t("stepUp.notAvailable")}>
-            {t("audit.harden.guards.stepUpRecall", "Step-up: rollout recall")}
-          </Button>
+        <CardContent className="space-y-3">
+          <ul className="grid gap-1 text-sm sm:grid-cols-2" aria-label={t("audit.harden.guards.kindsAria")}>
+            {STEP_UP_KIND_NAMES.map((kind) => (
+              <li key={kind} className="flex gap-2">
+                <span className="font-mono text-xs text-text-muted">{kind}</span>
+                <span className="text-text-secondary">{t(`stepUp.kinds.${kind}`)}</span>
+              </li>
+            ))}
+          </ul>
           <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
             {t("audit.harden.guards.refresh", "Refresh")}
           </Button>

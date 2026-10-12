@@ -57,6 +57,9 @@ const TenantSchema = z.object({
   is_initialized: z.union([z.boolean(), z.number()]).optional(),
   has_demo_data: z.union([z.boolean(), z.number()]).optional(),
   is_active: z.number().optional(),
+  /** Soft suspension (POST /tenants/:id/suspend): when and why; null when active. */
+  suspended_at: z.string().nullable().optional(),
+  suspended_reason: z.string().nullable().optional(),
   created_at: z.string().optional(),
 });
 
@@ -128,8 +131,13 @@ const ActivationRowSchema = z.object({
   last_heartbeat_rfc3339: z.string().nullable(),
   app_version: z.string().nullable().optional(),
   trusted_device: z.boolean(),
-  /** 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked, null = active. */
-  revocation_kind: z.enum(["machine", "license"]).nullable().optional(),
+  /**
+   * 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked,
+   * 'released' = slot freed by an operator (the device may activate again), null = active.
+   */
+  revocation_kind: z.enum(["machine", "license", "released"]).nullable().optional(),
+  /** Set while an operator-requested policy refresh waits for the device. */
+  policy_refresh_requested_at: z.string().nullable().optional(),
   activation_source: z.string(),
   anomaly_flags: z.array(z.string()),
   heartbeat_freshness: z.enum(["live", "stale", "unknown"]),
@@ -658,4 +666,99 @@ export async function rollbackCohortUpdatePolicy(
   );
   await throwIfNotOk(res);
   return CohortUpdatePolicySchema.parse(await res.json());
+}
+
+async function postMachineAction(
+  tenantId: string,
+  machineFingerprint: string,
+  action: "release" | "rebind" | "policy-refresh",
+  body: Record<string, unknown>,
+  headers: Record<string, string>,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Idempotency-Key": idempotencyKey(`machine-${action}`), ...headers },
+    },
+  );
+  await throwIfNotOk(res);
+}
+
+/** Frees the machine's slot; the device may activate again later (step-up `machine_trust_change`). */
+export async function releaseMachineSlot(
+  tenantId: string,
+  machineFingerprint: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  await postMachineAction(tenantId, machineFingerprint, "release", { reason: privileged.reason_code }, privilegedHeaders(privileged));
+}
+
+/** Moves the machine's slot to its replacement (step-up `machine_trust_change`). */
+export async function rebindMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  newMachineFingerprint: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  await postMachineAction(
+    tenantId,
+    machineFingerprint,
+    "rebind",
+    { new_machine_fingerprint: newMachineFingerprint, reason: privileged.reason_code },
+    privilegedHeaders(privileged),
+  );
+}
+
+/** Asks the device to fetch its policy now (audited, reason required, no step-up). */
+export async function requestMachinePolicyRefresh(tenantId: string, machineFingerprint: string, reasonCode: string): Promise<void> {
+  await postMachineAction(tenantId, machineFingerprint, "policy-refresh", {}, { "X-Operator-Reason": reasonCode });
+}
+
+/** Soft-suspends a tenant: its devices are refused, data kept (step-up `entitlement_suspension`). */
+export async function suspendTenant(tenantId: string, privileged: PrivilegedActionContext): Promise<void> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({ reason: privileged.reason_code }),
+    headers: { "Idempotency-Key": idempotencyKey("tenant-suspend"), ...privilegedHeaders(privileged) },
+  });
+  await throwIfNotOk(res);
+}
+
+/** Lifts a soft suspension; devices are asked to refresh their policy (step-up `tenant_restore`). */
+export async function resumeTenant(tenantId: string, privileged: PrivilegedActionContext): Promise<void> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ reason: privileged.reason_code }),
+    headers: { "Idempotency-Key": idempotencyKey("tenant-resume"), ...privilegedHeaders(privileged) },
+  });
+  await throwIfNotOk(res);
+}
+
+export type RolloutGovernanceAction = "pause" | "resume" | "recall";
+
+/**
+ * Pause / resume / recall one (channel, cohort). Step-up `rollout_publish` (pause, resume) or
+ * `forced_rollback` (recall). Devices act on it with the Phase 5 updater.
+ */
+export async function setRolloutGovernance(
+  channel: string,
+  cohortLabel: string,
+  action: RolloutGovernanceAction,
+  input: { recalled_version?: string } & PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/rollouts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(
+        action === "recall"
+          ? { reason: input.reason_code, recalled_version: input.recalled_version }
+          : { reason: input.reason_code },
+      ),
+      headers: { "Idempotency-Key": idempotencyKey(`rollout-${action}`), ...privilegedHeaders(input) },
+    },
+  );
+  await throwIfNotOk(res);
 }
