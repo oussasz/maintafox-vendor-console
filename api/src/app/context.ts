@@ -1,0 +1,14 @@
+/** Everything a route family needs that is bound to the running API (database, sync settings). */
+import type { Database } from "../db/database.js";
+import type { SyncConfig, SyncEntityRegistry } from "../sync/index.js";
+import type { AuditAppender } from "./audit.js";
+import type { Guards } from "./guards.js";
+import type { TenantStore } from "./tenant-store.js";
+
+export type ApiContext = {
+  db: Database;
+  syncConfig: SyncConfig;
+  syncEntityRegistry: SyncEntityRegistry;
+} & AuditAppender &
+  Guards &
+  TenantStore;
