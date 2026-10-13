@@ -176,7 +176,8 @@ function mediaBucketEnv() {
   if (Object.values(env).some((v) => !v)) {
     throw new Error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION are required: the nightly backup copies the media bucket");
   }
-  return { ...env, S3_BUCKET: `mfx-drill-${randomBytes(3).toString("hex")}`, S3_FORCE_PATH_STYLE: "true", DEPLOYMENT_ENV: "ci" };
+  // The backup signs no URL; S3_PUBLIC_ENDPOINT is required by the shared settings loader.
+  return { ...env, S3_PUBLIC_ENDPOINT: env.S3_ENDPOINT, S3_BUCKET: `mfx-drill-${randomBytes(3).toString("hex")}`, S3_FORCE_PATH_STYLE: "true", DEPLOYMENT_ENV: "ci" };
 }
 const MEDIA = mediaBucketEnv();
 const mediaS3 = new S3Client({

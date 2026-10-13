@@ -50,6 +50,8 @@ const env = {
   MIGRATE_SOURCE_S3_BUCKET: SOURCE,
   MIGRATE_SOURCE_S3_FORCE_PATH_STYLE: "true",
   S3_ENDPOINT: endpoint,
+    // Signs no URL; required by the shared settings loader (api/src/storage/object-store.ts).
+  S3_PUBLIC_ENDPOINT: endpoint,
   S3_REGION: region,
   S3_ACCESS_KEY: accessKey,
   S3_SECRET_KEY: secretKey,

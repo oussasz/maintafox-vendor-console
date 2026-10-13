@@ -1,7 +1,8 @@
 # Full stack: edge (nginx) + vendor console SPA + control API (JWT).
 # Postgres holds all control-API data (DATABASE_URL); Garage (S3-compatible) holds TenantMedia (S3_*).
 #
-# DNS: console.maintafox.systems and api.maintafox.systems → this server's public IP.
+# DNS: console.maintafox.systems, api.maintafox.systems and media.maintafox.systems → this server's
+# public IP (media: presigned media URLs, deploy/OBJECT_STORAGE.md §1.1).
 # First deploy: copy .env.example to .env and set JWT_SECRET + SEED_ADMIN_PASSWORD.
 # TLS: issue certs on the host (certbot) and mount /etc/letsencrypt into edge (see deploy/VPS-COMMANDS.md).
 #
@@ -10,9 +11,12 @@
 
 # Tenant media bucket settings, shared by api, backup and object-store-check. All required, no
 # defaults (api/src/storage/object-store.ts). S3_ENDPOINT is the address INSIDE the compose network
-# (http://object-store:3900); S3_REGION must equal s3_region in deploy/object-storage/garage.toml.
+# (http://object-store:3900); S3_PUBLIC_ENDPOINT is the address presigned URLs are signed for, the
+# one desktops reach through edge (https://media.maintafox.systems); S3_REGION must equal s3_region
+# in deploy/object-storage/garage.toml.
 x-object-store-env: &object-store-env
   S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env (http://object-store:3900)}
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT in .env (https://media.maintafox.systems, deploy/OBJECT_STORAGE.md)}
   S3_REGION: ${S3_REGION:?set S3_REGION in .env (garage, as in deploy/object-storage/garage.toml)}
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
   S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
@@ -111,13 +115,15 @@ services:
 
   # One-shot, before the API starts: with the settings the API will use, the bucket must exist and a
   # presigned PUT then GET must round-trip (api/src/tools/object-store-check.ts). Any failure stops
-  # the start with one readable line in `docker compose logs object-store-check`.
+  # the start with one readable line in `docker compose logs object-store-check`. `--via internal`:
+  # edge is not up yet; the public route is checked after start with `--via public`
+  # (deploy/OBJECT_STORAGE.md §1.1).
   object-store-check:
     image: maintafox-control-api:local
     pull_policy: never
     container_name: maintafox-object-store-check
     mem_limit: 128m
-    command: ["node", "dist/tools/object-store-check.js"]
+    command: ["node", "dist/tools/object-store-check.js", "--via", "internal"]
     environment:
       <<: *object-store-env
     depends_on:
@@ -266,11 +272,13 @@ services:
       - "${EDGE_HTTPS_PORT:-443}:443"
     volumes:
       - ./deploy/nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx-media-proxy.conf:/etc/nginx/snippets/media-proxy.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ./deploy/certbot-webroot:/var/www/certbot:ro
     depends_on:
       - api
       - vendor-console
+      - object-store
 
 volumes:
   control_api_data:
