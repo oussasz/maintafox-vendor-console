@@ -109,6 +109,21 @@ export const EMAIL_CONFIG: EmailConfig = (() => {
   }
 })();
 
+/**
+ * How many days the backup container keeps local copies (the same BACKUP_LOCAL_RETENTION_DAYS it
+ * reads), shown on the console's System health page. Optional for the API: unset, the page does
+ * not show the figure.
+ */
+export const BACKUP_LOCAL_RETENTION_DAYS: number | null = (() => {
+  const raw = process.env.BACKUP_LOCAL_RETENTION_DAYS?.trim();
+  if (!raw) return null;
+  const days = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!(days >= 1 && days <= 3650)) {
+    fatal(`BACKUP_LOCAL_RETENTION_DAYS must be an integer 1..3650, got '${raw}'.`);
+  }
+  return days;
+})();
+
 /** Rows of operator_scope_access (who acted across tenants) older than this are pruned. */
 export const OPERATOR_ACCESS_LOG_RETENTION_DAYS = (() => {
   const raw = requireEnv("OPERATOR_ACCESS_LOG_RETENTION_DAYS");

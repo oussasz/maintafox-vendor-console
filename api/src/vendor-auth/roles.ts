@@ -64,6 +64,10 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/auth/password": ANY_OPERATOR,
   "GET /api/v1/me/permissions": ANY_OPERATOR,
 
+  // Console dashboards (routes/console.ts)
+  "GET /api/v1/console/overview": "console.view",
+  "GET /api/v1/console/health": "platform.observe",
+
   // Customers (tenants)
   "GET /api/v1/tenants": "console.view",
   "POST /api/v1/tenants": "customer.manage",

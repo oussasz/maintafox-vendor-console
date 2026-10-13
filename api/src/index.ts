@@ -42,6 +42,7 @@ import { registerEditionsRoutes } from "./routes/editions.js";
 import { registerLicencesRoutes } from "./routes/licences.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
 import { registerOperatorsRoutes } from "./routes/operators.js";
+import { registerConsoleRoutes } from "./routes/console.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerReleasesRoutes } from "./routes/releases.js";
 import { registerSupportRoutes } from "./routes/support.js";
@@ -160,6 +161,7 @@ const ctx: ApiContext = {
   ...createTenantStore(db),
 };
 registerOpsRoutes(app, ctx);
+registerConsoleRoutes(app, ctx);
 registerAuthRoutes(app, ctx);
 registerEditionsRoutes(app, ctx);
 registerTenantsRoutes(app, ctx);
