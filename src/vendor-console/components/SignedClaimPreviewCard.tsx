@@ -19,55 +19,52 @@ export function SignedClaimPreviewCard({ preview }: SignedClaimPreviewCardProps)
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="signed-claim-heading" className="text-sm font-semibold text-text-primary">
-          {t("preview.title", "Signed claim preview")}
+          {t("preview.title")}
         </h2>
-        <Badge variant="outline">{t("preview.schema", "v{{v}}", { v: preview.schema_version })}</Badge>
+        <Badge variant="outline">{t("preview.schema", { v: preview.schema_version })}</Badge>
       </div>
       <p className="mt-1 text-xs text-text-secondary">
-        {t(
-          "preview.hint",
-          "Verify tier, slots, channel, and validity before committing. Server validates signature.",
-        )}
+        {t("preview.hint")}
       </p>
       <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
         <div>
-          <dt className="text-text-muted">{t("preview.tenant", "Tenant")}</dt>
+          <dt className="text-text-muted">{t("preview.tenant")}</dt>
           <dd className="font-mono text-xs">{preview.tenant_id}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.tier", "Tier")}</dt>
+          <dt className="text-text-muted">{t("preview.tier")}</dt>
           <dd>{preview.tier}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.slots", "Machine slots")}</dt>
+          <dt className="text-text-muted">{t("preview.slots")}</dt>
           <dd>{preview.machine_slots}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.channel", "Update channel")}</dt>
+          <dt className="text-text-muted">{t("preview.channel")}</dt>
           <dd className="uppercase">{preview.update_channel}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.grace", "Offline grace (h)")}</dt>
+          <dt className="text-text-muted">{t("preview.grace")}</dt>
           <dd>{preview.offline_grace_hours}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.valid", "Validity window")}</dt>
+          <dt className="text-text-muted">{t("preview.valid")}</dt>
           <dd className="text-xs">
             {preview.valid_from_rfc3339} → {preview.valid_until_rfc3339}
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-text-muted">{t("preview.payload", "Payload SHA-256")}</dt>
+          <dt className="text-text-muted">{t("preview.payload")}</dt>
           <dd className="break-all font-mono text-xs">{preview.payload_sha256}</dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.issuer", "Issuer / key")}</dt>
+          <dt className="text-text-muted">{t("preview.issuer")}</dt>
           <dd className="font-mono text-xs">
             {preview.issuer} / {preview.key_id}
           </dd>
         </div>
         <div>
-          <dt className="text-text-muted">{t("preview.sig", "Signature")}</dt>
+          <dt className="text-text-muted">{t("preview.sig")}</dt>
           <dd className="font-mono text-xs">{preview.signature_alg}</dd>
         </div>
       </dl>

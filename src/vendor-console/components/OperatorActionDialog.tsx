@@ -15,6 +15,7 @@ import {
 import { PRIVILEGED_REASON_MIN_LENGTH } from "@/services/license-control-service";
 
 import { StepUpCancelledError } from "../VendorConsoleContext";
+import { errorText } from "@/lib/error-text";
 
 export interface OperatorActionDialogProps {
   open: boolean;
@@ -69,7 +70,7 @@ export function OperatorActionDialog({
       await onConfirm(reason.trim());
       onClose();
     } catch (err) {
-      if (!(err instanceof StepUpCancelledError)) setError(err instanceof Error ? err.message : String(err));
+      if (!(err instanceof StepUpCancelledError)) setError(errorText(err));
     } finally {
       setBusy(false);
     }

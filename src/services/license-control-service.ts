@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { apiBase } from "@/lib/api-base";
 import { authFetch } from "@/lib/api-client";
+import { throwIfNotOk } from "@/lib/api-error";
 
 /** System + custom edition ids from the persisted catalog. */
 const EditionIdSchema = z.string().min(2).max(64);
@@ -184,100 +185,6 @@ export type PrivilegedActionContext = {
   reason_code: string;
   step_up_token: string;
 };
-
-type ControlPlaneErrorBody = {
-  error?: string;
-  message?: string;
-  detail?: string | unknown;
-  details?: unknown;
-  max_machines?: number;
-};
-
-/** True when the message indicates a duplicate tenant slug (409 from POST /tenants). */
-export function isDuplicateTenantSlugMessage(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("already taken") ||
-    /\b(unique|duplicate)\b.*\bslug\b|\bslug\b.*\b(unique|duplicate)\b/.test(m) ||
-    (m.includes("sqlite") && m.includes("unique") && m.includes("slug")) ||
-    (m.includes("constraint") && m.includes("slug"))
-  );
-}
-
-/**
- * Maps control-plane JSON error bodies to operator-readable messages (incl. 409 conflicts).
- */
-export async function parseControlPlaneErrorResponse(res: Response): Promise<string> {
-  let body: ControlPlaneErrorBody = {};
-  try {
-    body = (await res.json()) as ControlPlaneErrorBody;
-  } catch {
-    return `Request failed (${res.status})`;
-  }
-  const code = typeof body.error === "string" ? body.error.trim() : "";
-  const msg = typeof body.message === "string" ? body.message.trim() : "";
-  const detailStr =
-    typeof body.detail === "string"
-      ? body.detail.trim()
-      : Array.isArray(body.detail)
-        ? body.detail
-            .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
-            .join(" ")
-        : "";
-
-  if (res.status === 409) {
-    if (code === "tenant_conflict") {
-      if (isDuplicateTenantSlugMessage(msg) || isDuplicateTenantSlugMessage(detailStr)) {
-        return "This tenant slug is already taken. Choose a different slug.";
-      }
-      if (msg || detailStr) {
-        return msg || detailStr;
-      }
-      return "This tenant slug is already taken. Choose a different slug.";
-    }
-    if (code === "idempotency_key_conflict") {
-      return "This request was already processed with different inputs. Retry with a fresh idempotency key.";
-    }
-    if (code === "slot_limit_reached") {
-      const max = body.max_machines;
-      return max != null
-        ? `Activation slot limit reached for this license (max ${max} machines).`
-        : "Activation slot limit reached for this license.";
-    }
-    if (code === "no_policy_history") {
-      return msg || "No policy history available to roll back.";
-    }
-    if (code === "license_revoked") {
-      return msg || "This license key is revoked and cannot be updated.";
-    }
-    if (code === "edition_version_conflict") {
-      return msg || "This edition was modified by another operator. Refresh and try again.";
-    }
-    if (code === "edition_in_use") {
-      return msg || "This edition is still assigned to one or more tenants (including inactive).";
-    }
-    if (code === "edition_id_taken") {
-      return msg || "An edition with this id already exists.";
-    }
-    if (msg || detailStr) {
-      return msg || detailStr;
-    }
-  }
-
-  if (res.status === 404 && (code === "tenant_not_found" || code === "license_not_found")) {
-    return msg || (code === "license_not_found" ? "License key not found." : "Tenant not found.");
-  }
-
-  if (msg) return msg;
-  if (detailStr) return detailStr;
-  if (code) return `${code.replace(/_/g, " ")} (${res.status})`;
-  return `Request failed (${res.status})`;
-}
-
-async function throwIfNotOk(res: Response): Promise<void> {
-  if (res.ok) return;
-  throw new Error(await parseControlPlaneErrorResponse(res));
-}
 
 /** Minimum X-Operator-Reason length; the API enforces the same (api/src/app/config.ts). */
 export const PRIVILEGED_REASON_MIN_LENGTH = 4;

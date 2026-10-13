@@ -10,7 +10,8 @@ import { endSession, ensureAccessToken, refreshAccessToken } from "@/lib/auth-se
 
 export class SessionEndedError extends Error {
   constructor() {
-    super("Your session has ended. Sign in again.");
+    // Shown to the operator as common.json errors.sessionEnded (lib/error-text.ts).
+    super("session_ended");
     this.name = "SessionEndedError";
   }
 }

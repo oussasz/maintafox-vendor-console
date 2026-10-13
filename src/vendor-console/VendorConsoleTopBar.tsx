@@ -2,6 +2,7 @@ import { ArrowLeft, Radio } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
@@ -24,16 +25,16 @@ export function VendorConsoleTopBar() {
       <Link
         to="/vendor-console"
         className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-text-secondary hover:bg-surface-2 hover:text-text-primary"
-        aria-label={t("shell.backToApp", "Console home")}
+        aria-label={t("shell.backToApp")}
       >
         <ArrowLeft className="h-4 w-4" />
-        <span className="hidden sm:inline">{t("shell.backToApp", "Home")}</span>
+        <span className="hidden sm:inline">{t("shell.backToApp")}</span>
       </Link>
 
       <div className="flex items-center gap-2 border-l border-surface-border pl-3">
         <Radio className="h-4 w-4 text-primary" aria-hidden />
         <span className="text-sm font-semibold text-text-primary">
-          {t("shell.product", "Vendor control plane")}
+          {t("shell.product")}
         </span>
         <span
           className={cn(
@@ -51,8 +52,8 @@ export function VendorConsoleTopBar() {
         <Input
           value={tenantSearch}
           onChange={(e) => setTenantSearch(e.target.value)}
-          placeholder={t("shell.tenantSearchPlaceholder", "Tenant / machine / correlation id…")}
-          aria-label={t("shell.tenantSearchAria", "Operational search context")}
+          placeholder={t("shell.tenantSearchPlaceholder")}
+          aria-label={t("shell.tenantSearchAria")}
           className="h-9"
         />
       </div>
@@ -62,11 +63,12 @@ export function VendorConsoleTopBar() {
           className="ml-auto max-w-sm truncate rounded-md bg-amber-100 px-2 py-1 text-xs text-amber-950 dark:bg-amber-900 dark:text-amber-50"
           role="status"
         >
-          {t("shell.degradedBanner", "Degraded: verify queue health and object storage.")}
+          {t("shell.degradedBanner")}
         </div>
       ) : (
-        <div className="ml-auto text-xs text-text-muted">{t("shell.hostHint", "console.maintafox.systems")}</div>
+        <div className="ml-auto text-xs text-text-muted">{t("shell.hostHint")}</div>
       )}
+      <LanguageSwitcher />
       <VendorConsoleAccountMenu />
     </header>
   );

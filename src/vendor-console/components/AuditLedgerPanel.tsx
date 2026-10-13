@@ -27,6 +27,7 @@ import {
   verifyAuditLedgerChainRemote,
 } from "@/services/vendor-audit-support-service";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
+import { errorText } from "@/lib/error-text";
 
 const CATEGORIES: { value: VendorAdminAuditActionCategoryV1 | "all"; labelKey: string }[] = [
   { value: "all", labelKey: "audit.ledger.filter.all" },
@@ -63,7 +64,7 @@ export function AuditLedgerPanel() {
         setDetail(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load audit ledger.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }
@@ -100,31 +101,28 @@ export function AuditLedgerPanel() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to export ledger CSV.");
+      setError(errorText(err));
     }
   };
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-secondary">
-        {t(
-          "audit.ledger.intro",
-          "Append-only ledger with per-record integrity hash and hash-chain linkage. Server persists and verifies.",
-        )}
+        {t("audit.ledger.intro")}
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <Label className="text-xs">{t("audit.ledger.search", "Search")}</Label>
+          <Label className="text-xs">{t("audit.ledger.search")}</Label>
           <Input
             className="h-9 w-56 font-mono text-xs"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("audit.ledger.searchPh", "record, actor, correlation, tenant…")}
+            placeholder={t("audit.ledger.searchPh")}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label className="text-xs">{t("audit.ledger.category", "Category")}</Label>
+          <Label className="text-xs">{t("audit.ledger.category")}</Label>
           <Select
             value={category}
             onValueChange={(v) => setCategory(v as VendorAdminAuditActionCategoryV1 | "all")}
@@ -142,22 +140,22 @@ export function AuditLedgerPanel() {
           </Select>
         </div>
         <Button type="button" size="sm" variant="secondary" onClick={() => void runChainVerify()}>
-          {t("audit.ledger.verifyChain", "Verify sample chain")}
+          {t("audit.ledger.verifyChain")}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={() => void onExport()}>
-          {t("audit.ledger.export", "Export CSV")}
+          {t("audit.ledger.export")}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={() => void loadRows()}>
-          {t("audit.ledger.refresh", "Refresh")}
+          {t("audit.ledger.refresh")}
         </Button>
         {chainStatus === "checking" ? (
-          <span className="text-xs text-text-muted">{t("audit.ledger.checking", "Checking…")}</span>
+          <span className="text-xs text-text-muted">{t("audit.ledger.checking")}</span>
         ) : null}
         {chainStatus === "ok" ? (
-          <span className="text-xs text-green-600">{t("audit.ledger.chainOk", "Chain OK")}</span>
+          <span className="text-xs text-green-600">{t("audit.ledger.chainOk")}</span>
         ) : null}
         {chainStatus === "fail" ? (
-          <span className="text-xs text-destructive">{t("audit.ledger.chainFail", "Chain / integrity issue")}</span>
+          <span className="text-xs text-destructive">{t("audit.ledger.chainFail")}</span>
         ) : null}
       </div>
       {error ? (
@@ -170,13 +168,13 @@ export function AuditLedgerPanel() {
         <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
             <tr>
-              <th className="px-3 py-2">{t("audit.ledger.col.seq", "Seq")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.when", "When")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.actor", "Actor")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.action", "Action")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.category", "Category")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.integrity", "Integrity")}</th>
-              <th className="px-3 py-2">{t("audit.ledger.col.drill", "Forensics")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.seq")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.when")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.actor")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.action")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.category")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.integrity")}</th>
+              <th className="px-3 py-2">{t("audit.ledger.col.drill")}</th>
             </tr>
           </thead>
           <tbody>
@@ -184,8 +182,8 @@ export function AuditLedgerPanel() {
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={7} className="px-3 py-4 text-center text-sm text-text-muted">
                     {loading
-                      ? t("audit.ledger.loading", "Loading audit records…")
-                      : t("audit.ledger.empty", "No audit records for this filter.")}
+                      ? t("audit.ledger.loading")
+                      : t("audit.ledger.empty")}
                   </td>
                 </tr>
               ) : null}
@@ -201,7 +199,7 @@ export function AuditLedgerPanel() {
                   </td>
                   <td className="px-3 py-2">
                     <Button type="button" size="sm" variant="outline" onClick={() => setDetail(row)}>
-                      {t("audit.ledger.open", "Open")}
+                      {t("audit.ledger.open")}
                     </Button>
                   </td>
                 </tr>
@@ -213,32 +211,32 @@ export function AuditLedgerPanel() {
       <Sheet open={detail !== null} onOpenChange={(o) => !o && setDetail(null)}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>{t("audit.ledger.detail.title", "Audit record")}</SheetTitle>
+            <SheetTitle>{t("audit.ledger.detail.title")}</SheetTitle>
             <SheetDescription className="font-mono text-xs">{detail?.record_id}</SheetDescription>
           </SheetHeader>
           {detail ? (
             <div className="mt-4 space-y-3 text-xs">
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.correlation", "Correlation")}</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.correlation")}</p>
                 <p className="font-mono">{detail.correlation_id}</p>
               </div>
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.reason", "Reason / approval")}</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.reason")}</p>
                 <p>
                   {detail.reason_code ?? "—"} · {detail.approval_correlation_id ?? "—"}
                 </p>
               </div>
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.snapshots", "Before / after snapshot SHA-256")}</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.snapshots")}</p>
                 <p className="break-all font-mono text-[10px]">{detail.before_snapshot_sha256 ?? "—"}</p>
                 <p className="break-all font-mono text-[10px]">{detail.after_snapshot_sha256 ?? "—"}</p>
               </div>
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.chainPrev", "Chain previous hash")}</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.chainPrev")}</p>
                 <p className="break-all font-mono text-[10px]">{detail.chain_prev_hash ?? "—"}</p>
               </div>
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.refs", "Entity refs (forensic drill-through)")}</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.refs")}</p>
                 <ul className="mt-1 list-inside list-disc font-mono">
                   {detail.entity_refs.tenant_id ? <li>tenant: {detail.entity_refs.tenant_id}</li> : null}
                   {detail.entity_refs.entitlement_id ? <li>entitlement: {detail.entity_refs.entitlement_id}</li> : null}
@@ -252,8 +250,8 @@ export function AuditLedgerPanel() {
                 </ul>
               </div>
               <div>
-                <p className="text-text-muted">{t("audit.ledger.detail.severityHint", "Operational severity (linked alerts)")}</p>
-                <p className="text-text-secondary">Not provided by audit API for single records.</p>
+                <p className="text-text-muted">{t("audit.ledger.detail.severityHint")}</p>
+                <p className="text-text-secondary">{t("audit.ledger.detail.severityNotProvided")}</p>
               </div>
             </div>
           ) : null}

@@ -86,7 +86,7 @@ describe("MachineActivationPanel actions", () => {
   it("slot release asks for a reason and a machine_trust_change code, then calls the API", async () => {
     renderWithConsole(<MachineActivationPanel />);
     const row = await rowOf(active.machine_id);
-    await userEvent.click(within(row).getByRole("button", { name: "Slot release" }));
+    await userEvent.click(within(row).getByRole("button", { name: "machines.action.slotRelease" }));
     await confirmWithReason("machine scrapped", "machines.dialog.release.confirm");
     await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
@@ -103,7 +103,7 @@ describe("MachineActivationPanel actions", () => {
   it("rebind needs the replacement fingerprint before it can be confirmed", async () => {
     renderWithConsole(<MachineActivationPanel />);
     const row = await rowOf(active.machine_id);
-    await userEvent.click(within(row).getByRole("button", { name: "Rebind" }));
+    await userEvent.click(within(row).getByRole("button", { name: "machines.action.rebind" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "laptop replaced");
     const confirm = within(dialog).getByRole("button", { name: "machines.dialog.rebind.confirm" });
@@ -123,7 +123,7 @@ describe("MachineActivationPanel actions", () => {
   it("policy refresh is audited with a reason and needs no step-up", async () => {
     renderWithConsole(<MachineActivationPanel />);
     const row = await rowOf(active.machine_id);
-    await userEvent.click(within(row).getByRole("button", { name: "Policy refresh" }));
+    await userEvent.click(within(row).getByRole("button", { name: "machines.action.policyRefresh" }));
     await confirmWithReason("edition changed", "machines.dialog.refresh.confirm");
     await waitFor(() => expect(requestMachinePolicyRefresh).toHaveBeenCalledWith("tenant_1", active.machine_id, "edition changed"));
     expect(requestStepUp).not.toHaveBeenCalled();
@@ -133,15 +133,15 @@ describe("MachineActivationPanel actions", () => {
     renderWithConsole(<MachineActivationPanel />);
     const row = await rowOf(released.machine_id);
     expect(within(row).getByText("machines.slotReleased")).toBeInTheDocument();
-    expect(within(row).queryByRole("button", { name: "Slot release" })).not.toBeInTheDocument();
-    expect(within(row).queryByRole("button", { name: "Policy refresh" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "machines.action.slotRelease" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "machines.action.policyRefresh" })).not.toBeInTheDocument();
   });
 
   it("a server refusal stays in the dialog", async () => {
     vi.mocked(requestMachinePolicyRefresh).mockRejectedValueOnce(new Error("slot not held (409)"));
     renderWithConsole(<MachineActivationPanel />);
     const row = await rowOf(active.machine_id);
-    await userEvent.click(within(row).getByRole("button", { name: "Policy refresh" }));
+    await userEvent.click(within(row).getByRole("button", { name: "machines.action.policyRefresh" }));
     await confirmWithReason("edition changed", "machines.dialog.refresh.confirm");
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("slot not held (409)");
   });

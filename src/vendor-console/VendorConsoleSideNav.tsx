@@ -87,7 +87,7 @@ export function VendorConsoleSideNav() {
   return (
     <nav
       className="flex w-52 shrink-0 flex-col gap-0.5 border-r border-surface-border bg-surface-0 p-2"
-      aria-label={t("nav.aria", "Vendor console sections")}
+      aria-label={t("nav.aria")}
     >
       {NAV.filter((item) => can(item.permission)).map((item) => (
         <NavLink

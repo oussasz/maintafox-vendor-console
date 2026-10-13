@@ -17,21 +17,18 @@ export function UnauthorizedPage() {
         </div>
 
         <h1 className="text-xl font-semibold text-text-primary">
-          {t("unauthorized.title", "Access denied")}
+          {t("unauthorized.title")}
         </h1>
 
         <p className="mt-2 text-sm text-text-secondary">
-          {t(
-            "unauthorized.message",
-            "You do not have the necessary permissions to access this page. Ask an administrator to update your role.",
-          )}
+          {t("unauthorized.message")}
         </p>
 
         <Link
           to="/vendor-console"
           className="mt-6 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary/90"
         >
-          {t("unauthorized.backToDashboard", "Back to vendor console")}
+          {t("unauthorized.backToDashboard")}
         </Link>
       </div>
     </div>

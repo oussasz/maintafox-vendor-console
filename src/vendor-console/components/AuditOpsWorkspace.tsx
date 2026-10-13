@@ -12,20 +12,17 @@ export function AuditOpsWorkspace() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("audit.pageTitle", "Audit, support & hardening")}</h1>
+        <h1 className="text-xl font-semibold">{t("audit.pageTitle")}</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "audit.pageBody",
-            "Immutable audit trail, support workflows, and operational safeguards. Requires audit.view; mutations are enforced server-side.",
-          )}
+          {t("audit.pageBody")}
         </p>
       </header>
 
       <Tabs defaultValue="ledger" className="w-full">
         <TabsList className="flex w-full flex-wrap justify-start gap-1">
-          <TabsTrigger value="ledger">{t("audit.tabs.ledger", "Audit ledger")}</TabsTrigger>
-          <TabsTrigger value="support">{t("audit.tabs.support", "Support")}</TabsTrigger>
-          <TabsTrigger value="harden">{t("audit.tabs.harden", "Hardening & drills")}</TabsTrigger>
+          <TabsTrigger value="ledger">{t("audit.tabs.ledger")}</TabsTrigger>
+          <TabsTrigger value="support">{t("audit.tabs.support")}</TabsTrigger>
+          <TabsTrigger value="harden">{t("audit.tabs.harden")}</TabsTrigger>
         </TabsList>
         <TabsContent value="ledger" className="mt-4">
           <AuditLedgerPanel />

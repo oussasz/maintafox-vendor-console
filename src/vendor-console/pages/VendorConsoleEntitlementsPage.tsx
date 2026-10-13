@@ -20,12 +20,9 @@ export function VendorConsoleEntitlementsPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{t("entitlements.pageTitle", "Entitlements")}</h1>
+          <h1 className="text-xl font-semibold">{t("entitlements.pageTitle")}</h1>
           <p className="mt-1 text-sm text-text-secondary">
-            {t(
-              "entitlements.pageBody",
-              "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes.",
-            )}
+            {t("entitlements.pageBody")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -34,7 +31,7 @@ export function VendorConsoleEntitlementsPage() {
             disabled={!capabilities.canIssueKey}
             onClick={() => panelRef.current?.openIssueDialog()}
           >
-            {t("entitlement.addKey", "Add/Issue key")}
+            {t("entitlement.addKey")}
           </Button>
           <Button
             type="button"
@@ -43,8 +40,8 @@ export function VendorConsoleEntitlementsPage() {
             onClick={() => void panelRef.current?.refreshLicenses()}
           >
             {capabilities.loadingLicenses
-              ? t("entitlement.refreshing", "Refreshing…")
-              : t("entitlement.refresh", "Refresh")}
+              ? t("entitlement.refreshing")
+              : t("entitlement.refresh")}
           </Button>
         </div>
       </header>

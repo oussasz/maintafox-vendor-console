@@ -47,7 +47,8 @@
     "ok": "OK",
     "yes": "Yes",
     "no": "No",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "retry": "Retry"
   },
   "status": {
     "active": "Active",
@@ -111,7 +112,7 @@
     "dangerousAction": "This is a sensitive action and requires confirmation. Continue?"
   },
   "pagination": {
-    "showing": "Showing {{from}}\u2013{{to}} of {{total}}",
+    "showing": "Showing {{from}}–{{to}} of {{total}}",
     "firstPage": "First page",
     "lastPage": "Last page",
     "nextPage": "Next page",
@@ -133,5 +134,75 @@
     "hours_ago_other": "{{count}} hours ago",
     "days_ago_one": "1 day ago",
     "days_ago_other": "{{count}} days ago"
+  },
+  "errors": {
+    "sessionEnded": "Your session has ended. Sign in again.",
+    "network": "The control API cannot be reached. Check the connection and try again.",
+    "invalidResponse": "The control API sent an unexpected answer. Refresh the page; if it persists, report it.",
+    "requestFailed": "The request failed (HTTP {{status}}).",
+    "unexpected": "Something went wrong. Try again.",
+    "clipboard": "Copy to the clipboard failed. Use the export instead.",
+    "guard": {
+      "missing_reason_code": "A reason is required for this action.",
+      "missing_step_up_token": "This action needs your authenticator code.",
+      "invalid_or_expired_step_up_token": "The authenticator confirmation expired. Confirm again.",
+      "step_up_action_kind_mismatch": "The authenticator confirmation was for another action. Confirm again."
+    },
+    "codes": {
+      "tenant_conflict": "This tenant slug is already taken. Choose another slug.",
+      "idempotency_key_conflict": "This request was already processed with different inputs. Submit it again.",
+      "slot_limit_reached": "Activation slot limit reached for this licence.",
+      "no_policy_history": "No earlier policy to roll back to.",
+      "license_revoked": "This licence key is revoked and cannot be changed.",
+      "license_expired": "This licence key has expired.",
+      "license_not_found": "Licence key not found.",
+      "tenant_not_found": "Customer not found.",
+      "tenant_already_suspended": "This customer is already suspended.",
+      "tenant_not_suspended": "This customer is not suspended.",
+      "edition_version_conflict": "Another operator changed this edition. Refresh and try again.",
+      "edition_in_use": "This edition is still assigned to customers (including inactive ones).",
+      "edition_id_taken": "An edition with this id already exists.",
+      "edition_system_immutable": "Built-in editions cannot be changed.",
+      "edition_not_found": "Edition not found.",
+      "activation_not_found": "Machine activation not found.",
+      "slot_not_held": "This machine does not hold a slot.",
+      "same_fingerprint": "The new machine fingerprint is the same as the current one.",
+      "target_fingerprint_in_use": "The new machine fingerprint is already activated.",
+      "resync_already_requested": "A resynchronisation is already waiting for this device.",
+      "confirmation_mismatch": "The typed confirmation does not match.",
+      "governance_unchanged": "This cohort is already in that state.",
+      "permission_denied": "Your role does not allow this action.",
+      "privileged_action_denied": "This action was refused.",
+      "rate_limited": "Too many attempts. Wait a moment and try again.",
+      "invalid_mfa_code": "The authenticator code is not valid.",
+      "last_owner": "The last active owner cannot be removed or demoted.",
+      "cannot_change_own_access": "You cannot change your own role or access.",
+      "operator_email_taken": "An operator with this email already exists.",
+      "operator_not_found": "Operator not found.",
+      "password_unchanged": "The new password must differ from the current one.",
+      "slickpay_not_configured": "SlickPay is not configured on the server.",
+      "payment_order_not_found": "Payment not found.",
+      "ticket_not_found": "Support ticket not found.",
+      "bundle_not_found": "Diagnostic bundle not found.",
+      "validation_error": "Some fields are not valid.",
+      "invalid_body": "Some fields are not valid.",
+      "internal_error": "The server failed to process the request (HTTP {{status}})."
+    }
+  },
+  "permissions": {
+    "loadError": {
+      "title": "Unable to verify permissions",
+      "config": "The console is not configured with the control API address (VITE_ADMIN_API_BASE_URL).",
+      "network": "The control API cannot be reached. Check the connection and try again.",
+      "http": "The control API refused to load your permissions (HTTP {{status}}).",
+      "invalid": "The control API sent an unreadable permission list."
+    }
+  },
+  "language": {
+    "label": "Language",
+    "names": {
+      "en": "English",
+      "fr": "Français"
+    }
   }
 }

@@ -16,6 +16,8 @@ import {
   verifyTotp,
   type TotpEnrolment,
 } from "@/services/vendor-auth-service";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { errorText } from "@/lib/error-text";
 
 type Step =
   | { kind: "credentials" }
@@ -75,7 +77,7 @@ export function LoginPage() {
       return t("vendorLogin.error.generic", { code: err.code, status: err.status });
     }
     if (err instanceof TypeError) return t("vendorLogin.error.network");
-    return t("vendorLogin.error.generic", { code: err instanceof Error ? err.message : String(err), status: "-" });
+    return t("vendorLogin.error.generic", { code: errorText(err), status: "-" });
   };
 
   /** An expired MFA step cannot continue: back to the password form, with the reason shown. */
@@ -177,7 +179,8 @@ export function LoginPage() {
   ) : null;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-surface-0 px-4">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface-0 px-4">
+      <LanguageSwitcher className="absolute right-4 top-4" />
       <div className="w-full max-w-md rounded-lg border border-surface-border bg-surface-1 p-6 shadow-panel">
         {step.kind === "credentials" ? (
           <form onSubmit={onCredentials}>

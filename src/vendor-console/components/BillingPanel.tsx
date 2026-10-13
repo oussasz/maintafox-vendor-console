@@ -16,6 +16,7 @@ import { listTenants, type ControlTenant } from "@/services/license-control-serv
 
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OperatorActionDialog } from "./OperatorActionDialog";
+import { errorText } from "@/lib/error-text";
 
 /** Licences ending within this many days are highlighted. */
 const RENEWAL_WARNING_DAYS = 30;
@@ -53,7 +54,7 @@ export function BillingPanel() {
         setTenants(list);
         setTenantId((current) => current || (list[0]?.id ?? ""));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(errorText(err)));
   }, []);
 
   const load = useCallback(async (id: string) => {
@@ -63,7 +64,7 @@ export function BillingPanel() {
     try {
       setSub(await getSubscription(id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }

@@ -30,6 +30,7 @@ import { getSessionInfo } from "@/services/vendor-auth-service";
 import { useVendorConsole } from "../VendorConsoleContext";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OperatorActionDialog } from "./OperatorActionDialog";
+import { errorText } from "@/lib/error-text";
 
 /** Same minimum as the API (routes/auth.ts OPERATOR_PASSWORD_MIN_LENGTH). */
 const OPERATOR_PASSWORD_MIN_LENGTH = 12;
@@ -69,7 +70,7 @@ export function OperatorsPanel() {
       setOperators(list);
       setSelfId(info.user.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }

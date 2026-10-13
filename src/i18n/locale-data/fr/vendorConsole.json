@@ -36,7 +36,10 @@
     "ops": {
       "openAlerts": "Alertes ouvertes",
       "worst": "Pire : {{s}}",
-      "dlq": "DLQ (agrégé)"
+      "dlq": "DLQ (agrégé)",
+      "empty": "Aucune alerte d'exploitation active.",
+      "refresh": "Actualiser",
+      "refreshing": "Actualisation…"
     },
     "drill": {
       "customers": "Ouvrir clients",
@@ -84,7 +87,89 @@
     "previewAudit": "Prévisualiser charge utile d'audit",
     "submit": "Soumettre (VPS)",
     "pageTitle": "Licences",
-    "pageBody": "Cycle de vie gouverné, aperçu signé et approbation pour actions destructives."
+    "pageBody": "Cycle de vie gouverné, aperçu signé et approbation pour actions destructives.",
+    "addKey": "Ajouter / émettre une clé",
+    "confirmRevokeBody": "Révoque la clé {{id}} et bloque les nouvelles activations. Les activations existantes sont invalidées selon la politique. L'action est conservée pour l'audit.",
+    "confirmRevokeTitle": "Révoquer la clé de licence ?",
+    "editHint": "Modifier la limite de postes, le canal ou l'échéance. Une justification de l'opérateur est requise pour l'audit.",
+    "editKey": "Mettre à jour la clé de licence",
+    "issueHint": "Émettre une nouvelle clé de licence pour le tenant sélectionné. Cette action crée une vraie clé dans l'API du plan de contrôle.",
+    "listHint": "Trouvez et inspectez rapidement les clés. Chaque ligne ouvre toutes les métadonnées de la clé et ses actions de cycle de vie.",
+    "listTitle": "Clés de licence",
+    "loading": "Chargement des clés de licence…",
+    "noLicenses": "Aucune clé émise pour ce tenant.",
+    "noLicensesHint": "Utilisez « Ajouter / émettre une clé » dans la barre ci-dessus pour créer la première clé de ce tenant.",
+    "noMatches": "Aucune clé ne correspond aux filtres.",
+    "noTenants": "Aucun tenant disponible",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "search": "Rechercher des clés",
+    "searchPlaceholder": "Rechercher par clé, id, tenant",
+    "sortBy": "Trier par",
+    "sortDirection": "Ordre de tri",
+    "stateFilter": "Filtre d'état",
+    "tenant": "Tenant",
+    "validation": {
+      "maxMachines": "La limite de postes doit être un nombre entre 1 et 1000.",
+      "expiryInvalid": "L'échéance doit être une date et heure valide.",
+      "expiryPast": "L'échéance ne peut pas être dans le passé.",
+      "reasonCode": "Le code motif doit contenir au moins 2 caractères.",
+      "rationale": "La justification de l'opérateur doit contenir au moins 8 caractères."
+    },
+    "packetNote": "À transmettre de façon sécurisée au seul contact d’intégration du client.",
+    "packetExported": "Dossier d’intégration exporté pour {{id}}.",
+    "selectTenantFirst": "Sélectionnez d’abord un tenant.",
+    "selectKeyFirst": "Sélectionnez d’abord une clé.",
+    "alreadyRevoked": "Cette clé est déjà révoquée.",
+    "selectTenantHint": "Sélectionnez un tenant pour émettre ou gérer ses clés de licence.",
+    "state": {
+      "all": "Toutes",
+      "active": "Active",
+      "expired": "Expirée",
+      "revoked": "Révoquée"
+    },
+    "col": {
+      "issuedAt": "Émise le",
+      "expiry": "Échéance",
+      "slots": "Limite de postes",
+      "keyId": "ID de clé",
+      "licenseKey": "Clé de licence",
+      "issued": "Émise",
+      "state": "État",
+      "slotsShort": "Postes",
+      "actions": "Actions",
+      "channel": "Canal"
+    },
+    "retryTenants": "Recharger les tenants",
+    "retryKeys": "Recharger les clés",
+    "editKeyTitle": "Modifier la clé",
+    "revokedNotEditable": "Une clé révoquée ne peut pas être modifiée",
+    "revokeKey": "Révoquer la clé",
+    "expiryOptional": "Échéance (facultative)",
+    "rationale": "Justification de l’opérateur",
+    "completeBeforeSaving": "Complétez les points suivants avant d’enregistrer :",
+    "updated": "La clé {{id}} a été mise à jour.",
+    "revokeReason": "Motif de révocation (conservé dans le journal d’audit)",
+    "revokeReasonPh": "ex. : rotation de clé, revue de sécurité",
+    "revoked": "La clé {{id}} a été révoquée.",
+    "revoking": "Révocation…",
+    "noTenantSelected": "Aucun tenant sélectionné",
+    "expiryHint": "Pré-remplie à environ 30 jours. Videz le champ pour aucune échéance.",
+    "reasonCodeOptional": "Code motif de l’opérateur (facultatif)",
+    "rationalePh": "Expliquez pourquoi cette clé est émise.",
+    "completeBeforeIssuing": "Complétez les points suivants avant d’émettre :",
+    "issued": "La clé {{id}} a été émise.",
+    "issuing": "Émission…",
+    "issueKey": "Émettre la clé",
+    "detailTitle": "Détail de la clé de licence",
+    "detailBody": "Consultez les métadonnées de la clé, exportez le dossier d’intégration ou révoquez. La colonne Actions de la liste permet de modifier ou de révoquer.",
+    "selectKeyDetail": "Sélectionnez une clé pour voir son détail.",
+    "handoffHint": "Utilisez la copie ou l’export ci-dessous pour remettre la clé en sécurité au contact d’intégration du client.",
+    "copied": "Clé d’activation copiée pour {{id}}.",
+    "copying": "Copie…",
+    "copyKey": "Copier la clé d’activation",
+    "exportPacket": "Exporter le dossier d’intégration",
+    "actionsHint": "Modifiez ou révoquez les clés depuis la colonne Actions de la liste. Une clé révoquée reste dans la piste d’audit."
   },
   "customers": {
     "title": "Clients",
@@ -102,7 +187,8 @@
       "edition": "Édition",
       "cohort": "Cohorte",
       "channel": "Canal",
-      "actions": "Actions"
+      "actions": "Actions",
+      "created": "Créé le"
     },
     "bulk": {
       "title": "Réaffectation de canal en masse (simulation)",
@@ -130,7 +216,79 @@
       "title": "Lever la suspension ?",
       "body": "Les appareils de « {{name}} » peuvent de nouveau synchroniser ; chacun récupère une politique à jour à sa prochaine vérification de licence.",
       "confirm": "Lever la suspension"
-    }
+    },
+    "addCompany": "Ajouter un client / une société",
+    "addDescription": "Créer une nouvelle société cliente. Les champs sont validés avant l'envoi à l'API du plan de contrôle.",
+    "addFirstCompany": "Ajouter le premier client / la première société",
+    "channelFilter": "Filtre de canal",
+    "clearFilters": "Effacer les filtres",
+    "companyName": "Nom de la société",
+    "confirmDelete": "Supprimer définitivement",
+    "confirmDeleteBody": "Supprime définitivement « {{name}} » ({{slug}}) ainsi que toutes ses clés de licence et activations. Action irréversible.",
+    "confirmDeleteTitle": "Supprimer le client ?",
+    "creatingTenant": "Création…",
+    "deleteTenant": "Supprimer le tenant",
+    "deletingTenant": "Suppression…",
+    "editCompany": "Modifier le client / la société",
+    "editDescription": "Mettre à jour les métadonnées du tenant. L'identifiant doit rester unique parmi tous les clients.",
+    "editTenant": "Modifier le tenant",
+    "empty": "Aucun client trouvé.",
+    "filterAllChannels": "Tous les canaux",
+    "listHint": "Recherchez, filtrez, triez et sélectionnez un client avant de modifier les paramètres du tenant.",
+    "listTitle": "Liste des clients",
+    "loading": "Chargement des clients…",
+    "noResults": "Aucun client ne correspond aux filtres.",
+    "refreshTenants": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer",
+    "saveChanges": "Enregistrer les modifications",
+    "savingTenant": "Enregistrement…",
+    "searchLabel": "Rechercher des clients",
+    "searchPlaceholder": "Rechercher par identifiant, société, id, cohorte",
+    "selectTenantFirst": "Sélectionnez une ligne client pour voir les métadonnées et politiques du tenant.",
+    "sortAsc": "Croissant",
+    "sortBy": "Trier par",
+    "sortDesc": "Décroissant",
+    "sortDirection": "Ordre de tri",
+    "tenantChannel": "Canal de mise à jour du tenant",
+    "tenantName": "Nom affiché du tenant",
+    "validation": {
+      "slugRequired": "L'identifiant est obligatoire.",
+      "slugFormat": "Utilisez uniquement des minuscules, des chiffres et des tirets.",
+      "slugLength": "L'identifiant doit contenir entre 3 et 64 caractères.",
+      "nameRequired": "Le nom de la société est obligatoire.",
+      "nameLength": "Le nom de la société doit contenir entre 2 et 120 caractères.",
+      "cohortRequired": "La cohorte de déploiement est obligatoire.",
+      "cohortLength": "La cohorte de déploiement doit contenir 64 caractères au plus."
+    },
+    "updatedDone": "Le client « {{name}} » a été mis à jour.",
+    "addedDone": "Le client « {{name}} » a été ajouté.",
+    "deletedDone": "Le client « {{name}} » a été supprimé.",
+    "policy": {
+      "title": "Mises à jour imposées",
+      "body": "Imposez une version minimale de l’application de bureau par tenant ou par cohorte. Le mode urgence bloque les opérations jusqu’à la mise à jour.",
+      "loading": "Chargement de la politique…",
+      "retry": "Recharger la politique",
+      "selectTenant": "Sélectionnez un tenant pour gérer ses mises à jour imposées.",
+      "auditReason": "Motif d’audit (conservé dans le journal d’audit)",
+      "tenantOverride": "Dérogation du tenant ({{slug}})",
+      "minVersion": "Version minimale de l’application",
+      "mode": "Mode",
+      "modes": {
+        "inherit": "Hériter de la politique de la cohorte",
+        "off": "Désactivé",
+        "required": "Obligatoire (version minimale)",
+        "emergency": "Urgence (bloque jusqu’à la mise à jour)"
+      },
+      "userReason": "Motif affiché avec la demande de mise à jour",
+      "needReason": "Saisissez un motif d’audit ci-dessus pour activer ces actions (votre code d’authentification est demandé à l’application).",
+      "applyTenant": "Appliquer la politique du tenant",
+      "applyCohort": "Appliquer la politique de la cohorte",
+      "rollbackTenant": "Revenir à la politique précédente du tenant",
+      "rollbackCohort": "Revenir à la politique précédente de la cohorte",
+      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})"
+    },
+    "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :"
   },
   "editions": {
     "core": "Core",
@@ -245,7 +403,38 @@
         "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
         "confirm": "Demander le rafraîchissement"
       }
-    }
+    },
+    "activationClaim": "Revendication d'activation (API réelle)",
+    "activationClaimHint": "Vérifie que le point d'activation du plan de contrôle accepte une clé et une empreinte de machine.",
+    "empty": "Aucune machine activée pour ce tenant pour l'instant.",
+    "extendGrace": "Prolonger la grâce (+{{hours}} h)",
+    "loading": "Chargement des activations de machines…",
+    "noTenants": "Aucun tenant",
+    "refresh": "Actualiser l'état des machines du tenant",
+    "refreshing": "Actualisation…",
+    "selectedTenant": "Tenant sélectionné",
+    "tenant": "Tenant",
+    "toggleTrustRule": "Basculer la déconnexion en cas de révocation de confiance",
+    "graceExtended": "La période de grâce hors ligne est maintenant de {{hours}} h.",
+    "trustRuleUpdated": "Comportement de révocation de confiance mis à jour.",
+    "policyDialog": {
+      "extendGrace": {
+        "title": "Prolonger la période de grâce hors ligne ?",
+        "body": "Les appareils de ce client pourront rester hors ligne {{hours}} heures de plus avant de devoir joindre le serveur.",
+        "confirm": "Prolonger"
+      },
+      "toggleTrust": {
+        "title": "Changer l’effet d’une révocation de confiance ?",
+        "body": "Bascule entre une déconnexion immédiate et une déconnexion à la prochaine vérification de licence lorsqu’on révoque la confiance d’un appareil.",
+        "confirm": "Changer"
+      }
+    },
+    "licenseKey": "Clé de licence",
+    "fingerprint": "Empreinte de la machine",
+    "appVersion": "Version de l’application",
+    "claimDone": "Activation revendiquée ; données des machines actualisées.",
+    "claiming": "Revendication…",
+    "claim": "Revendiquer l’activation"
   },
   "sync": {
     "title": "Synchronisation",
@@ -281,7 +470,8 @@
         "queue": "File",
         "sev": "Gravité",
         "summary": "Résumé"
-      }
+      },
+      "empty": "La file de réparation est vide."
     },
     "anomalies": {
       "title": "Anomalies politique heartbeat impactant la sync",
@@ -290,7 +480,8 @@
         "machine": "Machine",
         "code": "Code",
         "detected": "Détecté"
-      }
+      },
+      "empty": "Aucune anomalie de heartbeat détectée."
     },
     "drill": {
       "title": "Détail des échecs",
@@ -325,7 +516,12 @@
         "resync_completed": "Resynchro faite",
         "operator_action": "Opérateur"
       }
-    }
+    },
+    "empty": "Aucune télémétrie de synchronisation pour l'instant.",
+    "loading": "Chargement de la télémétrie de synchronisation…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer"
   },
   "rollouts": {
     "title": "Déploiements",
@@ -347,13 +543,15 @@
       "pause": "Mettre en pause",
       "recall": "Rappel",
       "resume": "Reprendre",
-      "recalledVersion": "Version rappelée : {{version}}"
+      "recalledVersion": "Version rappelée : {{version}}",
+      "empty": "Aucune cohorte disponible."
     },
     "diagnostics": {
       "title": "Diagnostics release (24h)",
       "hint": "Signature, migration et heartbeats post-déploiement dans une même vue.",
       "count": "{{n}} événements",
-      "last": "Dernier"
+      "last": "Dernier",
+      "empty": "Aucun diagnostic de déploiement disponible."
     },
     "governance": {
       "deviceNotice": "La pause et le rappel sont enregistrés sur le serveur, inscrits au journal d'audit et transmis à chaque appareil de la cohorte avec sa politique. Les postes de travail agiront dessus quand le module de mise à jour (phase 5 du plan) existera : aujourd'hui ils n'installent pas de mises à jour d'eux-mêmes, donc rien ne change encore pour eux.",
@@ -378,7 +576,11 @@
         "confirm": "Rappeler",
         "versionLabel": "Version à rappeler (ex. 1.4.2)"
       }
-    }
+    },
+    "loading": "Chargement de la télémétrie des déploiements…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer"
   },
   "health": {
     "title": "Santé plateforme",
@@ -386,7 +588,17 @@
     "pageTitle": "Santé plateforme et incidents",
     "pageBody": "Télémétrie unifiée, pression infra et propriété des alertes. Perçage tenant-safe.",
     "services": {
-      "title": "État des services"
+      "title": "État des services",
+      "empty": "Aucune télémétrie de service disponible.",
+      "names": {
+        "api": "API",
+        "workers": "Tâches de fond",
+        "postgresql": "PostgreSQL",
+        "redis": "Redis",
+        "object_storage": "Stockage objet",
+        "admin_ui": "Console d'administration",
+        "backups": "Sauvegardes"
+      }
     },
     "pressure": {
       "title": "Pression infrastructure",
@@ -396,14 +608,19 @@
         "value": "Valeur",
         "threshold": "Indication seuil",
         "trend": "Tendance"
-      }
+      },
+      "empty": "Aucune mesure de charge de l'infrastructure disponible."
     },
     "drill": {
       "title": "Vues opérationnelles liées",
       "body": "Liens d'incident tenant-safe vers sync et déploiements sans données client hors périmètre.",
       "sync": "Ouvrir santé sync",
       "rollouts": "Ouvrir déploiements"
-    }
+    },
+    "loading": "Chargement de la télémétrie de la plateforme…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer"
   },
   "ops": {
     "alerts": {
@@ -414,7 +631,8 @@
       "owner": "Propriétaire (id acteur)",
       "ack": "Accuser réception",
       "note": "Ajouter une note",
-      "readOnly": "Géré par le workflow d'alerte amont ; ce panneau est en lecture seule."
+      "readOnly": "Géré par le workflow d'alerte amont ; ce panneau est en lecture seule.",
+      "empty": "Aucune alerte dans cette vue."
     }
   },
   "audit": {
@@ -463,8 +681,13 @@
         "snapshots": "SHA-256 avant / après",
         "chainPrev": "Hachage chaîne précédente",
         "refs": "Références entités (perçage)",
-        "severityHint": "Gravité opérationnelle (alertes liées)"
-      }
+        "severityHint": "Gravité opérationnelle (alertes liées)",
+        "severityNotProvided": "Non fourni par l'API d'audit pour un enregistrement isolé."
+      },
+      "empty": "Aucun enregistrement d'audit pour ce filtre.",
+      "export": "Exporter en CSV",
+      "loading": "Chargement des enregistrements d'audit…",
+      "refresh": "Actualiser"
     },
     "support": {
       "intro": "Tickets structurés, paquets diagnostics avec rédaction, réconciliation hors ligne, liens audit.",
@@ -477,8 +700,19 @@
           "sev": "Gravité",
           "module": "Module",
           "sync": "Indic. sync",
-          "audit": "IDs audit liés"
-        }
+          "audit": "IDs audit liés",
+          "intervene": "Intervention"
+        },
+        "empty": "Aucun ticket de support pour l'instant.",
+        "export": "Exporter en CSV",
+        "intervene": "Consigner une intervention",
+        "loading": "Chargement des tickets…",
+        "notePh": "Note d'intervention",
+        "refresh": "Actualiser",
+        "saving": "Enregistrement…",
+        "noteTooShort": "La note d'intervention doit contenir au moins 3 caractères.",
+        "intervened": "Intervention consignée pour {{id}}.",
+        "exported": "Tickets de support exportés (CSV)."
       },
       "bundle": {
         "title": "Paquets diagnostics",
@@ -492,7 +726,8 @@
           "size": "Taille",
           "ticket": "Ticket",
           "download": "Téléchargement"
-        }
+        },
+        "downloadStarted": "Téléchargement du lot de diagnostic {{id}} lancé (enregistré sous {{record}})."
       },
       "offline": {
         "title": "Réconciliation origine hors ligne",
@@ -501,11 +736,19 @@
           "vendor": "Ticket fournisseur",
           "sync": "État sync",
           "dup": "Doublon de"
-        }
+        },
+        "empty": "Aucune ligne de rapprochement hors ligne.",
+        "loading": "Chargement des lignes de rapprochement…"
       },
       "exports": {
         "title": "Types d'export conformité",
-        "syncLink": "Ouvrir preuves sync"
+        "syncLink": "Ouvrir preuves sync",
+        "kinds": {
+          "entitlement_history": "Historique des licences",
+          "machine_state_timeline": "Chronologie de l'état des machines",
+          "rollout_actions": "Actions de déploiement",
+          "support_resolution_chronology": "Chronologie de résolution du support"
+        }
       },
       "newTicket": {
         "title": "Ouvrir un ticket",
@@ -513,7 +756,9 @@
         "severity": "Gravité",
         "module": "Module (ex. sync)",
         "summary": "Quel est le problème ?",
-        "submit": "Ouvrir le ticket"
+        "submit": "Ouvrir le ticket",
+        "incomplete": "Choisissez un client et renseignez le module (2 caractères ou plus) et le résumé (3 caractères ou plus).",
+        "opened": "Ticket {{id}} ouvert."
       }
     },
     "harden": {
@@ -521,15 +766,20 @@
       "guards": {
         "title": "Garde-fous actions privilégiées",
         "body": "Le serveur refuse ces actions sans motif et sans nouveau code de l'application d'authentification, valable pour ce type d'action uniquement ; chaque tentative figure au journal d'audit.",
-        "kindsAria": "Actions qui demandent un nouveau code d'authentification"
+        "kindsAria": "Actions qui demandent un nouveau code d'authentification",
+        "refresh": "Actualiser"
       },
       "runbooks": {
-        "title": "Guides d'incident"
+        "title": "Guides d'incident",
+        "empty": "Aucune procédure publiée pour l'instant.",
+        "loading": "Chargement des procédures…"
       },
       "readiness": {
         "title": "Matrice de readiness (drills)",
         "pass": "OK",
-        "gap": "Écart"
+        "gap": "Écart",
+        "empty": "Aucun contrôle de préparation disponible.",
+        "loading": "Chargement de la matrice de préparation…"
       }
     }
   },
@@ -763,5 +1013,9 @@
       "confirm": "Créer le lien",
       "created": "Lien de paiement créé ({{amount}} {{currency}}) : envoyez-le au client."
     }
+  },
+  "entitlements": {
+    "pageBody": "Cycle de vie gouverné par états, aperçu de la revendication signée et approbation auditable des changements destructifs.",
+    "pageTitle": "Licences"
   }
 }

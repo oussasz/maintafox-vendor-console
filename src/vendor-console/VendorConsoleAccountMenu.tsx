@@ -33,6 +33,7 @@ import {
 } from "@/services/vendor-auth-service";
 
 import { StepUpCancelledError, useVendorConsole } from "./VendorConsoleContext";
+import { errorText } from "@/lib/error-text";
 
 /** Recovery codes are a lifeline: warn when this few are left. */
 const LOW_RECOVERY_CODES = 3;
@@ -62,13 +63,13 @@ export function VendorConsoleAccountMenu() {
   const load = useCallback(() => {
     getSessionInfo()
       .then(setInfo)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(errorText(err)));
   }, []);
 
   useEffect(load, [load]);
 
   const fail = (err: unknown) => {
-    if (!(err instanceof StepUpCancelledError)) setError(err instanceof Error ? err.message : String(err));
+    if (!(err instanceof StepUpCancelledError)) setError(errorText(err));
   };
 
   const openDialog = (next: OpenDialog) => {

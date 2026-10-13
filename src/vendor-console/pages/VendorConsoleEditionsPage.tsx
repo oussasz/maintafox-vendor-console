@@ -26,36 +26,32 @@ import {
   type EditionCatalogEntry,
   type ModuleCapabilityKey,
 } from "@/services/license-control-service";
+import { errorText } from "@/lib/error-text";
 
-const MODULE_GROUPS: Array<{ key: string; labelKey: string; fallback: string; modules: ModuleCapabilityKey[] }> = [
+const MODULE_GROUPS: Array<{ key: string; labelKey: string; modules: ModuleCapabilityKey[] }> = [
   {
     key: "operations",
     labelKey: "editions.groups.operations",
-    fallback: "Operations",
     modules: ["equipment", "requests", "work_orders", "inventory", "personnel", "organization", "reference"],
   },
   {
     key: "planning",
     labelKey: "editions.groups.planning",
-    fallback: "Planning",
     modules: ["planning", "pm"],
   },
   {
     key: "compliance",
     labelKey: "editions.groups.compliance",
-    fallback: "Compliance",
     modules: ["permits", "inspections", "training"],
   },
   {
     key: "analytics",
     labelKey: "editions.groups.analytics",
-    fallback: "Analytics",
     modules: ["reports", "rams", "finance"],
   },
   {
     key: "control",
     labelKey: "editions.groups.control",
-    fallback: "Control plane",
     modules: ["sync", "erp", "notifications.email"],
   },
 ];
@@ -107,7 +103,7 @@ export function VendorConsoleEditionsPage() {
     try {
       setItems(await listEditions());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load editions");
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }
@@ -157,19 +153,19 @@ export function VendorConsoleEditionsPage() {
           capabilities: draftCaps,
           clone_from: cloneFromId || undefined,
         });
-        setSuccess(t("editions.created", "Edition {{id}} created.", { id: created.id }));
+        setSuccess(t("editions.created", { id: created.id }));
       } else if (editing) {
         await updateEdition(editing.id, {
           label: draftLabel.trim(),
           capabilities: draftCaps,
           expected_row_version: expectedVersion,
         });
-        setSuccess(t("editions.updated", "Edition {{id}} saved. Re-issue keys to refresh activated machines.", { id: editing.id }));
+        setSuccess(t("editions.updated", { id: editing.id }));
       }
       setEditorOpen(false);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(errorText(err));
     } finally {
       setSaving(false);
     }
@@ -181,11 +177,11 @@ export function VendorConsoleEditionsPage() {
     setError(null);
     try {
       await deleteEdition(deleteTarget.id);
-      setSuccess(t("editions.deleted", "Edition {{id}} deleted.", { id: deleteTarget.id }));
+      setSuccess(t("editions.deleted", { id: deleteTarget.id }));
       setDeleteTarget(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
+      setError(errorText(err));
     } finally {
       setDeleting(false);
     }
@@ -197,21 +193,18 @@ export function VendorConsoleEditionsPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{t("editions.pageTitle", "Editions")}</h1>
+          <h1 className="text-xl font-semibold">{t("editions.pageTitle")}</h1>
           <p className="mt-1 text-sm text-text-secondary">
-            {t(
-              "editions.pageBody",
-              "Manage license presets and module capability maps. Tenants pick an edition; newly issued keys stamp the current map.",
-            )}
+            {t("editions.pageBody")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" onClick={openCreate}>
             <Plus className="mr-1.5 h-4 w-4" />
-            {t("editions.create", "New edition")}
+            {t("editions.create")}
           </Button>
           <Button type="button" variant="outline" disabled={loading} onClick={() => void load()}>
-            {loading ? t("editions.refreshing", "Refreshing…") : t("editions.refresh", "Refresh")}
+            {loading ? t("editions.refreshing") : t("editions.refresh")}
           </Button>
         </div>
       </header>
@@ -220,10 +213,7 @@ export function VendorConsoleEditionsPage() {
         className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
         role="status"
       >
-        {t(
-          "editions.reissueBanner",
-          "Changes apply to keys issued after save. Re-issue a license (or re-activate) to refresh already-activated machines.",
-        )}
+        {t("editions.reissueBanner")}
       </div>
 
       {error ? <p className="text-sm text-text-danger">{error}</p> : null}
@@ -233,19 +223,19 @@ export function VendorConsoleEditionsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t("editions.columns.id", "Id")}</TableHead>
-              <TableHead>{t("editions.columns.label", "Label")}</TableHead>
-              <TableHead>{t("editions.columns.type", "Type")}</TableHead>
-              <TableHead>{t("editions.columns.modules", "Enabled modules")}</TableHead>
-              <TableHead>{t("editions.columns.version", "Version")}</TableHead>
-              <TableHead className="w-[120px]">{t("editions.columns.actions", "Actions")}</TableHead>
+              <TableHead>{t("editions.columns.id")}</TableHead>
+              <TableHead>{t("editions.columns.label")}</TableHead>
+              <TableHead>{t("editions.columns.type")}</TableHead>
+              <TableHead>{t("editions.columns.modules")}</TableHead>
+              <TableHead>{t("editions.columns.version")}</TableHead>
+              <TableHead className="w-[120px]">{t("editions.columns.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.length === 0 && !loading ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-sm text-text-muted">
-                  {t("editions.empty", "No editions in catalog.")}
+                  {t("editions.empty")}
                 </TableCell>
               </TableRow>
             ) : null}
@@ -255,9 +245,9 @@ export function VendorConsoleEditionsPage() {
                 <TableCell>{entry.label}</TableCell>
                 <TableCell>
                   {entry.is_system ? (
-                    <Badge variant="outline">{t("editions.system", "System")}</Badge>
+                    <Badge variant="outline">{t("editions.system")}</Badge>
                   ) : (
-                    <Badge variant="secondary">{t("editions.custom", "Custom")}</Badge>
+                    <Badge variant="secondary">{t("editions.custom")}</Badge>
                   )}
                 </TableCell>
                 <TableCell className="max-w-md truncate text-xs text-text-secondary">
@@ -266,7 +256,7 @@ export function VendorConsoleEditionsPage() {
                 <TableCell className="font-mono text-xs">{entry.row_version}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <Button type="button" size="sm" variant="ghost" onClick={() => openEdit(entry)} aria-label="Edit">
+                    <Button type="button" size="sm" variant="ghost" onClick={() => openEdit(entry)} aria-label={t("editions.editTitle")}>
                       <Pencil className="h-4 w-4" />
                     </Button>
                     {!entry.is_system ? (
@@ -275,7 +265,7 @@ export function VendorConsoleEditionsPage() {
                         size="sm"
                         variant="ghost"
                         onClick={() => setDeleteTarget(entry)}
-                        aria-label="Delete"
+                        aria-label={t("editions.deleteTitle")}
                       >
                         <Trash2 className="h-4 w-4 text-text-danger" />
                       </Button>
@@ -293,14 +283,11 @@ export function VendorConsoleEditionsPage() {
           <DialogHeader>
             <DialogTitle>
               {editorMode === "create"
-                ? t("editions.createTitle", "Create edition")
-                : t("editions.editTitle", "Edit edition")}
+                ? t("editions.createTitle")
+                : t("editions.editTitle")}
             </DialogTitle>
             <DialogDescription>
-              {t(
-                "editions.editorHint",
-                "Send the full module map on save. System edition ids cannot be renamed or deleted.",
-              )}
+              {t("editions.editorHint")}
             </DialogDescription>
           </DialogHeader>
 
@@ -308,7 +295,7 @@ export function VendorConsoleEditionsPage() {
             {editorMode === "create" ? (
               <>
                 <div>
-                  <Label htmlFor="edition-id">{t("editions.fields.id", "Edition id")}</Label>
+                  <Label htmlFor="edition-id">{t("editions.fields.id")}</Label>
                   <Input
                     id="edition-id"
                     className="mt-1 font-mono"
@@ -318,7 +305,7 @@ export function VendorConsoleEditionsPage() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="clone-from">{t("editions.fields.cloneFrom", "Start from")}</Label>
+                  <Label htmlFor="clone-from">{t("editions.fields.cloneFrom")}</Label>
                   <select
                     id="clone-from"
                     className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
@@ -339,13 +326,13 @@ export function VendorConsoleEditionsPage() {
               </>
             ) : (
               <div>
-                <Label>{t("editions.fields.id", "Edition id")}</Label>
+                <Label>{t("editions.fields.id")}</Label>
                 <p className="mt-1 font-mono text-sm text-text-secondary">{draftId}</p>
               </div>
             )}
 
             <div>
-              <Label htmlFor="edition-label">{t("editions.fields.label", "Label")}</Label>
+              <Label htmlFor="edition-label">{t("editions.fields.label")}</Label>
               <Input
                 id="edition-label"
                 className="mt-1"
@@ -357,7 +344,7 @@ export function VendorConsoleEditionsPage() {
             {MODULE_GROUPS.map((group) => (
               <fieldset key={group.key} className="rounded-md border border-surface-border p-3">
                 <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-text-muted">
-                  {t(group.labelKey, group.fallback)}
+                  {t(group.labelKey)}
                 </legend>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {group.modules.map((mod) => (
@@ -376,14 +363,14 @@ export function VendorConsoleEditionsPage() {
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditorOpen(false)} disabled={saving}>
-              {t("editions.cancel", "Cancel")}
+              {t("editions.cancel")}
             </Button>
             <Button
               type="button"
               onClick={() => void onSave()}
               disabled={saving || !draftLabel.trim() || (editorMode === "create" && !draftId.trim())}
             >
-              {saving ? t("editions.saving", "Saving…") : t("editions.save", "Save")}
+              {saving ? t("editions.saving") : t("editions.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -392,21 +379,20 @@ export function VendorConsoleEditionsPage() {
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t("editions.deleteTitle", "Delete edition")}</DialogTitle>
+            <DialogTitle>{t("editions.deleteTitle")}</DialogTitle>
             <DialogDescription>
               {t(
                 "editions.deleteBody",
-                "Delete {{id}}? This fails if any tenant (including inactive) still uses it.",
                 { id: deleteTarget?.id ?? "" },
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-              {t("editions.cancel", "Cancel")}
+              {t("editions.cancel")}
             </Button>
             <Button type="button" variant="destructive" onClick={() => void onDelete()} disabled={deleting}>
-              {deleting ? t("editions.deleting", "Deleting…") : t("editions.confirmDelete", "Delete")}
+              {deleting ? t("editions.deleting") : t("editions.confirmDelete")}
             </Button>
           </DialogFooter>
         </DialogContent>

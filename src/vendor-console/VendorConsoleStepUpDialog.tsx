@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { StepUpActionKind } from "@/lib/step-up-kinds";
 import { AuthApiError, requestStepUp, type StepUpGrant } from "@/services/vendor-auth-service";
+import { errorText } from "@/lib/error-text";
 
 export interface VendorConsoleStepUpDialogProps {
   open: boolean;
@@ -54,7 +55,7 @@ export function VendorConsoleStepUpDialog({ open, actionKind, onGranted, onCance
       } else if (err instanceof AuthApiError && err.status === 429) {
         setError(t("stepUp.errorRateLimited"));
       } else {
-        setError(t("stepUp.errorGeneric", { message: err instanceof Error ? err.message : String(err) }));
+        setError(t("stepUp.errorGeneric", { message: errorText(err) }));
       }
       setCode("");
       setBusy(false);

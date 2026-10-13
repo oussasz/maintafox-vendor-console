@@ -17,7 +17,8 @@ export const VendorAdminMutationActionSchema = z
   .string()
   .min(1)
   .max(128)
-  .regex(/^[a-z][a-z0-9_.-]*$/, "Action must be a lowercase slug (server catalog).");
+  // A lowercase slug from the server catalog.
+  .regex(/^[a-z][a-z0-9_.-]*$/);
 
 /** Typed wrapper for control-plane admin mutations (aligns with `VpsAdminMutationRequest`). */
 export const VendorAdminMutationEnvelopeSchema = z.object({

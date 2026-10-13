@@ -15,6 +15,7 @@ import {
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
 import { OpsAlertsPanel } from "./OpsAlertsPanel";
+import { errorText } from "@/lib/error-text";
 
 export function VendorConsoleOpsHubCard() {
   const { t } = useTranslation("vendorConsole");
@@ -32,7 +33,7 @@ export function VendorConsoleOpsHubCard() {
       setSync(syncData);
       setPlatform(platformData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load ops hub telemetry.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }
@@ -54,21 +55,18 @@ export function VendorConsoleOpsHubCard() {
 
   return (
     <article className="rounded-lg border border-surface-border bg-surface-1 p-4 shadow-sm sm:col-span-2">
-      <h3 className="text-sm font-semibold">{t("home.card.ops", "Operations hub")}</h3>
+      <h3 className="text-sm font-semibold">{t("home.card.ops")}</h3>
       <p className="mt-2 text-xs text-text-secondary">
-        {t(
-          "home.card.opsHint",
-          "Unified sync, rollout, and platform alerts with ownership. Drill-through is tenant-safe.",
-        )}
+        {t("home.card.opsHint")}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-text-muted">{t("home.ops.openAlerts", "Open alerts")}</span>
+        <span className="text-text-muted">{t("home.ops.openAlerts")}</span>
         <span className="font-semibold">{openAlerts}</span>
-        <OpsSeverityBadge severity={worst} label={t("home.ops.worst", "Worst: {{s}}", { s: worst })} />
-        <span className="text-text-muted">{t("home.ops.dlq", "DLQ (aggregate)")}</span>
+        <OpsSeverityBadge severity={worst} label={t("home.ops.worst", { s: worst })} />
+        <span className="text-text-muted">{t("home.ops.dlq")}</span>
         <span className="font-mono text-xs">{sync?.aggregate.dead_letter_total ?? 0}</span>
         <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
-          {loading ? t("home.ops.refreshing", "Refreshing…") : t("home.ops.refresh", "Refresh")}
+          {loading ? t("home.ops.refreshing") : t("home.ops.refresh")}
         </Button>
       </div>
       {error ? (
@@ -81,23 +79,23 @@ export function VendorConsoleOpsHubCard() {
       <div className="mt-4 border-t border-surface-border pt-4">
         <OpsAlertsPanel alerts={alerts} compact />
         {!loading && alerts.length === 0 ? (
-          <p className="mt-3 text-xs text-text-muted">{t("home.ops.empty", "No active ops alerts.")}</p>
+          <p className="mt-3 text-xs text-text-muted">{t("home.ops.empty")}</p>
         ) : null}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         {can("platform.observe") ? (
           <Button variant="outline" size="sm" asChild>
-            <Link to="/vendor-console/health">{t("home.drill.opsHealth", "Platform health & alerts")}</Link>
+            <Link to="/vendor-console/health">{t("home.drill.opsHealth")}</Link>
           </Button>
         ) : null}
         {can("sync.operate") ? (
           <Button variant="outline" size="sm" asChild>
-            <Link to="/vendor-console/sync">{t("home.drill.opsSync", "Sync diagnostics")}</Link>
+            <Link to="/vendor-console/sync">{t("home.drill.opsSync")}</Link>
           </Button>
         ) : null}
         {can("rollout.manage") ? (
           <Button variant="outline" size="sm" asChild>
-            <Link to="/vendor-console/rollouts">{t("home.drill.opsRollouts", "Rollout control")}</Link>
+            <Link to="/vendor-console/rollouts">{t("home.drill.opsRollouts")}</Link>
           </Button>
         ) : null}
       </div>

@@ -36,7 +36,10 @@
     "ops": {
       "openAlerts": "Open alerts",
       "worst": "Worst: {{s}}",
-      "dlq": "DLQ (aggregate)"
+      "dlq": "DLQ (aggregate)",
+      "refreshing": "Refreshing…",
+      "refresh": "Refresh",
+      "empty": "No active ops alerts."
     },
     "drill": {
       "customers": "Open customers",
@@ -84,7 +87,89 @@
     "previewAudit": "Preview audit payload",
     "submit": "Submit (VPS)",
     "pageTitle": "Entitlements",
-    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
+    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes.",
+    "listTitle": "Entitlement keys",
+    "listHint": "Find and inspect key records quickly. Every row opens full key metadata and lifecycle actions.",
+    "addKey": "Add/Issue key",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "tenant": "Tenant",
+    "noTenants": "No tenants available",
+    "search": "Search keys",
+    "searchPlaceholder": "Search by key, id, tenant",
+    "stateFilter": "State filter",
+    "sortBy": "Sort by",
+    "sortDirection": "Sort direction",
+    "loading": "Loading entitlement keys…",
+    "noLicenses": "No keys have been issued for this tenant.",
+    "noLicensesHint": "Use Add/Issue key in the toolbar above to create the first key for this tenant.",
+    "noMatches": "No keys match the current filters.",
+    "editKey": "Update entitlement key",
+    "editHint": "Change slot limit, channel, or expiry. Operator rationale is required for audit.",
+    "confirmRevokeTitle": "Revoke entitlement key?",
+    "confirmRevokeBody": "This revokes key {{id}} and blocks new activations. Existing activations are invalidated per policy. This action is retained for audit.",
+    "issueHint": "Issue a new entitlement key for the selected tenant. This action creates a real key in the control-plane API.",
+    "validation": {
+      "maxMachines": "Slot limit must be a number between 1 and 1000.",
+      "expiryInvalid": "Expiry must be a valid date/time.",
+      "expiryPast": "Expiry date cannot be in the past.",
+      "reasonCode": "Reason code must be at least 2 characters.",
+      "rationale": "Operator rationale must be at least 8 characters."
+    },
+    "packetNote": "Share securely with customer onboarding contact only.",
+    "packetExported": "Onboarding packet exported for {{id}}.",
+    "selectTenantFirst": "Select a tenant first.",
+    "selectKeyFirst": "Select a key row first.",
+    "alreadyRevoked": "This key is already revoked.",
+    "selectTenantHint": "Select a tenant to issue or manage entitlement keys.",
+    "state": {
+      "all": "All",
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "col": {
+      "issuedAt": "Issued at",
+      "expiry": "Expiry",
+      "slots": "Slot limit",
+      "keyId": "Key ID",
+      "licenseKey": "License key",
+      "issued": "Issued",
+      "state": "State",
+      "slotsShort": "Slots",
+      "actions": "Actions",
+      "channel": "Channel"
+    },
+    "retryTenants": "Retry tenant load",
+    "retryKeys": "Retry key load",
+    "editKeyTitle": "Edit key",
+    "revokedNotEditable": "Revoked keys cannot be edited",
+    "revokeKey": "Revoke key",
+    "expiryOptional": "Expiry (optional)",
+    "rationale": "Operator rationale",
+    "completeBeforeSaving": "Complete the following before saving:",
+    "updated": "Key {{id}} was updated.",
+    "revokeReason": "Revoke reason (kept in the audit log)",
+    "revokeReasonPh": "e.g. key rotation, security review",
+    "revoked": "Key {{id}} was revoked.",
+    "revoking": "Revoking…",
+    "noTenantSelected": "No tenant selected",
+    "expiryHint": "Pre-filled with about 30 days from now. Clear the field for no expiry.",
+    "reasonCodeOptional": "Operator reason code (optional)",
+    "rationalePh": "Explain why this key is being issued.",
+    "completeBeforeIssuing": "Complete the following before issuing:",
+    "issued": "Key {{id}} was issued.",
+    "issuing": "Issuing…",
+    "issueKey": "Issue key",
+    "detailTitle": "Entitlement key detail",
+    "detailBody": "Review key metadata, export onboarding material, or revoke. Use the Actions column of the list to edit or revoke.",
+    "selectKeyDetail": "Select a key row to view details.",
+    "handoffHint": "Use the copy or export actions below to hand the key safely to the customer’s onboarding contact.",
+    "copied": "Activation key copied for {{id}}.",
+    "copying": "Copying…",
+    "copyKey": "Copy activation key",
+    "exportPacket": "Export onboarding packet",
+    "actionsHint": "Edit or revoke keys from the Actions column of the list. A revoked key stays in the audit trail."
   },
   "customers": {
     "title": "Customers",
@@ -102,7 +187,8 @@
       "edition": "Edition",
       "cohort": "Cohort",
       "channel": "Channel",
-      "actions": "Actions"
+      "actions": "Actions",
+      "created": "Created"
     },
     "bulk": {
       "title": "Bulk channel reassignment (dry-run)",
@@ -130,7 +216,79 @@
       "title": "Lift the suspension?",
       "body": "Devices of \"{{name}}\" may sync again; each fetches a fresh policy at its next licence check.",
       "confirm": "Lift suspension"
-    }
+    },
+    "addCompany": "Add customer/company",
+    "refreshing": "Refreshing…",
+    "refreshTenants": "Refresh",
+    "listTitle": "Customer list",
+    "listHint": "Search, filter, sort, and select a customer before editing tenant-level settings.",
+    "searchLabel": "Search customers",
+    "searchPlaceholder": "Search by slug, company, id, cohort",
+    "channelFilter": "Channel filter",
+    "filterAllChannels": "All channels",
+    "sortBy": "Sort by",
+    "sortDirection": "Sort direction",
+    "sortAsc": "Ascending",
+    "sortDesc": "Descending",
+    "retry": "Retry",
+    "loading": "Loading customers…",
+    "empty": "No customers found.",
+    "addFirstCompany": "Add first customer/company",
+    "noResults": "No customers match the current filters.",
+    "clearFilters": "Clear filters",
+    "editTenant": "Edit tenant",
+    "deleteTenant": "Delete tenant",
+    "selectTenantFirst": "Select a customer row to view tenant metadata and policies.",
+    "tenantName": "Tenant display name",
+    "tenantChannel": "Tenant update channel",
+    "editCompany": "Edit customer/company",
+    "editDescription": "Update tenant metadata. Slug changes must stay unique across all customers.",
+    "addDescription": "Create a new customer company. Fields are validated before sending to the control-plane API.",
+    "companyName": "Company name",
+    "savingTenant": "Saving…",
+    "creatingTenant": "Creating…",
+    "saveChanges": "Save changes",
+    "confirmDeleteTitle": "Delete customer?",
+    "confirmDeleteBody": "This permanently deletes \"{{name}}\" ({{slug}}) and all associated license keys and activations. This cannot be undone.",
+    "deletingTenant": "Deleting…",
+    "confirmDelete": "Delete permanently",
+    "validation": {
+      "slugRequired": "Slug is required.",
+      "slugFormat": "Use lowercase letters, numbers, and dashes only.",
+      "slugLength": "Slug must be between 3 and 64 characters.",
+      "nameRequired": "Company name is required.",
+      "nameLength": "Company name must be between 2 and 120 characters.",
+      "cohortRequired": "Rollout cohort is required.",
+      "cohortLength": "Rollout cohort must be 64 characters or fewer."
+    },
+    "updatedDone": "Customer “{{name}}” was updated.",
+    "addedDone": "Customer “{{name}}” was added.",
+    "deletedDone": "Customer “{{name}}” was deleted.",
+    "policy": {
+      "title": "Force-update governance",
+      "body": "Enforce minimum desktop versions per tenant or cohort. Emergency mode blocks operations until clients update.",
+      "loading": "Loading policy details…",
+      "retry": "Retry policy load",
+      "selectTenant": "Select a tenant to manage update governance.",
+      "auditReason": "Audit reason (kept in the audit log)",
+      "tenantOverride": "Tenant override ({{slug}})",
+      "minVersion": "Minimum app version",
+      "mode": "Mode",
+      "modes": {
+        "inherit": "Inherit the cohort policy",
+        "off": "Off",
+        "required": "Required (version gate)",
+        "emergency": "Emergency (blocks until updated)"
+      },
+      "userReason": "Reason shown with the update prompt",
+      "needReason": "Enter an audit reason above to enable these actions (your authenticator code is asked when you apply).",
+      "applyTenant": "Apply tenant policy",
+      "applyCohort": "Apply cohort policy",
+      "rollbackTenant": "Roll back tenant policy",
+      "rollbackCohort": "Roll back cohort policy",
+      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})"
+    },
+    "completeBeforeAdding": "Complete the following before adding this customer:"
   },
   "editions": {
     "core": "Core",
@@ -245,7 +403,38 @@
         "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
         "confirm": "Request refresh"
       }
-    }
+    },
+    "tenant": "Tenant",
+    "noTenants": "No tenants",
+    "extendGrace": "Extend grace (+{{hours}} h)",
+    "toggleTrustRule": "Toggle trust-revoke disconnect behavior",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh tenant machine state",
+    "activationClaim": "Activation claim (live API)",
+    "activationClaimHint": "Use this to verify that the control-plane activation endpoint accepts a key + machine fingerprint.",
+    "loading": "Loading machine activations…",
+    "empty": "No activated machines for this tenant yet.",
+    "selectedTenant": "Selected tenant",
+    "graceExtended": "Offline grace window is now {{hours}} h.",
+    "trustRuleUpdated": "Trust revocation behaviour updated.",
+    "policyDialog": {
+      "extendGrace": {
+        "title": "Extend the offline grace window?",
+        "body": "Devices of this customer may stay offline {{hours}} hours longer before they must reach the server.",
+        "confirm": "Extend"
+      },
+      "toggleTrust": {
+        "title": "Change what a trust revocation does?",
+        "body": "Switches whether revoking a device’s trust disconnects it at once or at its next licence check.",
+        "confirm": "Change"
+      }
+    },
+    "licenseKey": "License key",
+    "fingerprint": "Machine fingerprint",
+    "appVersion": "App version",
+    "claimDone": "Activation claimed; machine data refreshed.",
+    "claiming": "Claiming…",
+    "claim": "Claim activation"
   },
   "sync": {
     "title": "Sync operations",
@@ -281,7 +470,8 @@
         "queue": "Queue",
         "sev": "Severity",
         "summary": "Summary"
-      }
+      },
+      "empty": "Repair queue is empty."
     },
     "anomalies": {
       "title": "Heartbeat policy anomalies affecting sync",
@@ -290,7 +480,8 @@
         "machine": "Machine",
         "code": "Code",
         "detected": "Detected"
-      }
+      },
+      "empty": "No heartbeat anomalies detected."
     },
     "drill": {
       "title": "Failure drill-down",
@@ -325,7 +516,12 @@
         "resync_completed": "Resync done",
         "operator_action": "Operator"
       }
-    }
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading sync telemetry…",
+    "empty": "No tenant sync telemetry available yet."
   },
   "rollouts": {
     "title": "Rollouts",
@@ -347,13 +543,15 @@
       "pause": "Pause stage",
       "recall": "Recall",
       "resume": "Resume",
-      "recalledVersion": "Recalled version: {{version}}"
+      "recalledVersion": "Recalled version: {{version}}",
+      "empty": "No cohorts available."
     },
     "diagnostics": {
       "title": "Release diagnostics (24h)",
       "hint": "Signature, migration, and post-deploy heartbeat failures in one view for containment decisions.",
       "count": "{{n}} events",
-      "last": "Last"
+      "last": "Last",
+      "empty": "No rollout diagnostics available."
     },
     "governance": {
       "deviceNotice": "Pause and recall are recorded on the server, written to the audit log and sent to every device of the cohort with its policy. Desktops will act on them once the updater (master plan Phase 5) exists: today's desktops do not install updates by themselves, so nothing changes on them yet.",
@@ -378,7 +576,11 @@
         "confirm": "Recall",
         "versionLabel": "Version to recall (e.g. 1.4.2)"
       }
-    }
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading rollout telemetry…"
   },
   "health": {
     "title": "Platform health",
@@ -386,7 +588,17 @@
     "pageTitle": "Platform health & incidents",
     "pageBody": "Unified telemetry across services, infrastructure pressure, and alert ownership. Drill-through stays tenant-safe.",
     "services": {
-      "title": "Service status"
+      "title": "Service status",
+      "empty": "No platform service telemetry available.",
+      "names": {
+        "api": "API",
+        "workers": "Workers",
+        "postgresql": "PostgreSQL",
+        "redis": "Redis",
+        "object_storage": "Object storage",
+        "admin_ui": "Admin UI",
+        "backups": "Backups"
+      }
     },
     "pressure": {
       "title": "Infrastructure pressure",
@@ -396,14 +608,19 @@
         "value": "Value",
         "threshold": "Threshold hint",
         "trend": "Trend"
-      }
+      },
+      "empty": "No infrastructure pressure metrics available."
     },
     "drill": {
       "title": "Related operational views",
       "body": "Tenant-safe incident drill-through links curated views in sync and rollout workspaces without exposing unrelated customer data.",
       "sync": "Open sync health",
       "rollouts": "Open rollouts"
-    }
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading platform telemetry…"
   },
   "ops": {
     "alerts": {
@@ -414,7 +631,8 @@
       "owner": "Owner (actor id)",
       "ack": "Acknowledge",
       "note": "Add note",
-      "readOnly": "Handled by upstream alerting workflow; this panel is read-only."
+      "readOnly": "Handled by upstream alerting workflow; this panel is read-only.",
+      "empty": "No alerts in this view."
     }
   },
   "audit": {
@@ -463,8 +681,13 @@
         "snapshots": "Before / after snapshot SHA-256",
         "chainPrev": "Chain previous hash",
         "refs": "Entity refs (forensic drill-through)",
-        "severityHint": "Operational severity (linked alerts)"
-      }
+        "severityHint": "Operational severity (linked alerts)",
+        "severityNotProvided": "Not provided by the audit API for a single record."
+      },
+      "export": "Export CSV",
+      "refresh": "Refresh",
+      "loading": "Loading audit records…",
+      "empty": "No audit records for this filter."
     },
     "support": {
       "intro": "Structured tickets, diagnostic bundles with redaction, offline reconciliation, and explicit links to audit records.",
@@ -477,8 +700,19 @@
           "sev": "Severity",
           "module": "Module",
           "sync": "Sync hint",
-          "audit": "Linked audit IDs"
-        }
+          "audit": "Linked audit IDs",
+          "intervene": "Intervention"
+        },
+        "saving": "Saving…",
+        "export": "Export CSV",
+        "refresh": "Refresh",
+        "loading": "Loading tickets…",
+        "empty": "No support tickets yet.",
+        "notePh": "Intervention note",
+        "intervene": "Log intervention",
+        "noteTooShort": "The intervention note needs at least 3 characters.",
+        "intervened": "Intervention logged for {{id}}.",
+        "exported": "Support tickets exported (CSV)."
       },
       "bundle": {
         "title": "Diagnostic bundles",
@@ -492,7 +726,8 @@
           "size": "Size",
           "ticket": "Ticket",
           "download": "Download"
-        }
+        },
+        "downloadStarted": "Download of diagnostic bundle {{id}} started (recorded as {{record}})."
       },
       "offline": {
         "title": "Offline-origin reconciliation",
@@ -501,11 +736,19 @@
           "vendor": "Vendor ticket",
           "sync": "Sync state",
           "dup": "Duplicate of"
-        }
+        },
+        "loading": "Loading reconciliation rows…",
+        "empty": "No offline reconciliation rows."
       },
       "exports": {
         "title": "Compliance export kinds",
-        "syncLink": "Open sync evidence"
+        "syncLink": "Open sync evidence",
+        "kinds": {
+          "entitlement_history": "Entitlement history",
+          "machine_state_timeline": "Machine state timeline",
+          "rollout_actions": "Rollout actions",
+          "support_resolution_chronology": "Support resolution chronology"
+        }
       },
       "newTicket": {
         "title": "Open a ticket",
@@ -513,7 +756,9 @@
         "severity": "Severity",
         "module": "Module (e.g. sync)",
         "summary": "What is wrong?",
-        "submit": "Open ticket"
+        "submit": "Open ticket",
+        "incomplete": "Choose a customer and fill in the module (2+ characters) and the summary (3+ characters).",
+        "opened": "Ticket {{id}} opened."
       }
     },
     "harden": {
@@ -521,15 +766,20 @@
       "guards": {
         "title": "Privileged-action safeguards",
         "body": "The server refuses these actions without a reason and a fresh code from the authenticator app, valid for that kind of action only; every attempt is in the audit log.",
-        "kindsAria": "Actions that need a fresh authenticator code"
+        "kindsAria": "Actions that need a fresh authenticator code",
+        "refresh": "Refresh"
       },
       "runbooks": {
-        "title": "Incident runbooks"
+        "title": "Incident runbooks",
+        "loading": "Loading runbooks…",
+        "empty": "No runbooks published yet."
       },
       "readiness": {
         "title": "Drill-based readiness matrix",
         "pass": "Pass",
-        "gap": "Gap"
+        "gap": "Gap",
+        "loading": "Loading readiness matrix…",
+        "empty": "No readiness checks available."
       }
     }
   },
@@ -763,5 +1013,9 @@
       "confirm": "Create link",
       "created": "Payment link created ({{amount}} {{currency}}): send it to the customer."
     }
+  },
+  "entitlements": {
+    "pageTitle": "Entitlements",
+    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
   }
 }

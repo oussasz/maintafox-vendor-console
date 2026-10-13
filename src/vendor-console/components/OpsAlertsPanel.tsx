@@ -29,18 +29,15 @@ export function OpsAlertsPanel({
   return (
     <section className="space-y-3">
       <h2 className="text-sm font-semibold">
-        {t("ops.alerts.title", "Alerts & ownership")}
+        {t("ops.alerts.title")}
       </h2>
       <p className="text-xs text-text-secondary">
-        {t(
-          "ops.alerts.hint",
-          "Acknowledge, assign an owner, and add timeline notes. Drill-through uses operational IDs only.",
-        )}
+        {t("ops.alerts.hint")}
       </p>
       <ul className="space-y-3">
         {visible.length === 0 ? (
           <li className="rounded-lg border border-surface-border bg-surface-1 p-3 text-sm text-text-muted">
-            {t("ops.alerts.empty", "No alerts in this view.")}
+            {t("ops.alerts.empty")}
           </li>
         ) : null}
         {visible.map((a) => {
@@ -61,10 +58,10 @@ export function OpsAlertsPanel({
                 </div>
               </div>
               <p className="mt-2 text-xs text-text-secondary">
-                {t("ops.alerts.drill", "Drill")}: {drillSummary(a.drill_refs)}
+                {t("ops.alerts.drill")}: {drillSummary(a.drill_refs)}
                 {!safe ? (
                   <span className="ml-2 text-destructive">
-                    {t("ops.alerts.unsafe", "(blocked: unsafe drill payload)")}
+                    {t("ops.alerts.unsafe")}
                   </span>
                 ) : null}
               </p>
@@ -79,15 +76,12 @@ export function OpsAlertsPanel({
                 <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-surface-border pt-3">
                   <div className="text-xs text-text-secondary">
                     <p>
-                      {t("ops.alerts.owner", "Owner (actor id)")}:
+                      {t("ops.alerts.owner")}:
                       <span className="ml-1 font-mono">{a.owner_actor_id ?? "—"}</span>
                     </p>
                     <p className="mt-1">
-                      {t("ops.alerts.note", "Add note")}:{" "}
-                      {t(
-                        "ops.alerts.readOnly",
-                        "Handled by upstream alerting workflow; this panel is read-only.",
-                      )}
+                      {t("ops.alerts.note")}:{" "}
+                      {t("ops.alerts.readOnly")}
                     </p>
                   </div>
                 </div>

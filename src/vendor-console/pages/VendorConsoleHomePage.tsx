@@ -15,18 +15,15 @@ export function VendorConsoleHomePage() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{t("home.title", "Control plane overview")}</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{t("home.title")}</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "home.subtitle",
-            "Evidence-first summaries; each card links to underlying records (tenant, machine, batch, audit).",
-          )}
+          {t("home.subtitle")}
         </p>
       </div>
 
       <section aria-labelledby="ops-cards" className="grid gap-4 sm:grid-cols-2">
         <h2 id="ops-cards" className="sr-only">
-          {t("home.cardsAria", "Operational summaries")}
+          {t("home.cardsAria")}
         </h2>
 
         {(can("sync.operate") || can("rollout.manage") || can("platform.observe")) && (
@@ -34,9 +31,9 @@ export function VendorConsoleHomePage() {
         )}
 
         <article className="rounded-lg border border-surface-border bg-surface-1 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold">{t("home.card.license", "License & machines")}</h3>
+          <h3 className="text-sm font-semibold">{t("home.card.license")}</h3>
           <p className="mt-2 text-xs text-text-secondary">
-            {t("home.card.licenseHint", "Drill to entitlement envelopes and activation rows.")}
+            {t("home.card.licenseHint")}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {can("customer.manage") && (
@@ -44,7 +41,7 @@ export function VendorConsoleHomePage() {
                 <Link
                   to={`/vendor-console/customers${tenantSearch ? `?q=${encodeURIComponent(tenantSearch)}` : ""}`}
                 >
-                  {t("home.drill.customers", "Open customers")}
+                  {t("home.drill.customers")}
                 </Link>
               </Button>
             )}
@@ -52,11 +49,11 @@ export function VendorConsoleHomePage() {
               <>
                 <Button variant="outline" size="sm" asChild>
                   <Link to="/vendor-console/entitlements?evidence=tenant:last-active">
-                    {t("home.drill.entitlements", "Evidence: last tenant")}
+                    {t("home.drill.entitlements")}
                   </Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild>
-                  <Link to="/vendor-console/machines">{t("home.drill.machines", "Machines & heartbeats")}</Link>
+                  <Link to="/vendor-console/machines">{t("home.drill.machines")}</Link>
                 </Button>
               </>
             )}
@@ -64,28 +61,28 @@ export function VendorConsoleHomePage() {
         </article>
 
         <article className="rounded-lg border border-surface-border bg-surface-1 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold">{t("home.card.sync", "Sync & rollouts")}</h3>
+          <h3 className="text-sm font-semibold">{t("home.card.sync")}</h3>
           <p className="mt-2 text-xs text-text-secondary">
-            {t("home.card.syncHint", "Queue lag, replay, and rollout manifest integrity.")}
+            {t("home.card.syncHint")}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {can("sync.operate") && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/vendor-console/sync?evidence=queue:materialization">
-                  {t("home.drill.syncQueue", "Queue evidence")}
+                  {t("home.drill.syncQueue")}
                 </Link>
               </Button>
             )}
             {can("rollout.manage") && (
               <Button variant="outline" size="sm" asChild>
                 <Link to="/vendor-console/rollouts?evidence=manifest:current">
-                  {t("home.drill.rollout", "Rollout manifest")}
+                  {t("home.drill.rollout")}
                 </Link>
               </Button>
             )}
             {can("audit.view") && (
               <Button variant="outline" size="sm" asChild>
-                <Link to="/vendor-console/audit">{t("home.drill.audit", "Audit & support")}</Link>
+                <Link to="/vendor-console/audit">{t("home.drill.audit")}</Link>
               </Button>
             )}
           </div>

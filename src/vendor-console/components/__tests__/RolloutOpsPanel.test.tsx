@@ -62,7 +62,7 @@ describe("RolloutOpsPanel governance", () => {
   it("pause uses the rollout_publish step-up and reloads the real state", async () => {
     vi.mocked(getRolloutOverview).mockResolvedValueOnce(overview("active")).mockResolvedValueOnce(overview("paused"));
     renderWithConsole(<RolloutOpsPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Pause stage" }));
+    await userEvent.click(await screen.findByRole("button", { name: "rollouts.cohorts.pause" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "crash reports");
     await userEvent.click(within(dialog).getByRole("button", { name: "rollouts.governance.pause.confirm" }));
@@ -81,7 +81,7 @@ describe("RolloutOpsPanel governance", () => {
   it("recall needs the version and the forced_rollback step-up", async () => {
     vi.mocked(getRolloutOverview).mockResolvedValueOnce(overview("paused")).mockResolvedValueOnce(overview("recalled", "2.1.0"));
     renderWithConsole(<RolloutOpsPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Recall" }));
+    await userEvent.click(await screen.findByRole("button", { name: "rollouts.cohorts.recall" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "bad build");
     const confirm = within(dialog).getByRole("button", { name: "rollouts.governance.recall.confirm" });

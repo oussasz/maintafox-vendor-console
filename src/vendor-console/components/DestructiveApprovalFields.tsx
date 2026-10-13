@@ -38,14 +38,14 @@ export function DestructiveApprovalFields({
   return (
     <div className="space-y-4 rounded-md border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
       <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
-        {t("destructive.title", "Destructive change — approval context")}
+        {t("destructive.title")}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="space-y-1">
-          <Label htmlFor="reason-code">{t("destructive.reasonCode", "Reason code")}</Label>
+          <Label htmlFor="reason-code">{t("destructive.reasonCode")}</Label>
           <Select value={reasonCode} onValueChange={onReasonCode} disabled={disabled ?? false}>
             <SelectTrigger id="reason-code">
-              <SelectValue placeholder={t("destructive.pickReason", "Select…")} />
+              <SelectValue placeholder={t("destructive.pickReason")} />
             </SelectTrigger>
             <SelectContent>
               {REASON_CODES.map((c) => (
@@ -57,7 +57,7 @@ export function DestructiveApprovalFields({
           </Select>
         </div>
         <div className="space-y-1">
-          <Label htmlFor="second-actor">{t("destructive.secondActor", "Second approver (optional)")}</Label>
+          <Label htmlFor="second-actor">{t("destructive.secondActor")}</Label>
           <Input
             id="second-actor"
             value={secondActorId}
@@ -69,14 +69,14 @@ export function DestructiveApprovalFields({
         </div>
       </div>
       <div className="space-y-1">
-        <Label htmlFor="rationale">{t("destructive.rationale", "Rationale (required)")}</Label>
+        <Label htmlFor="rationale">{t("destructive.rationale")}</Label>
         <Textarea
           id="rationale"
           value={rationale}
           onChange={(e) => onRationale(e.target.value)}
           rows={3}
           disabled={disabled}
-          placeholder={t("destructive.rationalePh", "Explain business justification for auditors.")}
+          placeholder={t("destructive.rationalePh")}
         />
       </div>
     </div>

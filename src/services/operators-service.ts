@@ -5,8 +5,8 @@
 import { z } from "zod";
 
 import { authFetch } from "@/lib/api-client";
+import { apiRequestError } from "@/lib/api-error";
 import {
-  parseControlPlaneErrorResponse,
   privilegedHeaders,
   type PrivilegedActionContext,
 } from "@/services/license-control-service";
@@ -28,7 +28,7 @@ const OperatorSchema = z.object({
 export type Operator = z.infer<typeof OperatorSchema>;
 
 async function json<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
-  if (!res.ok) throw new Error(await parseControlPlaneErrorResponse(res));
+  if (!res.ok) throw await apiRequestError(res);
   return schema.parse(await res.json());
 }
 

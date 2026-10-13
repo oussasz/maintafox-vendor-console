@@ -17,21 +17,26 @@ export class AuthenticationRequiredError extends Error {
   readonly status: number;
   readonly code: string;
 
-  constructor(message = "Authentication required", status = 401, code = "unauthenticated") {
-    super(message);
+  constructor(status = 401, code = "unauthenticated") {
+    super(code);
     this.name = "AuthenticationRequiredError";
     this.status = status;
     this.code = code;
   }
 }
 
+/** Why permissions could not be loaded (common.json `permissions.loadError.<kind>`). */
+export type PermissionsLoadErrorKind = "config" | "network" | "http" | "invalid";
+
 /** Transient/config failure loading permissions — not Access Denied. */
 export class PermissionsLoadError extends Error {
+  readonly kind: PermissionsLoadErrorKind;
   readonly status?: number;
 
-  constructor(message: string, status?: number) {
-    super(message);
+  constructor(kind: PermissionsLoadErrorKind, status?: number) {
+    super(status === undefined ? kind : `${kind} (${status})`);
     this.name = "PermissionsLoadError";
+    this.kind = kind;
     this.status = status;
   }
 }
@@ -67,7 +72,7 @@ async function errorCodeFromResponse(res: Response): Promise<string> {
  */
 export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
   if (!apiBaseConfigured()) {
-    throw new PermissionsLoadError("Set VITE_ADMIN_API_BASE_URL.");
+    throw new PermissionsLoadError("config");
   }
 
   let res: Response;
@@ -75,9 +80,9 @@ export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
     res = await authFetch("/api/v1/me/permissions");
   } catch (err) {
     if (err instanceof SessionEndedError) {
-      throw new AuthenticationRequiredError("Not authenticated", 401, "session_ended");
+      throw new AuthenticationRequiredError(401, "session_ended");
     }
-    throw new PermissionsLoadError("Network error while loading permissions. Check API URL and CORS.");
+    throw new PermissionsLoadError("network");
   }
 
   if (!res.ok) {
@@ -88,25 +93,21 @@ export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
       code === "invalid_token" ||
       (res.status === 403 && code === "invalid_token")
     ) {
-      throw new AuthenticationRequiredError(
-        `Authentication required (${code || res.status})`,
-        res.status,
-        code || "unauthenticated",
-      );
+      throw new AuthenticationRequiredError(res.status, code || "unauthenticated");
     }
-    throw new PermissionsLoadError(`Permissions request failed (${res.status})`, res.status);
+    throw new PermissionsLoadError("http", res.status);
   }
 
   let raw: unknown;
   try {
     raw = await res.json();
   } catch {
-    throw new PermissionsLoadError("Permissions response was not valid JSON.");
+    throw new PermissionsLoadError("invalid");
   }
 
   const parsed = z.array(PermissionRecordSchema).safeParse(raw);
   if (!parsed.success) {
-    throw new PermissionsLoadError("Permissions response shape was invalid.");
+    throw new PermissionsLoadError("invalid");
   }
   return parsed.data;
 }

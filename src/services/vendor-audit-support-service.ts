@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { authFetch } from "@/lib/api-client";
+import { apiRequestError } from "@/lib/api-error";
 import { privilegedHeaders, type PrivilegedActionContext } from "@/services/license-control-service";
 import {
   AuditReadinessCheckItemV1Schema,
@@ -22,10 +23,8 @@ export type OfflineReconciliationRow = z.infer<typeof OfflineTicketReconciliatio
 export type IncidentRunbookEntry = z.infer<typeof IncidentRunbookEntryV1Schema>;
 export type ReadinessCheckItem = z.infer<typeof AuditReadinessCheckItemV1Schema>;
 
-async function parseOrThrow<T>(res: Response, parser: { parse: (v: unknown) => T }, label: string): Promise<T> {
-  if (!res.ok) {
-    throw new Error(`${label} failed (${res.status})`);
-  }
+async function parseOrThrow<T>(res: Response, parser: { parse: (v: unknown) => T }): Promise<T> {
+  if (!res.ok) throw await apiRequestError(res);
   return parser.parse(await res.json());
 }
 
@@ -48,7 +47,7 @@ export async function listAuditLedger(input?: {
   if (input?.limit) params.set("limit", String(input.limit));
   const q = params.toString();
   const res = await authFetch(`/api/v1/audit/ledger${q ? `?${q}` : ""}`);
-  return parseOrThrow(res, z.array(VendorAdminAuditRecordV1Schema), "Audit ledger");
+  return parseOrThrow(res, z.array(VendorAdminAuditRecordV1Schema));
 }
 
 export async function verifyAuditLedgerChainRemote(): Promise<{
@@ -60,12 +59,12 @@ export async function verifyAuditLedgerChainRemote(): Promise<{
     checked_count: z.number().int().nonnegative(),
   });
   const res = await authFetch("/api/v1/audit/ledger/verify-chain");
-  return parseOrThrow(res, schema, "Audit chain verification");
+  return parseOrThrow(res, schema);
 }
 
 export async function listSupportTickets(): Promise<SupportTicket[]> {
   const res = await authFetch("/api/v1/support/tickets");
-  return parseOrThrow(res, z.array(SupportTicketV1Schema), "Support tickets");
+  return parseOrThrow(res, z.array(SupportTicketV1Schema));
 }
 
 /** Opens a ticket for a tenant (recorded in the audit ledger). */
@@ -76,7 +75,7 @@ export async function createSupportTicket(input: {
   summary: string;
 }): Promise<SupportTicket> {
   const res = await authFetch("/api/v1/support/tickets", { method: "POST", body: JSON.stringify(input) });
-  return parseOrThrow(res, SupportTicketV1Schema, "Create support ticket");
+  return parseOrThrow(res, SupportTicketV1Schema);
 }
 
 export async function createSupportIntervention(
@@ -99,46 +98,44 @@ export async function createSupportIntervention(
     body: JSON.stringify(input),
     headers: privilegedHeaders(privileged),
   });
-  return parseOrThrow(res, schema, "Support intervention");
+  return parseOrThrow(res, schema);
 }
 
 export async function getLatestDiagnosticBundle(): Promise<DiagnosticBundle> {
   const res = await authFetch("/api/v1/support/diagnostic-bundles/latest");
-  return parseOrThrow(res, DiagnosticBundleManifestV1Schema, "Diagnostic bundle");
+  return parseOrThrow(res, DiagnosticBundleManifestV1Schema);
 }
 
 /** Bundles uploaded by desktops, newest first. */
 export async function listDiagnosticBundles(): Promise<DiagnosticBundleSummary[]> {
   const res = await authFetch("/api/v1/support/diagnostic-bundles");
-  return parseOrThrow(res, z.array(DiagnosticBundleSummaryV1Schema), "Diagnostic bundles");
+  return parseOrThrow(res, z.array(DiagnosticBundleSummaryV1Schema));
 }
 
 /** Short-lived download URL of an uploaded bundle (the download is recorded in the audit ledger). */
 export async function getDiagnosticBundleDownload(bundleId: string): Promise<DiagnosticBundleDownload> {
   const res = await authFetch(`/api/v1/support/diagnostic-bundles/${encodeURIComponent(bundleId)}/download`);
-  return parseOrThrow(res, DiagnosticBundleDownloadV1Schema, "Diagnostic bundle download");
+  return parseOrThrow(res, DiagnosticBundleDownloadV1Schema);
 }
 
 export async function listOfflineReconciliation(): Promise<OfflineReconciliationRow[]> {
   const res = await authFetch("/api/v1/support/offline-reconciliation");
-  return parseOrThrow(res, z.array(OfflineTicketReconciliationRowV1Schema), "Offline reconciliation");
+  return parseOrThrow(res, z.array(OfflineTicketReconciliationRowV1Schema));
 }
 
 export async function listIncidentRunbooks(): Promise<IncidentRunbookEntry[]> {
   const res = await authFetch("/api/v1/audit/hardening/runbooks");
-  return parseOrThrow(res, z.array(IncidentRunbookEntryV1Schema), "Incident runbooks");
+  return parseOrThrow(res, z.array(IncidentRunbookEntryV1Schema));
 }
 
 export async function listReadinessChecks(): Promise<ReadinessCheckItem[]> {
   const res = await authFetch("/api/v1/audit/hardening/readiness");
-  return parseOrThrow(res, z.array(AuditReadinessCheckItemV1Schema), "Readiness checks");
+  return parseOrThrow(res, z.array(AuditReadinessCheckItemV1Schema));
 }
 
 async function downloadCsv(path: string): Promise<Blob> {
   const res = await authFetch(path, { headers: { Accept: "text/csv" } });
-  if (!res.ok) {
-    throw new Error(`CSV export failed (${res.status})`);
-  }
+  if (!res.ok) throw await apiRequestError(res);
   return res.blob();
 }
 

@@ -6,7 +6,7 @@
 import { z } from "zod";
 
 import { authFetch } from "@/lib/api-client";
-import { parseControlPlaneErrorResponse } from "@/services/license-control-service";
+import { apiRequestError } from "@/lib/api-error";
 
 export const PAYMENT_STATUSES = ["pending", "awaiting_payment", "paid", "failed"] as const;
 
@@ -61,7 +61,7 @@ const ReconcileResultSchema = z.object({
 export type ReconcileResult = z.infer<typeof ReconcileResultSchema>;
 
 async function json<T>(res: Response, schema: z.ZodType<T>): Promise<T> {
-  if (!res.ok) throw new Error(await parseControlPlaneErrorResponse(res));
+  if (!res.ok) throw await apiRequestError(res);
   return schema.parse(await res.json());
 }
 

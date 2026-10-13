@@ -29,7 +29,6 @@ import {
   PRIVILEGED_REASON_MIN_LENGTH,
   getCohortUpdatePolicy,
   getTenantUpdatePolicy,
-  isDuplicateTenantSlugMessage,
   listEditions,
   listTenants,
   rollbackCohortUpdatePolicy,
@@ -41,6 +40,8 @@ import {
   type EditionCatalogEntry,
   type EditionId,
 } from "@/services/license-control-service";
+import { ApiRequestError } from "@/lib/api-error";
+import { errorText } from "@/lib/error-text";
 
 type TenantChannelFilter = "all" | "stable" | "pilot" | "internal";
 type SortKey = "slug" | "display_name" | "rollout_cohort" | "update_channel" | "edition" | "created_at";
@@ -68,6 +69,7 @@ function compareNullable(left: string | null | undefined, right: string | null |
   return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
 }
 
+/** Field problems as translation keys (vendorConsole `customers.validation.*`). */
 function validateAddTenantForm(form: AddTenantForm): AddTenantErrors {
   const nextErrors: AddTenantErrors = {};
   const slug = form.slug.trim();
@@ -75,23 +77,23 @@ function validateAddTenantForm(form: AddTenantForm): AddTenantErrors {
   const cohort = form.rollout_cohort.trim();
 
   if (!slug) {
-    nextErrors.slug = "Slug is required.";
+    nextErrors.slug = "customers.validation.slugRequired";
   } else if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-    nextErrors.slug = "Use lowercase letters, numbers, and dashes only.";
+    nextErrors.slug = "customers.validation.slugFormat";
   } else if (slug.length < 3 || slug.length > 64) {
-    nextErrors.slug = "Slug must be between 3 and 64 characters.";
+    nextErrors.slug = "customers.validation.slugLength";
   }
 
   if (!displayName) {
-    nextErrors.display_name = "Company name is required.";
+    nextErrors.display_name = "customers.validation.nameRequired";
   } else if (displayName.length < 2 || displayName.length > 120) {
-    nextErrors.display_name = "Company name must be between 2 and 120 characters.";
+    nextErrors.display_name = "customers.validation.nameLength";
   }
 
   if (!cohort) {
-    nextErrors.rollout_cohort = "Rollout cohort is required.";
+    nextErrors.rollout_cohort = "customers.validation.cohortRequired";
   } else if (cohort.length > 64) {
-    nextErrors.rollout_cohort = "Rollout cohort must be 64 characters or fewer.";
+    nextErrors.rollout_cohort = "customers.validation.cohortLength";
   }
 
   return nextErrors;
@@ -165,7 +167,7 @@ export function CustomerWorkspace() {
         setSelectedTenantId(nextSelection);
       }
     } catch (err) {
-      setTenantError(err instanceof Error ? err.message : "Failed to load tenants");
+      setTenantError(errorText(err));
     } finally {
       setLoadingTenants(false);
     }
@@ -238,7 +240,7 @@ export function CustomerWorkspace() {
       setCohortPolicyMode(cohortPolicy.force_update_mode);
       setCohortPolicyReason(cohortPolicy.force_update_reason ?? "");
     } catch (err) {
-      setPolicyError(err instanceof Error ? err.message : "Failed to load update policy");
+      setPolicyError(errorText(err));
     } finally {
       setLoadingPolicy(false);
     }
@@ -315,7 +317,7 @@ export function CustomerWorkspace() {
           update_channel: addTenantForm.update_channel,
           edition: addTenantForm.edition,
         });
-        setTenantSuccess(`Customer "${updated.display_name}" was updated successfully.`);
+        setTenantSuccess(t("customers.updatedDone", { name: updated.display_name }));
         await loadTenants(updated.id);
         setTenantDialogMode(null);
         resetAddDialog();
@@ -327,7 +329,7 @@ export function CustomerWorkspace() {
           update_channel: addTenantForm.update_channel,
           edition: addTenantForm.edition,
         });
-        setTenantSuccess(`Customer "${created.display_name}" was added successfully.`);
+        setTenantSuccess(t("customers.addedDone", { name: created.display_name }));
         setSearchQuery("");
         setChannelFilter("all");
         await loadTenants(created.id);
@@ -335,8 +337,8 @@ export function CustomerWorkspace() {
         resetAddDialog();
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Save tenant failed";
-      if (isDuplicateTenantSlugMessage(message)) {
+      const message = errorText(err);
+      if (err instanceof ApiRequestError && err.code === "tenant_conflict") {
         setSlugConflictError(message);
         setCreateTenantError(null);
       } else {
@@ -374,7 +376,7 @@ export function CustomerWorkspace() {
       });
       setDeleteSlugTyped("");
       setDeleteReason("");
-      setTenantSuccess(`Customer "${deleteConfirmTenant.display_name}" was deleted.`);
+      setTenantSuccess(t("customers.deletedDone", { name: deleteConfirmTenant.display_name }));
       setDeleteConfirmTenant(null);
       if (selectedTenantId === deleteConfirmTenant.id) {
         setSelectedTenantId("");
@@ -382,7 +384,7 @@ export function CustomerWorkspace() {
       await loadTenants();
     } catch (err) {
       if (!(err instanceof StepUpCancelledError)) {
-        setTenantError(err instanceof Error ? err.message : "Delete tenant failed");
+        setTenantError(errorText(err));
       }
     } finally {
       setDeletingTenant(false);
@@ -398,20 +400,17 @@ export function CustomerWorkspace() {
     <div className="mx-auto max-w-6xl space-y-8">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{t("customers.title", "Customers")}</h1>
+          <h1 className="text-xl font-semibold">{t("customers.title")}</h1>
           <p className="mt-1 text-sm text-text-secondary">
-            {t(
-              "customers.workspaceIntro",
-              "Tenant identity, deployment metadata, cohort, and environment flags. Mutations require customer.manage and server-side checks.",
-            )}
+            {t("customers.workspaceIntro")}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button type="button" onClick={handleOpenAddDialog}>
-            {t("customers.addCompany", "Add customer/company")}
+            {t("customers.addCompany")}
           </Button>
           <Button type="button" variant="outline" disabled={loadingTenants} onClick={() => void loadTenants()}>
-            {loadingTenants ? t("customers.refreshing", "Refreshing…") : t("customers.refreshTenants", "Refresh")}
+            {loadingTenants ? t("customers.refreshing") : t("customers.refreshTenants")}
           </Button>
         </div>
       </header>
@@ -423,57 +422,54 @@ export function CustomerWorkspace() {
       ) : null}
 
       <section className="rounded-lg border border-surface-border bg-surface-1 p-4">
-        <h2 className="text-sm font-semibold">{t("customers.listTitle", "Customer list")}</h2>
+        <h2 className="text-sm font-semibold">{t("customers.listTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "customers.listHint",
-            "Search, filter, sort, and select a customer before editing tenant-level settings.",
-          )}
+          {t("customers.listHint")}
         </p>
 
         <div className="mt-4 grid gap-3 lg:grid-cols-4">
           <div>
-            <Label htmlFor="customer-search">{t("customers.searchLabel", "Search customers")}</Label>
+            <Label htmlFor="customer-search">{t("customers.searchLabel")}</Label>
             <Input
               id="customer-search"
               className="mt-1"
-              placeholder={t("customers.searchPlaceholder", "Search by slug, company, id, cohort")}
+              placeholder={t("customers.searchPlaceholder")}
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
             />
           </div>
           <div>
-            <Label htmlFor="customer-channel-filter">{t("customers.channelFilter", "Channel filter")}</Label>
+            <Label htmlFor="customer-channel-filter">{t("customers.channelFilter")}</Label>
             <select
               id="customer-channel-filter"
               className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
               value={channelFilter}
               onChange={(event) => setChannelFilter(event.target.value as TenantChannelFilter)}
             >
-              <option value="all">{t("customers.filterAllChannels", "All channels")}</option>
+              <option value="all">{t("customers.filterAllChannels")}</option>
               <option value="stable">stable</option>
               <option value="pilot">pilot</option>
               <option value="internal">internal</option>
             </select>
           </div>
           <div>
-            <Label htmlFor="customer-sort-key">{t("customers.sortBy", "Sort by")}</Label>
+            <Label htmlFor="customer-sort-key">{t("customers.sortBy")}</Label>
             <select
               id="customer-sort-key"
               className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
               value={sortKey}
               onChange={(event) => setSortKey(event.target.value as SortKey)}
             >
-              <option value="slug">{t("customers.columns.slug", "Slug")}</option>
-              <option value="display_name">{t("customers.columns.company", "Company")}</option>
-              <option value="rollout_cohort">{t("customers.columns.cohort", "Cohort")}</option>
-              <option value="edition">{t("customers.columns.edition", "Edition")}</option>
-              <option value="update_channel">{t("customers.columns.channel", "Channel")}</option>
-              <option value="created_at">{t("customers.columns.created", "Created")}</option>
+              <option value="slug">{t("customers.columns.slug")}</option>
+              <option value="display_name">{t("customers.columns.company")}</option>
+              <option value="rollout_cohort">{t("customers.columns.cohort")}</option>
+              <option value="edition">{t("customers.columns.edition")}</option>
+              <option value="update_channel">{t("customers.columns.channel")}</option>
+              <option value="created_at">{t("customers.columns.created")}</option>
             </select>
           </div>
           <div>
-            <Label htmlFor="customer-sort-direction">{t("customers.sortDirection", "Sort direction")}</Label>
+            <Label htmlFor="customer-sort-direction">{t("customers.sortDirection")}</Label>
             <Button
               id="customer-sort-direction"
               type="button"
@@ -482,8 +478,8 @@ export function CustomerWorkspace() {
               onClick={() => setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"))}
             >
               {sortDirection === "asc"
-                ? t("customers.sortAsc", "Ascending")
-                : t("customers.sortDesc", "Descending")}
+                ? t("customers.sortAsc")
+                : t("customers.sortDesc")}
             </Button>
           </div>
         </div>
@@ -492,26 +488,26 @@ export function CustomerWorkspace() {
           <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
             <p>{tenantError}</p>
             <Button type="button" variant="outline" className="mt-3" onClick={() => void loadTenants()}>
-              {t("customers.retry", "Retry")}
+              {t("customers.retry")}
             </Button>
           </div>
         ) : null}
 
         {loadingTenants && tenants.length === 0 ? (
           <div className="mt-4 rounded-md border border-surface-border bg-surface-2 p-4 text-sm text-text-secondary">
-            {t("customers.loading", "Loading customers…")}
+            {t("customers.loading")}
           </div>
         ) : null}
 
         {listHasNoRows ? (
           <div className="mt-4 rounded-md border border-dashed border-surface-border bg-surface-2 p-5 text-sm text-text-secondary">
-            <p>{t("customers.empty", "No customers found.")}</p>
+            <p>{t("customers.empty")}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button type="button" onClick={handleOpenAddDialog}>
-                {t("customers.addFirstCompany", "Add first customer/company")}
+                {t("customers.addFirstCompany")}
               </Button>
               <Button type="button" variant="outline" onClick={() => void loadTenants()}>
-                {t("customers.retry", "Retry")}
+                {t("customers.retry")}
               </Button>
             </div>
           </div>
@@ -519,7 +515,7 @@ export function CustomerWorkspace() {
 
         {noVisibleRows ? (
           <div className="mt-4 rounded-md border border-surface-border bg-surface-2 p-4 text-sm text-text-secondary">
-            <p>{t("customers.noResults", "No customers match the current filters.")}</p>
+            <p>{t("customers.noResults")}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -529,7 +525,7 @@ export function CustomerWorkspace() {
                   setChannelFilter("all");
                 }}
               >
-                {t("customers.clearFilters", "Clear filters")}
+                {t("customers.clearFilters")}
               </Button>
             </div>
           </div>
@@ -540,14 +536,14 @@ export function CustomerWorkspace() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t("customers.columns.slug", "Slug")}</TableHead>
-                  <TableHead>{t("customers.columns.company", "Company")}</TableHead>
-                  <TableHead>{t("customers.columns.id", "Tenant ID")}</TableHead>
-                  <TableHead>{t("customers.columns.edition", "Edition")}</TableHead>
-                  <TableHead>{t("customers.columns.cohort", "Cohort")}</TableHead>
-                  <TableHead>{t("customers.columns.channel", "Channel")}</TableHead>
+                  <TableHead>{t("customers.columns.slug")}</TableHead>
+                  <TableHead>{t("customers.columns.company")}</TableHead>
+                  <TableHead>{t("customers.columns.id")}</TableHead>
+                  <TableHead>{t("customers.columns.edition")}</TableHead>
+                  <TableHead>{t("customers.columns.cohort")}</TableHead>
+                  <TableHead>{t("customers.columns.channel")}</TableHead>
                   <TableHead className="w-[1%] whitespace-nowrap text-right">
-                    {t("customers.columns.actions", "Actions")}
+                    {t("customers.columns.actions")}
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -590,11 +586,11 @@ export function CustomerWorkspace() {
                           size="sm"
                           variant="outline"
                           className="h-8 px-2"
-                          title={t("customers.editTenant", "Edit tenant")}
+                          title={t("customers.editTenant")}
                           onClick={() => handleOpenEditDialog(tenant)}
                         >
                           <Pencil className="h-4 w-4" aria-hidden />
-                          <span className="sr-only">{t("customers.editTenant", "Edit")}</span>
+                          <span className="sr-only">{t("customers.editTenant")}</span>
                         </Button>
                         <Button
                           type="button"
@@ -614,11 +610,11 @@ export function CustomerWorkspace() {
                           size="sm"
                           variant="outline"
                           className="h-8 border-red-500/40 px-2 text-red-200 hover:bg-red-500/10"
-                          title={t("customers.deleteTenant", "Delete tenant")}
+                          title={t("customers.deleteTenant")}
                           onClick={() => setDeleteConfirmTenant(tenant)}
                         >
                           <Trash2 className="h-4 w-4" aria-hidden />
-                          <span className="sr-only">{t("customers.deleteTenant", "Delete")}</span>
+                          <span className="sr-only">{t("customers.deleteTenant")}</span>
                         </Button>
                       </div>
                     </TableCell>
@@ -631,33 +627,30 @@ export function CustomerWorkspace() {
       </section>
 
       <section className="rounded-lg border border-surface-border bg-surface-1 p-4">
-        <h2 className="text-sm font-semibold">{t("customers.metadata", "Workspace metadata")}</h2>
+        <h2 className="text-sm font-semibold">{t("customers.metadata")}</h2>
         <p className="mt-1 text-xs text-text-secondary">
-          {t(
-            "customers.metadataHint",
-            "Tenant metadata is loaded from the control-plane API and stays authoritative for operations.",
-          )}
+          {t("customers.metadataHint")}
         </p>
         {!selectedTenant ? (
           <p className="mt-4 rounded-md border border-dashed border-surface-border bg-surface-2 p-3 text-sm text-text-secondary">
-            {t("customers.selectTenantFirst", "Select a customer row to view tenant metadata and policies.")}
+            {t("customers.selectTenantFirst")}
           </p>
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <div>
-              <Label htmlFor="tenant-id">{t("customers.columns.id", "Tenant ID")}</Label>
+              <Label htmlFor="tenant-id">{t("customers.columns.id")}</Label>
               <Input id="tenant-id" value={selectedTenant.id} className="mt-1 font-mono text-xs" readOnly />
             </div>
             <div>
-              <Label htmlFor="tenant-slug">{t("customers.tenantSlug", "Tenant slug")}</Label>
+              <Label htmlFor="tenant-slug">{t("customers.tenantSlug")}</Label>
               <Input id="tenant-slug" value={selectedTenant.slug} className="mt-1" readOnly />
             </div>
             <div>
-              <Label htmlFor="cohort">{t("customers.cohort", "Rollout cohort")}</Label>
+              <Label htmlFor="cohort">{t("customers.cohort")}</Label>
               <Input id="cohort" value={selectedTenant.rollout_cohort ?? "—"} className="mt-1" readOnly />
             </div>
             <div>
-              <Label htmlFor="tenant-edition">{t("customers.edition", "Edition")}</Label>
+              <Label htmlFor="tenant-edition">{t("customers.edition")}</Label>
               <Input
                 id="tenant-edition"
                 value={
@@ -670,11 +663,11 @@ export function CustomerWorkspace() {
               />
             </div>
             <div>
-              <Label htmlFor="tenant-name">{t("customers.tenantName", "Tenant display name")}</Label>
+              <Label htmlFor="tenant-name">{t("customers.tenantName")}</Label>
               <Input id="tenant-name" value={selectedTenant.display_name ?? "—"} className="mt-1" readOnly />
             </div>
             <div>
-              <Label htmlFor="tenant-channel">{t("customers.tenantChannel", "Tenant update channel")}</Label>
+              <Label htmlFor="tenant-channel">{t("customers.tenantChannel")}</Label>
               <Input id="tenant-channel" value={selectedTenant.update_channel ?? "stable"} className="mt-1" readOnly />
             </div>
           </div>
@@ -682,28 +675,28 @@ export function CustomerWorkspace() {
       </section>
 
       <section className="rounded-lg border border-surface-border bg-surface-1 p-4">
-        <h2 className="text-sm font-semibold">Force-update governance</h2>
+        <h2 className="text-sm font-semibold">{t("customers.policy.title")}</h2>
         <p className="mt-1 text-xs text-text-secondary">
-          Enforce minimum desktop versions per tenant or cohort. Emergency mode blocks operations until clients update.
+          {t("customers.policy.body")}
         </p>
-        {loadingPolicy && selectedTenant ? <p className="mt-3 text-xs text-text-secondary">Loading policy details…</p> : null}
+        {loadingPolicy && selectedTenant ? <p className="mt-3 text-xs text-text-secondary">{t("customers.policy.loading")}</p> : null}
         {policyError ? (
           <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-200">
             <p>{policyError}</p>
             {selectedTenant ? (
               <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void loadPolicies(selectedTenant)}>
-                Retry policy load
+                {t("customers.policy.retry")}
               </Button>
             ) : null}
           </div>
         ) : null}
         {!selectedTenant ? (
-          <p className="mt-3 text-xs text-text-muted">Select a tenant to manage update governance.</p>
+          <p className="mt-3 text-xs text-text-muted">{t("customers.policy.selectTenant")}</p>
         ) : (
           <div className="mt-4 space-y-4">
             <div className="grid gap-3 rounded-md border border-surface-border p-3 sm:grid-cols-2">
               <div>
-                <Label htmlFor="operator-reason">Audit reason code (header)</Label>
+                <Label htmlFor="operator-reason">{t("customers.policy.auditReason")}</Label>
                 <Input
                   id="operator-reason"
                   value={operatorReasonCode}
@@ -715,45 +708,45 @@ export function CustomerWorkspace() {
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-md border border-surface-border p-3">
-                <p className="text-xs font-medium text-text-secondary">Tenant override ({selectedTenant.slug})</p>
+                <p className="text-xs font-medium text-text-secondary">{t("customers.policy.tenantOverride", { slug: selectedTenant.slug })}</p>
                 <div className="mt-3 space-y-3">
                   <div>
-                    <Label htmlFor="tenant-min-version">Minimum app version</Label>
+                    <Label htmlFor="tenant-min-version">{t("customers.policy.minVersion")}</Label>
                     <Input
                       id="tenant-min-version"
                       value={tenantPolicyVersion}
                       onChange={(e) => setTenantPolicyVersion(e.target.value)}
                       className="mt-1"
-                      placeholder="ex: 1.8.0"
+                      placeholder="1.8.0"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="tenant-force-mode">Mode</Label>
+                    <Label htmlFor="tenant-force-mode">{t("customers.policy.mode")}</Label>
                     <select
                       id="tenant-force-mode"
                       className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
                       value={tenantPolicyMode}
                       onChange={(e) => setTenantPolicyMode(e.target.value as "off" | "required" | "emergency" | "inherit")}
                     >
-                      <option value="inherit">inherit cohort policy</option>
-                      <option value="off">off</option>
-                      <option value="required">required (version gate)</option>
-                      <option value="emergency">emergency override</option>
+                      <option value="inherit">{t("customers.policy.modes.inherit")}</option>
+                      <option value="off">{t("customers.policy.modes.off")}</option>
+                      <option value="required">{t("customers.policy.modes.required")}</option>
+                      <option value="emergency">{t("customers.policy.modes.emergency")}</option>
                     </select>
                   </div>
                   <div>
-                    <Label htmlFor="tenant-force-reason">Operator reason</Label>
+                    <Label htmlFor="tenant-force-reason">{t("customers.policy.userReason")}</Label>
                     <Input
                       id="tenant-force-reason"
                       value={tenantPolicyReason}
                       onChange={(e) => setTenantPolicyReason(e.target.value)}
                       className="mt-1"
-                      placeholder="Incident INC-2026-042"
+                      placeholder="INC-2026-042"
                     />
                   </div>
                   {!canRunPrivilegedPolicyAction ? (
                     <p className="text-xs text-text-muted">
-                      Enter an audit reason code and step-up token in the header fields above to enable tenant policy actions.
+                      {t("customers.policy.needReason")}
                     </p>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
@@ -782,13 +775,13 @@ export function CustomerWorkspace() {
                           setTenantPolicyMode(updated.force_update_mode);
                           setTenantPolicyReason(updated.force_update_reason ?? "");
                         } catch (err) {
-                          setPolicyError(err instanceof Error ? err.message : "Failed to update tenant policy");
+                          setPolicyError(errorText(err));
                         } finally {
                           setSavingPolicy(false);
                         }
                       }}
                     >
-                      {savingPolicy ? "Saving…" : "Apply tenant policy"}
+                      {savingPolicy ? t("customers.savingTenant") : t("customers.policy.applyTenant")}
                     </Button>
                     <Button
                       type="button"
@@ -808,58 +801,61 @@ export function CustomerWorkspace() {
                           setTenantPolicyMode(rolledBack.force_update_mode);
                           setTenantPolicyReason(rolledBack.force_update_reason ?? "");
                         } catch (err) {
-                          setPolicyError(err instanceof Error ? err.message : "Tenant policy rollback failed");
+                          setPolicyError(errorText(err));
                         } finally {
                           setRollingBackPolicy(false);
                         }
                       }}
                     >
-                      Rollback tenant policy
+                      {t("customers.policy.rollbackTenant")}
                     </Button>
                   </div>
                 </div>
               </div>
               <div className="rounded-md border border-surface-border p-3">
                 <p className="text-xs font-medium text-text-secondary">
-                  Cohort baseline ({selectedTenant.update_channel ?? "stable"} / {selectedTenant.rollout_cohort ?? "stable-main"})
+                  {t("customers.policy.cohortBaseline", {
+                    channel: selectedTenant.update_channel ?? "stable",
+                    cohort: selectedTenant.rollout_cohort ?? "stable-main",
+                  })}
                 </p>
                 <div className="mt-3 space-y-3">
                   <div>
-                    <Label htmlFor="cohort-min-version">Minimum app version</Label>
+                    <Label htmlFor="cohort-min-version">{t("customers.policy.minVersion")}</Label>
                     <Input
                       id="cohort-min-version"
                       value={cohortPolicyVersion}
                       onChange={(e) => setCohortPolicyVersion(e.target.value)}
                       className="mt-1"
-                      placeholder="ex: 1.8.0"
+                      placeholder="1.8.0"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="cohort-force-mode">Mode</Label>
+                    <Label htmlFor="cohort-force-mode">{t("customers.policy.mode")}</Label>
                     <select
                       id="cohort-force-mode"
                       className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
                       value={cohortPolicyMode}
                       onChange={(e) => setCohortPolicyMode(e.target.value as "off" | "required" | "emergency")}
                     >
-                      <option value="off">off</option>
-                      <option value="required">required (version gate)</option>
-                      <option value="emergency">emergency override</option>
+                      <option value="off">{t("customers.policy.modes.off")}</option>
+                      <option value="required">{t("customers.policy.modes.required")}</option>
+                      <option value="emergency">{t("customers.policy.modes.emergency")}</option>
                     </select>
                   </div>
                   <div>
-                    <Label htmlFor="cohort-force-reason">Operator reason</Label>
+                    <Label htmlFor="cohort-force-reason">{t("customers.policy.userReason")}</Label>
                     <Input
                       id="cohort-force-reason"
                       value={cohortPolicyReason}
                       onChange={(e) => setCohortPolicyReason(e.target.value)}
                       className="mt-1"
-                      placeholder="Release rollback after canary failure"
+                      placeholder="INC-2026-042"
                     />
                   </div>
                   {!canRunPrivilegedPolicyAction ? (
                     <p className="text-xs text-text-muted">
-                      Enter an audit reason code and step-up token in the header fields above to enable cohort policy actions.
+                      {t("customers.policy.needReason")}
                     </p>
                   ) : null}
                   <div className="flex flex-wrap gap-2">
@@ -890,13 +886,13 @@ export function CustomerWorkspace() {
                           setCohortPolicyMode(updated.force_update_mode);
                           setCohortPolicyReason(updated.force_update_reason ?? "");
                         } catch (err) {
-                          setPolicyError(err instanceof Error ? err.message : "Failed to update cohort policy");
+                          setPolicyError(errorText(err));
                         } finally {
                           setSavingPolicy(false);
                         }
                       }}
                     >
-                      {savingPolicy ? "Saving…" : "Apply cohort policy"}
+                      {savingPolicy ? t("customers.savingTenant") : t("customers.policy.applyCohort")}
                     </Button>
                     <Button
                       type="button"
@@ -920,13 +916,13 @@ export function CustomerWorkspace() {
                           setCohortPolicyMode(rolledBack.force_update_mode);
                           setCohortPolicyReason(rolledBack.force_update_reason ?? "");
                         } catch (err) {
-                          setPolicyError(err instanceof Error ? err.message : "Cohort policy rollback failed");
+                          setPolicyError(errorText(err));
                         } finally {
                           setRollingBackPolicy(false);
                         }
                       }}
                     >
-                      Rollback cohort policy
+                      {t("customers.policy.rollbackCohort")}
                     </Button>
                   </div>
                 </div>
@@ -937,16 +933,13 @@ export function CustomerWorkspace() {
       </section>
 
       <section className="rounded-lg border border-surface-border bg-surface-1 p-4">
-        <h2 className="text-sm font-semibold">{t("customers.bulk.title", "Bulk channel reassignment (dry-run)")}</h2>
+        <h2 className="text-sm font-semibold">{t("customers.bulk.title")}</h2>
         <p className="mt-1 text-xs text-text-secondary">
-          {t(
-            "customers.bulk.hint",
-            "Safe bulk: dry-run first, per-tenant lineage version for optimistic concurrency, channel alignment with rollout.",
-          )}
+          {t("customers.bulk.hint")}
         </p>
         <div className="mt-4 space-y-3">
           <div>
-            <Label htmlFor="bulk-tenants">{t("customers.bulk.tenantIds", "Tenant IDs (comma-separated)")}</Label>
+            <Label htmlFor="bulk-tenants">{t("customers.bulk.tenantIds")}</Label>
             <Input
               id="bulk-tenants"
               value={tenantIds}
@@ -956,7 +949,7 @@ export function CustomerWorkspace() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <Label>{t("customers.bulk.licenseChannel", "License / entitlement channel")}</Label>
+              <Label>{t("customers.bulk.licenseChannel")}</Label>
               <select
                 className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
                 value={channel}
@@ -968,7 +961,7 @@ export function CustomerWorkspace() {
               </select>
             </div>
             <div>
-              <Label>{t("customers.bulk.rolloutChannel", "Rollout channel (must match)")}</Label>
+              <Label>{t("customers.bulk.rolloutChannel")}</Label>
               <select
                 className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
                 value={rolloutChannel}
@@ -982,16 +975,13 @@ export function CustomerWorkspace() {
           </div>
           {!consistent ? (
             <p className="text-sm text-amber-800 dark:text-amber-200" role="alert">
-              {t(
-                "customers.bulk.channelMismatch",
-                "License channel and rollout channel differ — resolve before apply.",
-              )}
+              {t("customers.bulk.channelMismatch")}
             </p>
           ) : null}
           <div className="flex items-center gap-2">
             <Checkbox id="dry-run" checked={dryRun} onCheckedChange={(c) => setDryRun(c === true)} />
             <Label htmlFor="dry-run" className="font-normal">
-              {t("customers.bulk.dryRun", "Dry run (no mutations)")}
+              {t("customers.bulk.dryRun")}
             </Label>
           </div>
           <Button
@@ -1002,7 +992,7 @@ export function CustomerWorkspace() {
               setBulkPreviewJson(JSON.stringify(buildRequest(), null, 2));
             }}
           >
-            {t("customers.bulk.buildPreview", "Build request payload")}
+            {t("customers.bulk.buildPreview")}
           </Button>
           {bulkPreviewJson ? (
             <pre className="overflow-auto rounded-md border border-surface-border bg-surface-2 p-3 text-xs">
@@ -1024,24 +1014,18 @@ export function CustomerWorkspace() {
           <DialogHeader>
             <DialogTitle>
               {tenantDialogMode === "edit"
-                ? t("customers.editCompany", "Edit customer/company")
-                : t("customers.addCompany", "Add customer/company")}
+                ? t("customers.editCompany")
+                : t("customers.addCompany")}
             </DialogTitle>
             <DialogDescription>
               {tenantDialogMode === "edit"
-                ? t(
-                    "customers.editDescription",
-                    "Update tenant metadata. Slug changes must stay unique across all customers.",
-                  )
-                : t(
-                    "customers.addDescription",
-                    "Create a new customer company. Fields are validated before sending to the control-plane API.",
-                  )}
+                ? t("customers.editDescription")
+                : t("customers.addDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label htmlFor="add-company-name">{t("customers.companyName", "Company name")}</Label>
+              <Label htmlFor="add-company-name">{t("customers.companyName")}</Label>
               <Input
                 id="add-company-name"
                 value={addTenantForm.display_name}
@@ -1052,12 +1036,12 @@ export function CustomerWorkspace() {
               />
               {addTenantValidation.display_name ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {addTenantValidation.display_name}
+                  {t(addTenantValidation.display_name)}
                 </p>
               ) : null}
             </div>
             <div>
-              <Label htmlFor="add-company-slug">{t("customers.tenantSlug", "Tenant slug")}</Label>
+              <Label htmlFor="add-company-slug">{t("customers.tenantSlug")}</Label>
               <Input
                 id="add-company-slug"
                 value={addTenantForm.slug}
@@ -1071,13 +1055,13 @@ export function CustomerWorkspace() {
               />
               {addTenantValidation.slug || slugConflictError ? (
                 <p className="mt-1 text-xs text-red-300" role="alert">
-                  {addTenantValidation.slug ?? slugConflictError}
+                  {addTenantValidation.slug ? t(addTenantValidation.slug) : slugConflictError}
                 </p>
               ) : null}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <Label htmlFor="add-company-channel">{t("customers.columns.channel", "Channel")}</Label>
+                <Label htmlFor="add-company-channel">{t("customers.columns.channel")}</Label>
                 <select
                   id="add-company-channel"
                   className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
@@ -1095,7 +1079,7 @@ export function CustomerWorkspace() {
                 </select>
               </div>
               <div>
-                <Label htmlFor="add-company-edition">{t("customers.edition", "Edition")}</Label>
+                <Label htmlFor="add-company-edition">{t("customers.edition")}</Label>
                 <select
                   id="add-company-edition"
                   className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
@@ -1115,7 +1099,7 @@ export function CustomerWorkspace() {
                 </select>
               </div>
               <div className="sm:col-span-2">
-                <Label htmlFor="add-company-cohort">{t("customers.cohort", "Rollout cohort")}</Label>
+                <Label htmlFor="add-company-cohort">{t("customers.cohort")}</Label>
                 <Input
                   id="add-company-cohort"
                   value={addTenantForm.rollout_cohort}
@@ -1126,7 +1110,7 @@ export function CustomerWorkspace() {
                 />
                 {addTenantValidation.rollout_cohort ? (
                   <p className="mt-1 text-xs text-red-300" role="alert">
-                    {addTenantValidation.rollout_cohort}
+                    {t(addTenantValidation.rollout_cohort)}
                   </p>
                 ) : null}
               </div>
@@ -1140,12 +1124,12 @@ export function CustomerWorkspace() {
               <div className="rounded-md border border-surface-border bg-surface-2 px-3 py-2 text-xs text-text-secondary">
                 <p className="font-medium text-text-primary">
                   {tenantDialogMode === "edit"
-                    ? "Complete the following before saving:"
-                    : "Complete the following before adding this customer:"}
+                    ? t("entitlement.completeBeforeSaving")
+                    : t("customers.completeBeforeAdding")}
                 </p>
                 <ul className="mt-1 list-inside list-disc space-y-0.5">
                   {addFormBlockingSummaries.map((line, index) => (
-                    <li key={`${index}-${line}`}>{line}</li>
+                    <li key={`${index}-${line}`}>{t(line)}</li>
                   ))}
                 </ul>
               </div>
@@ -1153,16 +1137,16 @@ export function CustomerWorkspace() {
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => resetAddDialog()} disabled={creatingTenant}>
-              {t("stepUp.cancel", "Cancel")}
+              {t("stepUp.cancel")}
             </Button>
             <Button type="button" onClick={() => void handleSaveTenant()} disabled={creatingTenant || !createFormIsValid}>
               {creatingTenant
                 ? tenantDialogMode === "edit"
-                  ? t("customers.savingTenant", "Saving…")
-                  : t("customers.creatingTenant", "Creating…")
+                  ? t("customers.savingTenant")
+                  : t("customers.creatingTenant")
                 : tenantDialogMode === "edit"
-                  ? t("customers.saveChanges", "Save changes")
-                  : t("customers.addCompany", "Add customer/company")}
+                  ? t("customers.saveChanges")
+                  : t("customers.addCompany")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1180,12 +1164,10 @@ export function CustomerWorkspace() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t("customers.confirmDeleteTitle", "Delete customer?")}</DialogTitle>
+            <DialogTitle>{t("customers.confirmDeleteTitle")}</DialogTitle>
             <DialogDescription>
               {deleteConfirmTenant
                 ? t("customers.confirmDeleteBody", {
-                    defaultValue:
-                      'This permanently deletes "{{name}}" ({{slug}}) and all associated license keys and activations. This cannot be undone.',
                     name: deleteConfirmTenant.display_name,
                     slug: deleteConfirmTenant.slug,
                   })
@@ -1211,7 +1193,7 @@ export function CustomerWorkspace() {
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setDeleteConfirmTenant(null)} disabled={deletingTenant}>
-              {t("stepUp.cancel", "Cancel")}
+              {t("stepUp.cancel")}
             </Button>
             <Button
               type="button"
@@ -1223,7 +1205,7 @@ export function CustomerWorkspace() {
               }
               onClick={() => void handleConfirmDeleteTenant()}
             >
-              {deletingTenant ? t("customers.deletingTenant", "Deleting…") : t("customers.confirmDelete", "Delete permanently")}
+              {deletingTenant ? t("customers.deletingTenant") : t("customers.confirmDelete")}
             </Button>
           </DialogFooter>
         </DialogContent>

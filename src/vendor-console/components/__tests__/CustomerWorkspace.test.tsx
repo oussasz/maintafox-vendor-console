@@ -2,12 +2,8 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    // Like i18next: a string 2nd arg is the default value; an options object is not rendered.
-    t: (key: string, fallback?: unknown) => (typeof fallback === "string" ? fallback : key),
-  }),
-}));
+import "@/test/i18n";
+
 
 vi.mock("@/services/customer-entitlement-machine-contracts", () => ({
   channelPolicyConsistent: vi.fn(() => true),
@@ -25,7 +21,6 @@ vi.mock("@/services/license-control-service", () => ({
   rollbackTenantUpdatePolicy: vi.fn(),
   updateCohortUpdatePolicy: vi.fn(),
   rollbackCohortUpdatePolicy: vi.fn(),
-  isDuplicateTenantSlugMessage: vi.fn(() => false),
   PRIVILEGED_REASON_MIN_LENGTH: 4,
 }));
 
@@ -202,7 +197,7 @@ describe("CustomerWorkspace", () => {
         edition: "core",
       });
     });
-    expect(await screen.findByText('Customer "Beta Industries" was added successfully.')).toBeInTheDocument();
+    expect(await screen.findByText("Customer “Beta Industries” was added.")).toBeInTheDocument();
     expect(await screen.findByText("Beta Industries")).toBeInTheDocument();
 
     const betaRow = screen.getByText("beta").closest("tr");

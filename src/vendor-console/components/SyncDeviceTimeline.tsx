@@ -9,6 +9,7 @@ import { getDeviceTimeline, requestDeviceResync, type DeviceTimeline } from "@/s
 import { useVendorConsole } from "../VendorConsoleContext";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OperatorActionDialog } from "./OperatorActionDialog";
+import { errorText } from "@/lib/error-text";
 
 /** Spans offered for the timeline (the API accepts 1 h to 30 days). */
 const TIMELINE_SPANS_HOURS = [24, 72, 168, 720] as const;
@@ -41,7 +42,7 @@ export function SyncDeviceTimeline() {
         setTenants(list);
         setTenantId((current) => current || (list[0]?.id ?? ""));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(errorText(err)));
   }, []);
 
   useEffect(() => {
@@ -52,7 +53,7 @@ export function SyncDeviceTimeline() {
         setMachines(rows);
         setMachineId(rows[0]?.machine_id ?? "");
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err: unknown) => setError(errorText(err)));
   }, [tenantId]);
 
   const load = useCallback(async () => {
@@ -61,7 +62,7 @@ export function SyncDeviceTimeline() {
     try {
       setTimeline(await getDeviceTimeline(tenantId, machineId, hours));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     }
   }, [tenantId, machineId, hours]);
 
