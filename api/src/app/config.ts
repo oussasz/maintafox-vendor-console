@@ -4,6 +4,7 @@
  */
 import "dotenv/config";
 
+import { loadSlickPayConfig, type SlickPayConfig } from "../billing/slickpay.js";
 import { loadEntitlementSigningKey } from "../entitlement-signer.js";
 import { loadEmailConfig, type EmailConfig } from "../notifications/email.js";
 import { fatal, requireEnv } from "./runtime.js";
@@ -104,6 +105,28 @@ export const METRICS_SCRAPE_TOKEN = (() => {
 export const EMAIL_CONFIG: EmailConfig = (() => {
   try {
     return loadEmailConfig();
+  } catch (err) {
+    fatal((err as Error).message);
+  }
+})();
+
+/**
+ * Optional shared secret (>= 32 characters) with the public website's server (Vercel), which sends
+ * it with the customer's IP on public payment calls (X-Maintafox-Proxy-Token / X-Maintafox-Client-Ip).
+ * With it, those calls are rate-limited per customer; unset, per caller address, which every website
+ * customer shares (Vercel's).
+ */
+export const WEBSITE_PROXY_TOKEN = (() => {
+  const raw = process.env.WEBSITE_PROXY_TOKEN?.trim();
+  if (!raw) return null;
+  if (raw.length < 32) fatal("WEBSITE_PROXY_TOKEN must be at least 32 characters when set.");
+  return raw;
+})();
+
+/** SlickPay online payments (billing/slickpay.ts); invalid settings stop startup. */
+export const SLICKPAY_CONFIG: SlickPayConfig = (() => {
+  try {
+    return loadSlickPayConfig();
   } catch (err) {
     fatal((err as Error).message);
   }

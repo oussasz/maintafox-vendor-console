@@ -1006,7 +1006,7 @@
   },
   "billing": {
     "title": "Billing and subscription",
-    "body": "Licence term and slots, and every payment exactly as recorded. \"Check with SlickPay\" asks SlickPay for the real status: a payment is applied only when SlickPay says it is paid; nothing here marks a payment as paid by hand.",
+    "body": "Licence term and slots, every payment exactly as recorded, and the price list. A payment is applied only when SlickPay itself says it is paid (webhook, the customer's return, the automatic re-check or \"Check with SlickPay\"); nothing here marks a payment as paid by hand.",
     "customer": "Customer",
     "loading": "Loading…",
     "noLicence": "No licence for this customer yet.",
@@ -1016,9 +1016,9 @@
     "extraSlots_one": "+{{count}} slot",
     "extraSlots_other": "+{{count}} slots",
     "lastChecked": "SlickPay said \"{{status}}\" ({{at}})",
-    "slickpayOff": "SlickPay is not configured on the server: payment links and checks with SlickPay are unavailable (deploy/BILLING.md).",
-    "openOrders_one": "{{count}} payment is not settled yet: check it with SlickPay if the customer says they paid.",
-    "openOrders_other": "{{count}} payments are not settled yet: check them with SlickPay if the customer says they paid.",
+    "slickpayOff": "Online payment is off on the server (SLICKPAY_MODE=disabled): no payment links, no checks with SlickPay (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} payment is awaiting payment. It is re-checked with SlickPay automatically; check it now if the customer says they paid.",
+    "openOrders_other": "{{count}} payments are awaiting payment. They are re-checked with SlickPay automatically; check them now if the customer says they paid.",
     "manualExtension": "Extend or add slots by hand (Entitlements)",
     "col": {
       "created": "Created",
@@ -1032,7 +1032,9 @@
       "pending": "Pending",
       "awaiting_payment": "Awaiting payment",
       "paid": "Paid",
-      "failed": "Failed"
+      "failed": "Failed",
+      "expired": "Expired (not paid)",
+      "needs_review": "Needs review"
     },
     "licence": {
       "until": "Valid until {{date}}",
@@ -1048,27 +1050,88 @@
     "reconcile": {
       "button": "Check with SlickPay",
       "title": "Check this payment with SlickPay?",
-      "body": "The server asks SlickPay for the status of invoice {{invoice}}. If SlickPay says it is paid and it was not applied (lost notification), the licence is renewed now, exactly as for a normal payment. Nothing else changes.",
+      "body": "The server asks SlickPay for the status of invoice {{invoice}}. If SlickPay says it is paid and it was not applied, it is applied now, exactly as for a normal payment. A paid order is never undone.",
       "confirm": "Check",
       "outcome": {
         "applied": "SlickPay says paid: the payment is now applied and the licence renewed.",
         "unchanged": "SlickPay says \"{{slickpay}}\": nothing to change.",
         "already_paid": "Already applied: nothing to change.",
-        "license_revoked": "SlickPay says paid, but the licence is revoked: the payment was not applied (order marked failed).",
-        "issue_failed": "SlickPay says paid, but the licence could not be renewed: see the audit log.",
-        "mismatch_paid_here_not_at_slickpay": "Recorded as paid here, but SlickPay now says \"{{slickpay}}\". Nothing was undone: check with SlickPay and the customer."
+        "expired": "Still not paid and older than the expiry delay: the order is now marked expired (a later payment is still applied).",
+        "amount_mismatch": "SlickPay says paid, but with another amount: not applied (needs review).",
+        "needs_review": "SlickPay says paid, but it cannot be applied automatically: see the reason on the order.",
+        "status_unrecognised": "SlickPay's answer has no recognisable payment status: nothing applied.",
+        "mismatch_paid_here_not_at_slickpay": "Recorded as paid here, but SlickPay now says \"{{slickpay}}\" (refund?). Nothing was undone: check with SlickPay and the customer."
       }
     },
     "link": {
       "button": "Create a payment link",
       "title": "Create a SlickPay payment link",
-      "body": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year and the extra slots are added. Extra slot price: {{price}} each.",
-      "bodyNoSlotPrice": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year. Extra slots need SLICKPAY_EXTRA_SLOT_PRICE on the server.",
-      "plan": "Plan name",
-      "amount": "Amount (DZD, without extra slots)",
-      "extraSlots": "Extra slots",
+      "body": "The server prices the order from the price list and SlickPay creates the invoice; send the link to the customer. When they pay, the licence is renewed for the plan's term and the seats are set to what was paid for.",
+      "noPrices": "No plan has a price yet: set the price list first (Billing page).",
+      "plan": "Plan",
+      "extraSlots": "Extra seats",
+      "firstname": "Customer contact - first name",
+      "lastname": "Customer contact - last name",
+      "email": "Customer contact - e-mail (receives the confirmation)",
+      "phone": "Customer contact - phone",
+      "total": "Total: {{amount}} {{currency}} for {{months}} months",
       "confirm": "Create link",
       "created": "Payment link created ({{amount}} {{currency}}): send it to the customer."
+    },
+    "emailOff": "E-mail is off on the server (EMAIL_DELIVERY_MODE=disabled): after an online payment the customer does NOT receive their licence key by e-mail. Send it yourself (Entitlements page) for each order marked \"licence e-mail not sent\".",
+    "ignoredSettings": "These settings in the server .env are no longer used and can be deleted: {{names}}.",
+    "reconcilerFailed": "The automatic re-check of unpaid orders failed on its last run ({{at}}): see the API logs (slickpay_reconcile_failed).",
+    "paidAmount": "card: {{amount}} {{currency}}",
+    "lastCheckError": "SlickPay could not be read on the last check ({{error}}); it will be retried.",
+    "never": "never",
+    "setup": "SlickPay webhook: {{webhook}} - customer return page: {{returnUrl}} - unpaid orders re-checked from every {{interval}} min, expired after {{expiry}} h - last automatic check: {{lastRun}}.",
+    "delivery": {
+      "pending": "licence e-mail being sent",
+      "sent": "licence e-mail sent",
+      "failed": "licence e-mail FAILED: send the key yourself",
+      "disabled": "licence e-mail not sent: send the key yourself"
+    },
+    "reason": {
+      "amount_mismatch": "SlickPay reports a different amount than this order: not applied. Compare with the SlickPay dashboard, then extend by hand or refund.",
+      "tenant_inactive": "Paid, but the customer is suspended: resume the customer, then \"Check with SlickPay\".",
+      "tenant_not_found": "Paid, but the customer no longer exists: handle by hand (refund or recreate).",
+      "license_revoked": "Paid, but the customer's licence is revoked: decide, then extend by hand or refund.",
+      "legacy_order_without_price_snapshot": "Paid order from before the price list: what was bought is not recorded; extend by hand.",
+      "new_customer_without_company": "Paid, but no company name to create the customer: create it by hand.",
+      "plan_edition_missing": "Paid for a plan that is no longer an edition: handle by hand.",
+      "slickpay_status_unrecognised": "SlickPay's answer had no recognisable payment status until the order expired: check the SlickPay dashboard.",
+      "invoice_never_created": "The SlickPay invoice was never created (nothing could be paid).",
+      "order_vanished": "The order disappeared during fulfilment: check the audit log."
+    },
+    "review": {
+      "title_one": "{{count}} payment needs a person",
+      "title_other": "{{count}} payments need a person",
+      "body": "SlickPay says these were paid (or cannot say), but they were not applied automatically. The reason is shown on each; nothing is lost."
+    },
+    "prices": {
+      "title": "Price list (online payment)",
+      "body": "The only prices online payment uses: the website shows the plans sold on the website and the server charges them. A plan priced but not sold on the website can still be used for payment links from this console (e.g. a negotiated or a small live-test price). Changes are audited and apply to new orders only.",
+      "none": "No price set: online payment refuses every order until you add one.",
+      "add": "Add a plan price",
+      "edit": "Edit",
+      "plan": "Plan (edition id, e.g. core, professional)",
+      "base": "Base price (DZD)",
+      "included": "Seats included",
+      "extra": "Extra seat price (DZD)",
+      "extraValue": "{{amount}} {{currency}} (max {{max}})",
+      "maxExtra": "Maximum extra seats per order",
+      "term": "Term",
+      "termValue_one": "{{count}} month",
+      "termValue_other": "{{count}} months",
+      "termMonths": "Term (months)",
+      "state": "On the website",
+      "active": "yes",
+      "inactive": "no",
+      "activeLabel": "Sold on the website (unticked: console payment links only)",
+      "dialogTitle": "Set a plan's price",
+      "dialogBody": "Applies to orders created from now on; existing orders keep the price they were created with.",
+      "save": "Save price",
+      "saved": "Price of {{plan}} saved."
     }
   },
   "entitlements": {

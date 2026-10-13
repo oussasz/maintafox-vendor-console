@@ -26,6 +26,8 @@ export const TEST_SYNC_ENV = {
   OPERATOR_ACCESS_LOG_RETENTION_DAYS: "365",
   // Notification email: off unless a test configures its own SMTP server.
   EMAIL_DELIVERY_MODE: "disabled",
+  // SlickPay: off unless a test runs its own SlickPay stand-in (billing.integration.mjs).
+  SLICKPAY_MODE: "disabled",
 };
 
 function freePort() {
