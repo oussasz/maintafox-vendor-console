@@ -237,6 +237,8 @@ test("the theme choice is kept per browser and applied before the console starts
 });
 
 test("French is selectable", async () => {
+  await page.goto("/vendor-console");
+  await expect(page.getByRole("region", { name: "Key figures" })).toBeVisible();
   await page.getByRole("combobox", { name: "Language" }).selectOption("fr");
   await expect(page.getByRole("navigation").getByRole("link", { name: "Clients" })).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: /Bonjour|Bon après-midi|Bonsoir/ })).toBeVisible();

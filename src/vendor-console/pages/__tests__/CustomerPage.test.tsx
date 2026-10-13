@@ -74,7 +74,8 @@ describe("CustomerPage", () => {
     expect(screen.getByRole("button", { name: "Renew licence" })).toBeInTheDocument();
     expect(screen.getByText("3 of 5 seats used")).toBeInTheDocument();
     expect(screen.getByText("12 days left")).toBeInTheDocument();
-    expect(screen.getByText("No device activated yet")).toBeInTheDocument();
+    // The device list loads on its own, after the customer.
+    expect(await screen.findByText("No device activated yet")).toBeInTheDocument();
   });
 
   it("suspending asks for a reason and an authenticator code, then calls the API", async () => {
