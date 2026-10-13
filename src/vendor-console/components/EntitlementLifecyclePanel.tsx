@@ -137,14 +137,16 @@ type EntitlementLifecyclePanelProps = {
   /** When true, the Add/Refresh buttons are not rendered in the panel (e.g. shown in the page header). */
   hideSectionToolbar?: boolean;
   onCapabilitiesChange?: (capabilities: EntitlementLifecyclePanelCapabilities) => void;
+  /** Shown inside a customer page: that customer only, no customer selector. */
+  fixedTenantId?: string;
 };
 
 export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHandle, EntitlementLifecyclePanelProps>(
-  function EntitlementLifecyclePanel({ hideSectionToolbar = false, onCapabilitiesChange }, ref) {
+  function EntitlementLifecyclePanel({ hideSectionToolbar = false, onCapabilitiesChange, fixedTenantId }, ref) {
   const { t } = useTranslation("vendorConsole");
   const { requireStepUp } = useVendorConsole();
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
-  const [selectedTenantId, setSelectedTenantId] = useState("");
+  const [selectedTenantId, setSelectedTenantId] = useState(fixedTenantId ?? "");
   const [licenses, setLicenses] = useState<ControlLicense[]>([]);
   const [selectedLicenseId, setSelectedLicenseId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -208,6 +210,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
         return;
       }
       setSelectedTenantId((previous) => {
+        if (fixedTenantId) return fixedTenantId;
         if (previous && rows.some((tenant) => tenant.id === previous)) {
           return previous;
         }
@@ -218,7 +221,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
     } finally {
       setLoadingTenants(false);
     }
-  }, []);
+  }, [fixedTenantId]);
 
   const loadLicenses = useCallback(
     async (tenantId: string, preferredLicenseId?: string) => {
@@ -409,7 +412,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
           ) : null}
         </div>
         {!selectedTenant ? (
-          <p className="mt-2 text-xs text-amber-300">{t("entitlement.selectTenantHint")}</p>
+          <p className="mt-2 text-xs text-attention-text">{t("entitlement.selectTenantHint")}</p>
         ) : null}
         {issueDisabledReason ? <p className="mt-2 text-xs text-text-muted">{issueDisabledReason}</p> : null}
 
@@ -429,11 +432,12 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
         ) : null}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-5">
+          {fixedTenantId ? null : (
           <div>
             <Label htmlFor="tenant">{t("entitlement.tenant")}</Label>
             <select
               id="tenant"
-              className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
               value={selectedTenantId}
               disabled={loadingTenants}
               onChange={(event) => setSelectedTenantId(event.target.value)}
@@ -446,6 +450,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               ))}
             </select>
           </div>
+          )}
           <div>
             <Label htmlFor="key-search">{t("entitlement.search")}</Label>
             <Input
@@ -460,7 +465,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
             <Label htmlFor="state-filter">{t("entitlement.stateFilter")}</Label>
             <select
               id="state-filter"
-              className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
               value={stateFilter}
               onChange={(event) => setStateFilter(event.target.value as LicenseFilter)}
             >
@@ -474,7 +479,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
             <Label htmlFor="sort-key">{t("entitlement.sortBy")}</Label>
             <select
               id="sort-key"
-              className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
               value={sortKey}
               onChange={(event) => setSortKey(event.target.value as LicenseSortKey)}
             >
@@ -498,7 +503,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
         </div>
 
         {loadError ? (
-          <div className="mt-4 rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
+          <div className="mt-4 rounded-md border border-danger-border bg-danger-bg p-3 text-sm text-danger" role="alert">
             <p>{loadError}</p>
             <div className="mt-2 flex gap-2">
               <Button type="button" variant="outline" onClick={() => void loadTenants()}>
@@ -593,7 +598,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="h-8 border-red-500/40 px-2 text-red-200 hover:bg-red-500/10"
+                            className="h-8 border-danger-border px-2 text-danger hover:bg-danger-bg"
                             disabled={!canMutate}
                             title={canMutate ? t("entitlement.revokeKey") : t("entitlement.alreadyRevoked")}
                             onClick={() => setDeleteConfirmLicense(license)}
@@ -613,12 +618,12 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
       </section>
 
       {mutationSuccess ? (
-        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+        <div className="rounded-md border border-ok-border bg-ok-bg px-3 py-2 text-sm text-ok-text">
           {mutationSuccess}
         </div>
       ) : null}
       {mutationError && !issueOpen && !editOpen ? (
-        <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert">
+        <div className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger" role="alert">
           {mutationError}
         </div>
       ) : null}
@@ -656,7 +661,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.max_machines)}
               />
               {issueValidationErrors.max_machines ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.max_machines)}
                 </p>
               ) : null}
@@ -665,7 +670,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               <Label htmlFor="edit-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="edit-channel"
-                className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
                 value={issueForm.update_channel}
                 onChange={(event) =>
                   setIssueForm((previous) => ({
@@ -691,7 +696,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.expires_at)}
               />
               {issueValidationErrors.expires_at ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.expires_at)}
                 </p>
               ) : null}
@@ -707,13 +712,13 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.operator_rationale)}
               />
               {issueValidationErrors.operator_rationale ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.operator_rationale)}
                 </p>
               ) : null}
             </div>
             {mutationError && editOpen ? (
-              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">
+              <p className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger" role="alert">
                 {mutationError}
               </p>
             ) : null}
@@ -868,7 +873,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.max_machines)}
               />
               {issueValidationErrors.max_machines ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.max_machines)}
                 </p>
               ) : null}
@@ -877,7 +882,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               <Label htmlFor="issue-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="issue-channel"
-                className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
                 value={issueForm.update_channel}
                 onChange={(event) =>
                   setIssueForm((previous) => ({
@@ -904,7 +909,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.expires_at)}
               />
               {issueValidationErrors.expires_at ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.expires_at)}
                 </p>
               ) : null}
@@ -921,7 +926,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.operator_reason_code)}
               />
               {issueValidationErrors.operator_reason_code ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.operator_reason_code)}
                 </p>
               ) : null}
@@ -938,13 +943,13 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 aria-invalid={Boolean(issueValidationErrors.operator_rationale)}
               />
               {issueValidationErrors.operator_rationale ? (
-                <p className="mt-1 text-xs text-red-300" role="alert">
+                <p className="mt-1 text-xs text-danger" role="alert">
                   {t(issueValidationErrors.operator_rationale)}
                 </p>
               ) : null}
             </div>
             {mutationError && issueOpen ? (
-              <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">
+              <p className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-xs text-danger" role="alert">
                 {mutationError}
               </p>
             ) : null}

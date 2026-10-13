@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,8 @@ export function SupportOperationsPanel() {
   const { t } = useTranslation("vendorConsole");
   const { requireStepUp } = useVendorConsole();
   const { can } = usePermissions();
+  /** A ticket to show first (from "Open ticket" on the Overview or a customer page). */
+  const focusTicket = useSearchParams()[0].get("ticket");
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [bundles, setBundles] = useState<DiagnosticBundleSummary[]>([]);
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
@@ -194,7 +196,7 @@ export function SupportOperationsPanel() {
         <CardContent className="grid gap-2 text-sm sm:grid-cols-[1fr_auto_1fr_2fr_auto]">
           <select
             aria-label={t("audit.support.newTicket.tenant")}
-            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            className="h-9 rounded-lg border border-input bg-white pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.tenant_id}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, tenant_id: e.target.value }))}
           >
@@ -207,7 +209,7 @@ export function SupportOperationsPanel() {
           </select>
           <select
             aria-label={t("audit.support.newTicket.severity")}
-            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            className="h-9 rounded-lg border border-input bg-white pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.severity}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, severity: e.target.value as SupportTicket["severity"] }))}
           >
@@ -270,7 +272,12 @@ export function SupportOperationsPanel() {
                 </tr>
               ) : null}
               {tickets.map((tk) => (
-                <tr key={tk.ticket_id} className="border-b border-surface-border last:border-0">
+                <tr
+                  key={tk.ticket_id}
+                  ref={tk.ticket_id === focusTicket ? (el) => el?.scrollIntoView({ block: "center" }) : undefined}
+                  aria-current={tk.ticket_id === focusTicket ? "true" : undefined}
+                  className={tk.ticket_id === focusTicket ? "border-b border-surface-border bg-attention-bg last:border-0" : "border-b border-surface-border last:border-0"}
+                >
                   <td className="px-3 py-2 font-mono text-xs">{tk.ticket_id}</td>
                   <td className="px-3 py-2 font-mono text-xs">{tk.tenant_id}</td>
                   <td className="px-3 py-2 text-xs">{tk.state}</td>

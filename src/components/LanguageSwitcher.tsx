@@ -17,7 +17,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
       <Languages className="h-4 w-4" aria-hidden />
       <span className="sr-only">{t("language.label")}</span>
       <select
-        className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs text-text-primary"
+        className="h-9 rounded-lg border border-input bg-white pl-2.5 pr-8 text-xs text-text-primary"
         value={current}
         onChange={(e) => void setConsoleLanguage(e.target.value as ConsoleLanguage)}
       >

@@ -43,7 +43,7 @@ type PendingAction =
   | { kind: "delete"; operator: Operator };
 
 const selectClass =
-  "h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm text-text-primary disabled:opacity-60";
+  "h-10 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary disabled:opacity-60";
 
 /**
  * Console operators (owners only): who can sign in, with which role. Roles are enforced by the
@@ -124,10 +124,10 @@ export function OperatorsPanel() {
     form.initial_password.length >= OPERATOR_PASSWORD_MIN_LENGTH;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">{t("operators.title")}</h1>
+          <h2 className="text-[17px] font-bold text-text-primary">{t("operators.title")}</h2>
           <p className="mt-1 text-sm text-text-secondary">{t("operators.body")}</p>
         </div>
         <Button type="button" onClick={() => setPending({ kind: "create" })}>

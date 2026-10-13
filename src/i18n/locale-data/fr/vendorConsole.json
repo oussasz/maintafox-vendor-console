@@ -5,7 +5,8 @@
     "tenantSearchPlaceholder": "Tenant / machine / id de corrélation…",
     "tenantSearchAria": "Contexte de recherche opérationnel",
     "degradedBanner": "Dégradé : vérifier files et stockage objet.",
-    "hostHint": "console.maintafox.systems"
+    "hostHint": "console.maintafox.systems",
+    "consoleName": "Console éditeur"
   },
   "nav": {
     "aria": "Sections console fournisseur",
@@ -16,10 +17,15 @@
     "machines": "Machines",
     "sync": "Synchronisation",
     "rollouts": "Déploiements",
-    "health": "Santé plateforme",
+    "health": "État du système",
     "audit": "Audit et preuves",
     "operators": "Opérateurs",
-    "billing": "Facturation"
+    "billing": "Facturation",
+    "licences": "Licences et éditions",
+    "devices": "Appareils",
+    "updates": "Mises à jour",
+    "support": "Support",
+    "settings": "Paramètres et équipe"
   },
   "home": {
     "title": "Vue d'ensemble du plan de contrôle",
@@ -288,7 +294,51 @@
       "rollbackCohort": "Revenir à la politique précédente de la cohorte",
       "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})"
     },
-    "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :"
+    "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :",
+    "status": {
+      "active": "Actif",
+      "expires_soon": "Expire bientôt",
+      "expired": "Licence terminée",
+      "not_activated": "Non activé",
+      "no_licence": "Sans licence",
+      "suspended": "Suspendu",
+      "unknown": "Inconnu"
+    },
+    "table": {
+      "search": "Rechercher",
+      "searchPh": "Nom ou code",
+      "col": {
+        "customer": "Client",
+        "edition": "Édition",
+        "devices": "Appareils",
+        "licenceUntil": "Licence jusqu'au",
+        "status": "Statut",
+        "open": "Ouvrir"
+      },
+      "seats": "{{used}} / {{seats}}",
+      "noEndDate": "Sans échéance",
+      "ended": "Terminée le {{date}}",
+      "open": "Ouvrir",
+      "openNamed": "Ouvrir {{name}}",
+      "emptyTitle": "Aucun client pour l'instant",
+      "emptyBody": "Ajoutez votre premier client, puis donnez-lui une clé de licence pour activer ses ordinateurs.",
+      "noMatch": "Aucun client ne correspond à cette recherche."
+    },
+    "page": {
+      "subtitle": "Tous les utilisateurs de Maintafox, leur situation et la suite à donner.",
+      "filter": "Afficher les clients par statut",
+      "all": "Tous"
+    },
+    "form": {
+      "newBody": "Le client reçoit un code utilisé dans sa clé de licence. Vous pourrez lui donner une licence juste après.",
+      "slugHint": "Minuscules, chiffres et tirets, ex. acme-industries. Il ne peut pas servir à un autre client.",
+      "cohortHint": "Les clients d'un même groupe reçoivent les mises à jour ensemble (stable-main sauf si vous testez avec certains).",
+      "channels": {
+        "stable": "Stable (recommandé)",
+        "pilot": "Pilote (mises à jour en avance)",
+        "internal": "Interne (nos tests)"
+      }
+    }
   },
   "editions": {
     "core": "Core",
@@ -1024,5 +1074,334 @@
   "entitlements": {
     "pageBody": "Cycle de vie gouverné par états, aperçu de la revendication signée et approbation auditable des changements destructifs.",
     "pageTitle": "Licences"
+  },
+  "overview": {
+    "title": "Vue d'ensemble",
+    "greeting": {
+      "morning": "Bonjour, {{name}}",
+      "afternoon": "Bon après-midi, {{name}}",
+      "evening": "Bonsoir, {{name}}"
+    },
+    "subtitle": "Tout ce qui suit est à jour. Ce qui vous attend est en premier.",
+    "findCustomer": "Trouver un client",
+    "newCustomer": "+ Nouveau client",
+    "figures": "Chiffres clés",
+    "kpi": {
+      "customers": "Clients actifs",
+      "customersHint": "sur {{count}} au total",
+      "devices": "Appareils utilisés",
+      "devicesHint_one": "{{count}} poste encore libre",
+      "devicesHint_other": "{{count}} postes encore libres",
+      "expiring": "Licences expirant sous {{days}} jours",
+      "reviewRenewals": "Voir les renouvellements",
+      "noneExpiring": "Rien à renouveler bientôt",
+      "tickets": "Tickets de support ouverts",
+      "openSupport": "Ouvrir le support"
+    },
+    "attention": "À traiter",
+    "items_one": "{{count}} élément",
+    "items_other": "{{count}} éléments",
+    "health": "État du système",
+    "healthDetails": "Détails",
+    "customers": "Clients"
+  },
+  "attention": {
+    "none": {
+      "title": "Rien ne vous attend pour l'instant",
+      "body": "Les renouvellements, les appareils qui ne se synchronisent plus, les nouveaux tickets et les problèmes de sauvegarde apparaîtront ici."
+    },
+    "action": {
+      "renew": "Renouveler",
+      "viewDevice": "Voir l'appareil",
+      "openTicket": "Ouvrir le ticket",
+      "openHealth": "Voir l'état du système",
+      "open": "Ouvrir"
+    },
+    "backup_failed": {
+      "title": "La dernière sauvegarde a échoué",
+      "detail": "Tentative du {{at}}. L'état du système en donne la cause."
+    },
+    "backup_late": {
+      "title": "Aucune sauvegarde récente",
+      "detail": "Une sauvegarde doit avoir lieu chaque nuit. Vérifiez le service de sauvegarde."
+    },
+    "restore_test_failed": {
+      "title": "Le dernier test de restauration a échoué",
+      "detail": "Les sauvegardes risquent d'être inutilisables tant que ce n'est pas corrigé."
+    },
+    "restore_test_overdue": {
+      "title": "Test de restauration en retard",
+      "detail": "Un test mensuel prouve que les sauvegardes se restaurent ; aucun n'a réussi récemment."
+    },
+    "licence_expired": {
+      "title_one": "{{customer}} : licence terminée depuis {{count}} jour",
+      "title_other": "{{customer}} : licence terminée depuis {{count}} jours",
+      "detail": "Édition {{edition}} · ses appareils sont refusés jusqu'au renouvellement"
+    },
+    "licence_expiring": {
+      "title_one": "{{customer}} : la licence expire dans {{count}} jour",
+      "title_other": "{{customer}} : la licence expire dans {{count}} jours",
+      "detail": "Édition {{edition}} · {{devices}} appareil(s)"
+    },
+    "device_not_syncing": {
+      "title_one": "Un appareil ne s'est pas synchronisé depuis {{count}} jour",
+      "title_other": "Un appareil ne s'est pas synchronisé depuis {{count}} jours",
+      "detail": "{{customer}} · {{device}}"
+    },
+    "device_never_synced": {
+      "title": "Un appareil ne s'est jamais synchronisé",
+      "detail": "{{customer}} · {{device}} · vu pour la dernière fois {{ago}}"
+    },
+    "ticket_new_with_file": {
+      "title": "Nouveau ticket de support avec un fichier de diagnostic",
+      "detail": "{{customer}} · « {{summary}} »"
+    },
+    "ticket_new": {
+      "title": "Nouveau ticket de support",
+      "detail": "{{customer}} · « {{summary}} »"
+    },
+    "unknown": {
+      "title": "Un point est à vérifier",
+      "detail": "{{customer}}"
+    }
+  },
+  "customer": {
+    "back": "Tous les clients",
+    "edition": "Édition {{edition}}",
+    "since": "Client depuis le {{date}}",
+    "editDetails": "Modifier les informations",
+    "renewLicence": "Renouveler la licence",
+    "addLicence": "Attribuer une licence",
+    "tabsAria": "Rubriques du client",
+    "tabs": {
+      "overview": "Vue d'ensemble",
+      "licence": "Licence et facturation",
+      "sync": "Synchronisation",
+      "support": "Support",
+      "history": "Historique"
+    },
+    "tiles": {
+      "licence": "Licence",
+      "validUntil": "Valable jusqu'au {{date}}",
+      "noEnd": "Valable, sans échéance",
+      "ended": "Terminée le {{date}}",
+      "noLicence": "Pas encore de licence",
+      "daysLeft_one": "{{count}} jour restant",
+      "daysLeft_other": "{{count}} jours restants",
+      "devices": "Appareils",
+      "seatsUsed": "{{used}} postes utilisés sur {{seats}}",
+      "seatsBar": "Postes utilisés",
+      "sync": "Synchronisation",
+      "upToDate": "À jour",
+      "noDevices": "Aucun appareil",
+      "behind_one": "{{count}} appareil en retard",
+      "behind_other": "{{count}} appareils en retard",
+      "lastContact": "Dernier contact {{ago}}"
+    },
+    "devices": "Appareils",
+    "sensitive": {
+      "title": "Actions sensibles",
+      "body": "Chacune demande votre code d'authentification et un motif, et est enregistrée dans le journal d'audit.",
+      "revokeLicence": "Révoquer une clé de licence",
+      "delete": "Supprimer le client"
+    },
+    "notFound": {
+      "title": "Ce client n'existe pas (ou plus)",
+      "body": "Il a peut-être été supprimé. Retrouvez-le depuis la liste des clients."
+    },
+    "sync": {
+      "noAccess": "Votre rôle n'inclut pas les opérations de synchronisation."
+    },
+    "history": {
+      "title": "Historique",
+      "body": "Tout ce qui a été fait pour ce client, par qui et pourquoi.",
+      "noAccess": "Votre rôle n'inclut pas le journal d'audit."
+    },
+    "support": {
+      "noAccess": "Votre rôle n'inclut pas le support.",
+      "noTickets": "Aucun ticket de support pour ce client",
+      "noTicketsBody": "Les tickets ouverts depuis leurs postes, ou par vous, apparaissent ici.",
+      "withFile_one": "{{count}} fichier de diagnostic",
+      "withFile_other": "{{count}} fichiers de diagnostic",
+      "files": "Fichiers de diagnostic",
+      "noFiles": "Aucun fichier de diagnostic reçu de ce client.",
+      "goToSupport": "Aller au Support pour télécharger ou répondre",
+      "state": {
+        "new": "Nouveau",
+        "triaged": "En cours d'analyse",
+        "waiting_for_vendor": "En attente de nous",
+        "waiting_for_customer": "En attente du client",
+        "resolved": "Résolu",
+        "closed": "Fermé"
+      }
+    }
+  },
+  "devices": {
+    "subtitle": "Chaque poste activé avec une licence, ce qu'il fait et ce que vous pouvez y faire.",
+    "tabsAria": "Rubriques des appareils",
+    "tabs": {
+      "devices": "Appareils",
+      "sync": "Synchronisation de tous les clients",
+      "test": "Tester une activation"
+    },
+    "customer": "Client",
+    "noCustomers": {
+      "title": "Aucun client pour l'instant",
+      "body": "Les appareils apparaissent dès qu'un client active Maintafox avec sa clé de licence."
+    },
+    "empty": {
+      "title": "Aucun appareil activé pour l'instant",
+      "body": "Donnez sa clé de licence au client : chaque ordinateur qui active Maintafox apparaît ici."
+    },
+    "version": "version {{version}}",
+    "seen": "vu {{ago}}",
+    "status": {
+      "online": "En ligne",
+      "lastSeen": "Vu {{ago}}",
+      "notSeenDays_one": "Pas vu depuis {{count}} jour",
+      "notSeenDays_other": "Pas vu depuis {{count}} jours",
+      "neverSeen": "Jamais vu",
+      "released": "Poste libéré",
+      "blocked": "Bloqué",
+      "licenceRevoked": "Licence révoquée"
+    },
+    "action": {
+      "freeSeat": "Libérer ce poste",
+      "unblock": "Débloquer",
+      "moveSeat": "Transférer le poste sur un nouvel ordinateur",
+      "refresh": "Lui demander d'actualiser sa licence maintenant",
+      "seeWhatHappened": "Voir ce qui s'est passé",
+      "block": "Bloquer cet appareil",
+      "more": "Autres actions pour {{name}}"
+    },
+    "offline": {
+      "title": "Règles hors ligne",
+      "body": "Combien de temps les ordinateurs de ce client peuvent travailler sans joindre le serveur, et l'effet d'un blocage.",
+      "grace": "Peut travailler hors ligne pendant",
+      "hours_one": "{{count}} heure",
+      "hours_other": "{{count}} heures",
+      "trustRevoke": "Le blocage d'un appareil s'applique",
+      "atOnce": "Immédiatement",
+      "atNextCheck": "À sa prochaine vérification de licence",
+      "reconnect": "Doit se signaler avant de reprendre"
+    },
+    "test": {
+      "body": "Vérifie qu'une clé de licence et une empreinte d'ordinateur sont acceptées. C'est une vraie activation : l'ordinateur prend un poste (libérez-le ensuite dans Appareils).",
+      "appVersionOptional": "Version de l'application (facultatif)",
+      "accepted": "Activation acceptée.",
+      "customer": "Client",
+      "licence": "Licence"
+    }
+  },
+  "licences": {
+    "subtitle": "Les clés de licence de chaque client, le contenu de chaque édition, et les paiements.",
+    "tabsAria": "Rubriques des licences",
+    "tabs": {
+      "keys": "Clés de licence",
+      "editions": "Éditions",
+      "payments": "Paiements"
+    }
+  },
+  "updates": {
+    "subtitle": "Quels clients reçoivent une nouvelle version, quand, et quelle version ils doivent utiliser.",
+    "tabsAria": "Rubriques des mises à jour",
+    "tabs": {
+      "rollouts": "Groupes de déploiement",
+      "forced": "Versions obligatoires"
+    },
+    "force": {
+      "customer": "Client",
+      "noCustomers": "Aucun client pour l'instant.",
+      "saved": "Enregistré. Les appareils l'appliquent à leur prochaine vérification de licence.",
+      "rolledBack": "Retour à la règle précédente."
+    }
+  },
+  "support": {
+    "subtitle": "Tickets des clients et de leurs appareils, fichiers de diagnostic, et suites données."
+  },
+  "settings": {
+    "subtitle": "Votre équipe, le journal d'audit de chaque action, et les garde-fous de la console.",
+    "tabsAria": "Rubriques des paramètres",
+    "tabs": {
+      "team": "Équipe",
+      "audit": "Journal d'audit",
+      "safeguards": "Garde-fous"
+    },
+    "audit": {
+      "title": "Journal d'audit"
+    },
+    "nothing": {
+      "title": "Rien à régler ici pour votre rôle",
+      "body": "Votre langue et votre compte (mot de passe, codes de secours) sont en haut à droite."
+    }
+  },
+  "sysHealth": {
+    "subtitle": "Vert : rien à faire. Orange : à regarder bientôt. Chaque ligne dit ce qu'elle signifie.",
+    "tabsAria": "Rubriques de l'état",
+    "tabs": {
+      "summary": "Résumé",
+      "details": "Détails techniques"
+    },
+    "allOk": "Tout fonctionne",
+    "needsLook": "Un point est à vérifier",
+    "checked": "Vérifié {{ago}}",
+    "server": "Serveur",
+    "online": "En ligne",
+    "degraded": "À vérifier",
+    "answering": "La base répond en",
+    "ms": "{{ms}} ms",
+    "database": "Base de données",
+    "dbState": {
+      "ok": "Saine",
+      "slow": "Lente",
+      "down": "Injoignable",
+      "unknown": "Inconnu"
+    },
+    "fileStorage": "Stockage des fichiers",
+    "storageState": {
+      "ok": "Sain",
+      "not_configured": "Non configuré",
+      "unreachable": "Injoignable",
+      "unknown": "Inconnu"
+    },
+    "diskFree": "Espace disque libre",
+    "diskOf": "{{free}} sur {{total}}",
+    "unknown": "Inconnu",
+    "backups": "Sauvegardes",
+    "protected": "Protégé",
+    "lookSoon": "À regarder",
+    "lastBackup": "Dernière sauvegarde",
+    "lastBackupFailed": "L'exécution du {{at}} a échoué ; la date ci-dessus est la dernière réussie.",
+    "backupAtEncrypted": "{{at}} · chiffrée",
+    "encryptedWithKey": "Chiffrée avec votre clé",
+    "lastRestoreTest": "Dernier test de restauration",
+    "passedOn": "Réussi · {{at}}",
+    "failed": "Échoué",
+    "never": "Jamais",
+    "copiesKept": "Copies conservées",
+    "days_one": "{{count}} jour",
+    "days_other": "{{count}} jours",
+    "onlyOnServer": "Toutes les copies sont sur ce serveur uniquement. Ajoutez une copie sur un ordinateur de votre bureau (récupération des sauvegardes) pour être protégé si le serveur est perdu.",
+    "offsiteFailed": "La copie externe a échoué : seules les copies de ce serveur sont à jour.",
+    "sync": "Synchronisation",
+    "allUpToDate": "Tout est à jour",
+    "devicesToCheck_one": "{{count}} appareil à vérifier",
+    "devicesToCheck_other": "{{count}} appareils à vérifier",
+    "devicesUpToDate": "Appareils à jour",
+    "devicesSyncing": "Appareils synchronisés normalement",
+    "nOfM": "{{n}} sur {{m}}",
+    "refused": "Modifications refusées, pas encore corrigées ({{hours}} dernières h)",
+    "conflicts": "Modifications en conflit ({{hours}} dernières h)",
+    "seeBehind": "Voir l'appareil en retard",
+    "updates": "Mises à jour de l'application",
+    "versionsInUse_one": "{{count}} version utilisée",
+    "versionsInUse_other": "{{count}} versions utilisées",
+    "noDevices": "Aucun appareil activé pour l'instant.",
+    "version": "Version {{version}}",
+    "versionUnknown": "Version non communiquée",
+    "devicesCount_one": "{{count}} appareil",
+    "devicesCount_other": "{{count}} appareils",
+    "releaseCatalogLater": "La dernière version publiée s'affichera ici avec le catalogue des versions (phase 5).",
+    "goToUpdates": "Aller aux mises à jour"
   }
 }

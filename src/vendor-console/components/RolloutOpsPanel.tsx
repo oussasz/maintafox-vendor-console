@@ -68,9 +68,9 @@ export function RolloutOpsPanel() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("rollouts.pageTitle")}</h1>
+        <h2 className="text-[17px] font-bold text-text-primary">{t("rollouts.pageTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
           {t("rollouts.pageBody")}
         </p>

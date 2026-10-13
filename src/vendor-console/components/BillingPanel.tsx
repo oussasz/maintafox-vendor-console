@@ -21,7 +21,7 @@ import { errorText } from "@/lib/error-text";
 /** Licences ending within this many days are highlighted. */
 const RENEWAL_WARNING_DAYS = 30;
 
-const selectClass = "h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm text-text-primary";
+const selectClass = "h-11 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
 
 function statusVariant(status: PaymentOrder["status"]): "default" | "secondary" | "destructive" {
   if (status === "paid") return "default";
@@ -35,10 +35,10 @@ function statusVariant(status: PaymentOrder["status"]): "default" | "secondary" 
  * it is paid), and payment links for renewals and extra slots. Manual extensions (bank transfer,
  * goodwill) are licence edits on the Entitlements page, audited there.
  */
-export function BillingPanel() {
+export function BillingPanel({ fixedTenantId }: { /** Shown inside a customer page: that customer only, no selector. */ fixedTenantId?: string } = {}) {
   const { t } = useTranslation("vendorConsole");
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useState(fixedTenantId ?? "");
   const [sub, setSub] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,13 +49,14 @@ export function BillingPanel() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (fixedTenantId) return;
     listTenants()
       .then((list) => {
         setTenants(list);
         setTenantId((current) => current || (list[0]?.id ?? ""));
       })
       .catch((err: unknown) => setError(errorText(err)));
-  }, []);
+  }, [fixedTenantId]);
 
   const load = useCallback(async (id: string) => {
     if (!id) return;
@@ -102,10 +103,11 @@ export function BillingPanel() {
   const openOrders = sub?.payments.filter((p) => p.status !== "paid" && p.slickpay_invoice_id) ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
+      {fixedTenantId ? null : (
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">{t("billing.title")}</h1>
+          <h2 className="text-[17px] font-bold text-text-primary">{t("billing.title")}</h2>
           <p className="mt-1 text-sm text-text-secondary">{t("billing.body")}</p>
         </div>
         <div className="grid gap-1">
@@ -119,6 +121,7 @@ export function BillingPanel() {
           </select>
         </div>
       </header>
+      )}
 
       {error ? (
         <ConsoleStatusBanner tone="error" role="alert">
@@ -161,7 +164,7 @@ export function BillingPanel() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               {l.days_left !== null ? (
-                <p className={l.days_left <= RENEWAL_WARNING_DAYS ? "font-medium text-amber-500" : "text-text-secondary"}>
+                <p className={l.days_left <= RENEWAL_WARNING_DAYS ? "font-medium text-attention-text" : "text-text-secondary"}>
                   {l.days_left < 0
                     ? t("billing.licence.expiredAgo", { count: -l.days_left })
                     : t("billing.licence.daysLeft", { count: l.days_left })}

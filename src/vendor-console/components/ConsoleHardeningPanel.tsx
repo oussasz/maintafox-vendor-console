@@ -120,7 +120,7 @@ export function ConsoleHardeningPanel() {
                 <p className="font-mono text-xs text-text-muted">{item.code}</p>
                 <p className="text-xs text-text-secondary">{item.description}</p>
               </div>
-              <span className={item.passed ? "text-green-600" : "text-amber-600"}>
+              <span className={item.passed ? "text-ok" : "text-attention-text"}>
                 {item.passed ? t("audit.harden.readiness.pass") : t("audit.harden.readiness.gap")}
               </span>
             </li>

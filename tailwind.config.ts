@@ -36,16 +36,40 @@ export default {
         ring: "var(--ring)",
         /* ── Maintafox brand tokens ─────────────────────────────────────── */
         primary: {
-          DEFAULT: "#003d8f",
-          dark: "#002b6a",
+          DEFAULT: "#0049ac",
+          dark: "#003a8c",
           light: "#4d7bc5",
-          bg: "#e8eef8",
+          bg: "#e6eefb",
           foreground: "var(--primary-foreground)",
         },
         accent: {
           DEFAULT: "#f0a500",
           dark: "#c47f00",
           foreground: "var(--accent-foreground)",
+        },
+        /* Console redesign: navy sidebar, orange only for "needs attention", green for OK. */
+        navy: {
+          DEFAULT: "#0b1f3a",
+          active: "#17325a",
+          text: "#dce6f4",
+          muted: "#9fb3cf",
+        },
+        attention: {
+          DEFAULT: "#f68714",
+          bg: "#fff4e6",
+          text: "#8a4a00",
+          strong: "#b45309",
+        },
+        ok: {
+          DEFAULT: "#117a3d",
+          bg: "#eaf6ef",
+          text: "#0e5a2e",
+          border: "#b7dfc6",
+        },
+        danger: {
+          DEFAULT: "#b42318",
+          bg: "#fef3f2",
+          border: "#e8b4ae",
         },
         status: {
           success: "#198754",
@@ -72,7 +96,7 @@ export default {
       },
       fontFamily: {
         sans: [
-          "Inter",
+          '"IBM Plex Sans"',
           "ui-sans-serif",
           "system-ui",
           "-apple-system",

@@ -34,7 +34,7 @@ import { errorText } from "@/lib/error-text";
 const CATEGORIES: string[] = auditCategoryCatalog.categories.map((c) => c.category);
 const KNOWN_CATEGORIES = new Set(CATEGORIES);
 
-export function AuditLedgerPanel() {
+export function AuditLedgerPanel({ scopeQuery }: { /** Only records matching this (e.g. a customer id), for the History tab of a customer. */ scopeQuery?: string } = {}) {
   const { t } = useTranslation("vendorConsole");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("all");
@@ -49,7 +49,7 @@ export function AuditLedgerPanel() {
     setError(null);
     try {
       const out = await listAuditLedger({
-        q: query.trim() || undefined,
+        q: scopeQuery ?? (query.trim() || undefined),
         category,
         limit: 500,
       });
@@ -106,6 +106,7 @@ export function AuditLedgerPanel() {
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
+        {scopeQuery ? null : (
         <div className="flex flex-col gap-1">
           <Label className="text-xs">{t("audit.ledger.search")}</Label>
           <Input
@@ -115,6 +116,7 @@ export function AuditLedgerPanel() {
             placeholder={t("audit.ledger.searchPh")}
           />
         </div>
+        )}
         <div className="flex flex-col gap-1">
           <Label className="text-xs">{t("audit.ledger.category")}</Label>
           <Select
@@ -147,7 +149,7 @@ export function AuditLedgerPanel() {
           <span className="text-xs text-text-muted">{t("audit.ledger.checking")}</span>
         ) : null}
         {chainStatus === "ok" ? (
-          <span className="text-xs text-green-600">{t("audit.ledger.chainOk")}</span>
+          <span className="text-xs text-ok">{t("audit.ledger.chainOk")}</span>
         ) : null}
         {chainStatus === "fail" ? (
           <span className="text-xs text-destructive">{t("audit.ledger.chainFail")}</span>

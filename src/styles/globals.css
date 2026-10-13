@@ -1,13 +1,9 @@
-/* Self-hosted Inter variable font — no CDN; offline-safe */
+/* IBM Plex Sans, self-hosted (@fontsource): no CDN, no request leaves the console. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";
 @import "./org-print.css";
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: local("Inter Variable"), local("Inter");
-}
 
 @tailwind base;
 @tailwind components;
@@ -85,21 +81,22 @@
 
 /* ── Light theme — professional, clean ──────────────────────────────────── */
 .light {
-  --surface-0: #f4f6f9;
+  /* Console palette (2026 redesign): navy text on a pale blue ground, white cards. */
+  --surface-0: #f4f7fb;
   --surface-1: #ffffff;
-  --surface-2: #f0f3f7;
-  --surface-3: #e5eaf1;
-  --surface-border: #dde2eb;
+  --surface-2: #f4f7fb;
+  --surface-3: #e6edf6;
+  --surface-border: #d5e0ee;
 
-  --text-primary: #0d1b2e;
-  --text-secondary: #455778;
-  --text-muted: #8898aa;
-  --text-danger: #b91c1c;
-  --text-success: #15803d;
-  --text-warning: #b45309;
+  --text-primary: #0b1f3a;
+  --text-secondary: #445874;
+  --text-muted: #5f7390;
+  --text-danger: #b42318;
+  --text-success: #117a3d;
+  --text-warning: #8a4a00;
 
-  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
-  --shadow-panel: 0 4px 20px 0 rgba(0, 0, 0, 0.09), 0 2px 6px -1px rgba(0, 0, 0, 0.05);
+  --shadow-card: none;
+  --shadow-panel: 0 8px 24px 0 rgba(11, 31, 58, 0.12);
 
   /* ── Shadcn/ui semantic bridge — maps to Maintafox tokens above ─────── */
   --background: var(--surface-0);
@@ -109,18 +106,18 @@
   --popover: var(--surface-1);
   --popover-foreground: var(--text-primary);
   --primary-foreground: #ffffff;
-  --secondary: var(--surface-2);
+  --secondary: #ffffff;
   --secondary-foreground: var(--text-primary);
-  --muted: var(--surface-2);
-  --muted-foreground: var(--text-muted);
-  --accent-foreground: #0d1b2e;
-  --destructive: #dc3545;
+  --muted: var(--surface-3);
+  --muted-foreground: var(--text-secondary);
+  --accent-foreground: #0b1f3a;
+  --destructive: #b42318;
   --destructive-foreground: #ffffff;
   --border: var(--surface-border);
-  --input: var(--surface-border);
-  --ring: #4d7bc5;
-  --radius: 0.375rem;
-  --shadow-focus: 0 0 0 3px rgba(77, 123, 197, 0.28);
+  --input: #bccadd;
+  --ring: #0049ac;
+  --radius: 0.5rem;
+  --shadow-focus: 0 0 0 3px rgba(0, 73, 172, 0.28);
 }
 
 @layer base {

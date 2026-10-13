@@ -190,10 +190,10 @@ export function VendorConsoleEditionsPage() {
   const cloneOptions = useMemo(() => items, [items]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="space-y-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{t("editions.pageTitle")}</h1>
+          <h2 className="text-[17px] font-bold text-text-primary">{t("editions.pageTitle")}</h2>
           <p className="mt-1 text-sm text-text-secondary">
             {t("editions.pageBody")}
           </p>
@@ -210,14 +210,14 @@ export function VendorConsoleEditionsPage() {
       </header>
 
       <div
-        className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
+        className="rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-xs text-amber-100"
         role="status"
       >
         {t("editions.reissueBanner")}
       </div>
 
       {error ? <p className="text-sm text-text-danger">{error}</p> : null}
-      {success ? <p className="text-sm text-emerald-400">{success}</p> : null}
+      {success ? <p className="text-sm text-ok-text">{success}</p> : null}
 
       <div className="rounded-lg border border-surface-border bg-surface-1">
         <Table>
@@ -308,7 +308,7 @@ export function VendorConsoleEditionsPage() {
                   <Label htmlFor="clone-from">{t("editions.fields.cloneFrom")}</Label>
                   <select
                     id="clone-from"
-                    className="mt-1 flex h-10 w-full rounded-md border border-surface-border bg-surface-0 px-3 text-sm"
+                    className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
                     value={cloneFromId}
                     onChange={(e) => {
                       setCloneFromId(e.target.value);

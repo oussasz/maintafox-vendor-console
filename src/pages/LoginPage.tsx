@@ -187,13 +187,13 @@ export function LoginPage() {
             <h1 className="text-lg font-semibold text-text-primary">{t("vendorLogin.title")}</h1>
             <p className="mt-2 text-sm text-text-secondary">{t("vendorLogin.subtitle")}</p>
             {sessionExpired ? (
-              <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm" role="status">
+              <div className="mt-4 rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-sm" role="status">
                 <p className="font-medium">{t("session.expired.title")}</p>
                 <p className="mt-1">{t("session.expired.message")}</p>
               </div>
             ) : null}
             {apiUnreachable ? (
-              <p className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm" role="status">
+              <p className="mt-4 rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-sm" role="status">
                 {t("vendorLogin.apiUnreachable")}
               </p>
             ) : null}

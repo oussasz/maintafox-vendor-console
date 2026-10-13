@@ -56,9 +56,9 @@ export function SyncHealthPanel() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("sync.pageTitle")}</h1>
+        <h2 className="text-[17px] font-bold text-text-primary">{t("sync.pageTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
           {t("sync.pageBody")}
         </p>

@@ -15,7 +15,7 @@ import { errorText } from "@/lib/error-text";
 const TIMELINE_SPANS_HOURS = [24, 72, 168, 720] as const;
 const DEFAULT_SPAN_HOURS = 72;
 
-const selectClass = "h-9 rounded-md border border-surface-border bg-surface-1 px-2 text-sm text-text-primary";
+const selectClass = "h-11 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
 
 /**
  * One device's sync history as the server recorded it (exchanges, retries, refused items,
@@ -23,11 +23,19 @@ const selectClass = "h-9 rounded-md border border-surface-border bg-surface-1 px
  * resynchronisation (step-up `sync_repair`). Refused items cannot be replayed by the server (it
  * keeps no payload); the device replays its own from its Sync Center.
  */
-export function SyncDeviceTimeline() {
+export function SyncDeviceTimeline({
+  fixedTenantId,
+  initialMachineId,
+}: {
+  /** Shown inside a customer page: that customer only, no customer selector. */
+  fixedTenantId?: string;
+  /** Device selected first (e.g. from "See what happened"). */
+  initialMachineId?: string | null;
+} = {}) {
   const { t } = useTranslation("vendorConsole");
   const { requireStepUp } = useVendorConsole();
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
-  const [tenantId, setTenantId] = useState("");
+  const [tenantId, setTenantId] = useState(fixedTenantId ?? "");
   const [machines, setMachines] = useState<ActivationRow[]>([]);
   const [machineId, setMachineId] = useState("");
   const [hours, setHours] = useState<number>(DEFAULT_SPAN_HOURS);
@@ -37,13 +45,14 @@ export function SyncDeviceTimeline() {
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
+    if (fixedTenantId) return;
     listTenants()
       .then((list) => {
         setTenants(list);
         setTenantId((current) => current || (list[0]?.id ?? ""));
       })
       .catch((err: unknown) => setError(errorText(err)));
-  }, []);
+  }, [fixedTenantId]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -51,10 +60,16 @@ export function SyncDeviceTimeline() {
     listTenantActivations(tenantId)
       .then((rows) => {
         setMachines(rows);
-        setMachineId(rows[0]?.machine_id ?? "");
+        setMachineId((current) =>
+          initialMachineId && rows.some((r) => r.machine_id === initialMachineId)
+            ? initialMachineId
+            : rows.some((r) => r.machine_id === current)
+              ? current
+              : (rows[0]?.machine_id ?? ""),
+        );
       })
       .catch((err: unknown) => setError(errorText(err)));
-  }, [tenantId]);
+  }, [tenantId, initialMachineId]);
 
   const load = useCallback(async () => {
     if (!tenantId || !machineId) return;
@@ -86,6 +101,7 @@ export function SyncDeviceTimeline() {
       </h2>
       <p className="text-xs text-text-secondary">{t("sync.timeline.body")}</p>
       <div className="flex flex-wrap items-end gap-3">
+        {fixedTenantId ? null : (
         <div className="grid gap-1">
           <Label htmlFor="timeline-tenant">{t("sync.timeline.customer")}</Label>
           <select id="timeline-tenant" className={selectClass} value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
@@ -96,6 +112,7 @@ export function SyncDeviceTimeline() {
             ))}
           </select>
         </div>
+        )}
         <div className="grid gap-1">
           <Label htmlFor="timeline-machine">{t("sync.timeline.machine")}</Label>
           <select id="timeline-machine" className={selectClass} value={machineId} onChange={(e) => setMachineId(e.target.value)}>

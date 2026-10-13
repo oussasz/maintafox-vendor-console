@@ -21,6 +21,7 @@
     "api:start": "pnpm --filter maintafox-control-api start"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "5.2.8",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",
     "@radix-ui/react-label": "^2.1.8",

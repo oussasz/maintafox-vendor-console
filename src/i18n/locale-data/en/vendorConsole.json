@@ -5,7 +5,8 @@
     "tenantSearchPlaceholder": "Tenant / machine / correlation id…",
     "tenantSearchAria": "Operational search context",
     "degradedBanner": "Degraded: verify queue health and object storage.",
-    "hostHint": "console.maintafox.systems"
+    "hostHint": "console.maintafox.systems",
+    "consoleName": "Vendor console"
   },
   "nav": {
     "aria": "Vendor console sections",
@@ -16,10 +17,15 @@
     "machines": "Machines",
     "sync": "Sync operations",
     "rollouts": "Rollouts",
-    "health": "Platform health",
+    "health": "System health",
     "audit": "Audit & evidence",
     "operators": "Operators",
-    "billing": "Billing"
+    "billing": "Billing",
+    "licences": "Licences & editions",
+    "devices": "Devices",
+    "updates": "Updates",
+    "support": "Support",
+    "settings": "Settings & team"
   },
   "home": {
     "title": "Control plane overview",
@@ -288,7 +294,51 @@
       "rollbackCohort": "Roll back cohort policy",
       "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})"
     },
-    "completeBeforeAdding": "Complete the following before adding this customer:"
+    "completeBeforeAdding": "Complete the following before adding this customer:",
+    "status": {
+      "active": "Active",
+      "expires_soon": "Expires soon",
+      "expired": "Licence ended",
+      "not_activated": "Not activated",
+      "no_licence": "No licence",
+      "suspended": "Suspended",
+      "unknown": "Unknown"
+    },
+    "table": {
+      "search": "Search",
+      "searchPh": "Name or code",
+      "col": {
+        "customer": "Customer",
+        "edition": "Edition",
+        "devices": "Devices",
+        "licenceUntil": "Licence until",
+        "status": "Status",
+        "open": "Open"
+      },
+      "seats": "{{used}} / {{seats}}",
+      "noEndDate": "No end date",
+      "ended": "Ended {{date}}",
+      "open": "Open",
+      "openNamed": "Open {{name}}",
+      "emptyTitle": "No customers yet",
+      "emptyBody": "Add your first customer, then give them a licence key to activate their computers.",
+      "noMatch": "No customer matches this search."
+    },
+    "page": {
+      "subtitle": "Everyone using Maintafox, where they stand, and what to do next.",
+      "filter": "Show customers by status",
+      "all": "All"
+    },
+    "form": {
+      "newBody": "The customer gets a code used in their licence key. You can give them a licence right after.",
+      "slugHint": "Lowercase letters, numbers and dashes, e.g. acme-industries. It cannot be reused by another customer.",
+      "cohortHint": "Customers in the same group receive app updates together (stable-main unless you test with some).",
+      "channels": {
+        "stable": "Stable (recommended)",
+        "pilot": "Pilot (updates earlier)",
+        "internal": "Internal (our own tests)"
+      }
+    }
   },
   "editions": {
     "core": "Core",
@@ -1024,5 +1074,334 @@
   "entitlements": {
     "pageTitle": "Entitlements",
     "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
+  },
+  "overview": {
+    "title": "Overview",
+    "greeting": {
+      "morning": "Good morning, {{name}}",
+      "afternoon": "Good afternoon, {{name}}",
+      "evening": "Good evening, {{name}}"
+    },
+    "subtitle": "Everything below is live. Items that need you are listed first.",
+    "findCustomer": "Find a customer",
+    "newCustomer": "+ New customer",
+    "figures": "Key figures",
+    "kpi": {
+      "customers": "Active customers",
+      "customersHint": "of {{count}} in total",
+      "devices": "Devices in use",
+      "devicesHint_one": "{{count}} seat still free",
+      "devicesHint_other": "{{count}} seats still free",
+      "expiring": "Licences expiring in {{days}} days",
+      "reviewRenewals": "Review renewals",
+      "noneExpiring": "Nothing to renew soon",
+      "tickets": "Open support tickets",
+      "openSupport": "Open support"
+    },
+    "attention": "Needs your attention",
+    "items_one": "{{count}} item",
+    "items_other": "{{count}} items",
+    "health": "System health",
+    "healthDetails": "Details",
+    "customers": "Customers"
+  },
+  "attention": {
+    "none": {
+      "title": "Nothing needs you right now",
+      "body": "Renewals, devices that stop syncing, new tickets and backup problems will show up here."
+    },
+    "action": {
+      "renew": "Renew",
+      "viewDevice": "View device",
+      "openTicket": "Open ticket",
+      "openHealth": "Open system health",
+      "open": "Open"
+    },
+    "backup_failed": {
+      "title": "The last backup failed",
+      "detail": "Attempt on {{at}}. System health shows the cause."
+    },
+    "backup_late": {
+      "title": "No recent backup",
+      "detail": "A backup should run every night. Check the backup service."
+    },
+    "restore_test_failed": {
+      "title": "The last restore test failed",
+      "detail": "The backups may not be usable until this is fixed."
+    },
+    "restore_test_overdue": {
+      "title": "Restore test overdue",
+      "detail": "A monthly test proves the backups can be restored; none passed recently."
+    },
+    "licence_expired": {
+      "title_one": "{{customer}}: licence ended {{count}} day ago",
+      "title_other": "{{customer}}: licence ended {{count}} days ago",
+      "detail": "{{edition}} edition · its devices are refused until it is renewed"
+    },
+    "licence_expiring": {
+      "title_one": "{{customer}}: licence expires in {{count}} day",
+      "title_other": "{{customer}}: licence expires in {{count}} days",
+      "detail": "{{edition}} edition · {{devices}} device(s)"
+    },
+    "device_not_syncing": {
+      "title_one": "A device has not synced for {{count}} day",
+      "title_other": "A device has not synced for {{count}} days",
+      "detail": "{{customer}} · {{device}}"
+    },
+    "device_never_synced": {
+      "title": "A device has never synced",
+      "detail": "{{customer}} · {{device}} · last seen {{ago}}"
+    },
+    "ticket_new_with_file": {
+      "title": "New support ticket with a diagnostic file",
+      "detail": "{{customer}} · “{{summary}}”"
+    },
+    "ticket_new": {
+      "title": "New support ticket",
+      "detail": "{{customer}} · “{{summary}}”"
+    },
+    "unknown": {
+      "title": "Something needs a look",
+      "detail": "{{customer}}"
+    }
+  },
+  "customer": {
+    "back": "All customers",
+    "edition": "{{edition}} edition",
+    "since": "Customer since {{date}}",
+    "editDetails": "Edit details",
+    "renewLicence": "Renew licence",
+    "addLicence": "Give a licence",
+    "tabsAria": "Customer sections",
+    "tabs": {
+      "overview": "Overview",
+      "licence": "Licence & billing",
+      "sync": "Data sync",
+      "support": "Support",
+      "history": "History"
+    },
+    "tiles": {
+      "licence": "Licence",
+      "validUntil": "Valid until {{date}}",
+      "noEnd": "Valid, no end date",
+      "ended": "Ended {{date}}",
+      "noLicence": "No licence yet",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "devices": "Devices",
+      "seatsUsed": "{{used}} of {{seats}} seats used",
+      "seatsBar": "Seats used",
+      "sync": "Data sync",
+      "upToDate": "Up to date",
+      "noDevices": "No device yet",
+      "behind_one": "{{count}} device behind",
+      "behind_other": "{{count}} devices behind",
+      "lastContact": "Last contact {{ago}}"
+    },
+    "devices": "Devices",
+    "sensitive": {
+      "title": "Sensitive actions",
+      "body": "Each one asks for your authenticator code and a reason, and is recorded in the audit log.",
+      "revokeLicence": "Revoke a licence key",
+      "delete": "Delete customer"
+    },
+    "notFound": {
+      "title": "This customer does not exist (any more)",
+      "body": "It may have been deleted. Find it again from the customer list."
+    },
+    "sync": {
+      "noAccess": "Your role does not include sync operations."
+    },
+    "history": {
+      "title": "History",
+      "body": "Everything done for this customer, by whom and why.",
+      "noAccess": "Your role does not include the audit log."
+    },
+    "support": {
+      "noAccess": "Your role does not include support.",
+      "noTickets": "No support ticket for this customer",
+      "noTicketsBody": "Tickets opened from their desktops, or by you, appear here.",
+      "withFile_one": "{{count}} diagnostic file",
+      "withFile_other": "{{count}} diagnostic files",
+      "files": "Diagnostic files",
+      "noFiles": "No diagnostic file received from this customer.",
+      "goToSupport": "Go to Support to download or answer",
+      "state": {
+        "new": "New",
+        "triaged": "Being looked at",
+        "waiting_for_vendor": "Waiting for us",
+        "waiting_for_customer": "Waiting for the customer",
+        "resolved": "Resolved",
+        "closed": "Closed"
+      }
+    }
+  },
+  "devices": {
+    "subtitle": "Every desktop activated with a licence, what it is doing, and what you can do about it.",
+    "tabsAria": "Device sections",
+    "tabs": {
+      "devices": "Devices",
+      "sync": "Sync across customers",
+      "test": "Test an activation"
+    },
+    "customer": "Customer",
+    "noCustomers": {
+      "title": "No customers yet",
+      "body": "Devices appear once a customer activates Maintafox with their licence key."
+    },
+    "empty": {
+      "title": "No device activated yet",
+      "body": "Give the customer their licence key: each computer that activates Maintafox appears here."
+    },
+    "version": "version {{version}}",
+    "seen": "seen {{ago}}",
+    "status": {
+      "online": "Online",
+      "lastSeen": "Seen {{ago}}",
+      "notSeenDays_one": "Not seen for {{count}} day",
+      "notSeenDays_other": "Not seen for {{count}} days",
+      "neverSeen": "Never seen",
+      "released": "Seat freed",
+      "blocked": "Blocked",
+      "licenceRevoked": "Licence revoked"
+    },
+    "action": {
+      "freeSeat": "Free this seat",
+      "unblock": "Unblock",
+      "moveSeat": "Move the seat to a new computer",
+      "refresh": "Ask it to refresh its licence now",
+      "seeWhatHappened": "See what happened",
+      "block": "Block this device",
+      "more": "More actions for {{name}}"
+    },
+    "offline": {
+      "title": "Offline rules",
+      "body": "How long the computers of this customer may work without reaching the server, and what blocking one does.",
+      "grace": "May work offline for",
+      "hours_one": "{{count}} hour",
+      "hours_other": "{{count}} hours",
+      "trustRevoke": "Blocking a device takes effect",
+      "atOnce": "At once",
+      "atNextCheck": "At its next licence check",
+      "reconnect": "Must check in before working again"
+    },
+    "test": {
+      "body": "Checks that a licence key and a computer fingerprint are accepted. It is a real activation: the computer takes a seat (free it again in Devices).",
+      "appVersionOptional": "App version (optional)",
+      "accepted": "Activation accepted.",
+      "customer": "Customer",
+      "licence": "Licence"
+    }
+  },
+  "licences": {
+    "subtitle": "Licence keys of every customer, what each edition includes, and payments.",
+    "tabsAria": "Licence sections",
+    "tabs": {
+      "keys": "Licence keys",
+      "editions": "Editions",
+      "payments": "Payments"
+    }
+  },
+  "updates": {
+    "subtitle": "Which customers get a new version, when, and which version they must run.",
+    "tabsAria": "Update sections",
+    "tabs": {
+      "rollouts": "Rollout groups",
+      "forced": "Required versions"
+    },
+    "force": {
+      "customer": "Customer",
+      "noCustomers": "No customers yet.",
+      "saved": "Saved. Devices apply it at their next licence check.",
+      "rolledBack": "Back to the previous rule."
+    }
+  },
+  "support": {
+    "subtitle": "Tickets from customers and from their devices, diagnostic files, and what was done."
+  },
+  "settings": {
+    "subtitle": "Your team, the audit log of every action, and the safeguards of the console.",
+    "tabsAria": "Settings sections",
+    "tabs": {
+      "team": "Team",
+      "audit": "Audit log",
+      "safeguards": "Safeguards"
+    },
+    "audit": {
+      "title": "Audit log"
+    },
+    "nothing": {
+      "title": "Nothing to set here for your role",
+      "body": "Your language and your account (password, recovery codes) are at the top right."
+    }
+  },
+  "sysHealth": {
+    "subtitle": "Green means nothing to do. Orange means look soon. Each line says what it means.",
+    "tabsAria": "Health sections",
+    "tabs": {
+      "summary": "Summary",
+      "details": "Technical details"
+    },
+    "allOk": "All systems working",
+    "needsLook": "Something needs a look",
+    "checked": "Checked {{ago}}",
+    "server": "Server",
+    "online": "Online",
+    "degraded": "Needs a look",
+    "answering": "Database answers in",
+    "ms": "{{ms}} ms",
+    "database": "Database",
+    "dbState": {
+      "ok": "Healthy",
+      "slow": "Slow",
+      "down": "Not reachable",
+      "unknown": "Unknown"
+    },
+    "fileStorage": "File storage",
+    "storageState": {
+      "ok": "Healthy",
+      "not_configured": "Not configured",
+      "unreachable": "Not reachable",
+      "unknown": "Unknown"
+    },
+    "diskFree": "Disk space free",
+    "diskOf": "{{free}} of {{total}}",
+    "unknown": "Unknown",
+    "backups": "Backups",
+    "protected": "Protected",
+    "lookSoon": "Look soon",
+    "lastBackup": "Last backup",
+    "lastBackupFailed": "The run of {{at}} failed; the date above is the last one that worked.",
+    "backupAtEncrypted": "{{at}} · encrypted",
+    "encryptedWithKey": "Encrypted with your key",
+    "lastRestoreTest": "Last restore test",
+    "passedOn": "Passed · {{at}}",
+    "failed": "Failed",
+    "never": "Never",
+    "copiesKept": "Copies kept",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days",
+    "onlyOnServer": "All copies are on this server only. Add a copy on a computer in your office (backup pull) to be safe if the server is lost.",
+    "offsiteFailed": "The off-site copy failed: only the copies on this server are up to date.",
+    "sync": "Data sync",
+    "allUpToDate": "All up to date",
+    "devicesToCheck_one": "{{count}} device to check",
+    "devicesToCheck_other": "{{count}} devices to check",
+    "devicesUpToDate": "Devices up to date",
+    "devicesSyncing": "Devices syncing normally",
+    "nOfM": "{{n}} of {{m}}",
+    "refused": "Changes refused and not fixed yet (last {{hours}} h)",
+    "conflicts": "Edits that collided (last {{hours}} h)",
+    "seeBehind": "See the device that is behind",
+    "updates": "App updates",
+    "versionsInUse_one": "{{count}} version in use",
+    "versionsInUse_other": "{{count}} versions in use",
+    "noDevices": "No device activated yet.",
+    "version": "Version {{version}}",
+    "versionUnknown": "Version not reported",
+    "devicesCount_one": "{{count}} device",
+    "devicesCount_other": "{{count}} devices",
+    "releaseCatalogLater": "The latest published version will show here with the release catalogue (Phase 5).",
+    "goToUpdates": "Go to Updates"
   }
 }

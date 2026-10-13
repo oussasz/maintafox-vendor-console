@@ -2,7 +2,8 @@
 
 One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR_AUTH.md` (4.1),
 `CONSOLE_ACTIONS.md` (4.2), `OPERATORS.md` (4.3), `BILLING.md` (4.4), `SYNC_OPERATIONS.md` (4.5),
-`CI.md` "Contracts shared with the desktop" (4.6), `CONSOLE_LANGUAGES.md` and `AUDIT_LEDGER.md` (4.7).
+`CI.md` "Contracts shared with the desktop" (4.6), `CONSOLE_LANGUAGES.md` and `AUDIT_LEDGER.md` (4.7),
+`CONSOLE_REDESIGN.md` (new console layout).
 
 ## Before
 
@@ -16,7 +17,8 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 1. **Migrations** run automatically at API start, in order: `011_vendor_auth`, `012_console_actions`,
    `013_vendor_operators`, `014_billing_reconciliation`, `015_sync_resync_requests`. All additive
    (new columns and tables; every existing operator becomes owner).
-2. **Settings:** none new. TOTP secrets are sealed with a subkey of `SYNC_PAYLOAD_ENCRYPTION_KEY`
+2. **Settings:** none new. `docker-compose.yml` now also passes `BACKUP_LOCAL_RETENTION_DAYS` (already
+   in `.env` for the backup service) to the API, for the System health page. TOTP secrets are sealed with a subkey of `SYNC_PAYLOAD_ENCRYPTION_KEY`
    (HKDF label `maintafox/vendor-totp/v1`): rotating that key also needs every operator to enrol again.
 3. **Images:** rebuild and restart `api` and `vendor-console`. The API image carries
    `shared/step-up-actions.v1.json`, `shared/sync-entity-registry.v2.json` and
@@ -24,7 +26,8 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 4. **Right after**: the owner signs in → enrols the authenticator → saves the 10 recovery codes.
    Until then, whoever knows the password first could enrol (no reset code exists for a first
    enrolment). Then: Audit & evidence shows `mfa_enrolled` and `login_success` ("Console sign-in").
-5. **Checks:** Operators lists the owner as Owner; Machines → "Policy refresh" on a live device
+5. **Checks:** the Overview shows the four key figures and what needs attention; System health shows
+   the last backup and restore test; Settings and team lists the owner as Owner; Machines → "Policy refresh" on a live device
    shows "Refresh pending" and clears after its next licence check; Sync operations → Device
    timeline lists recent syncs; Billing lists a customer's licence; language selector → Français.
 

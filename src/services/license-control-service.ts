@@ -37,7 +37,9 @@ const CapabilitiesMapSchema = z
       [K in ModuleCapabilityKey]: z.ZodBoolean;
     },
   )
-  .strict();
+  // A module a newer server adds is kept as is (and sent back unchanged on save), never a
+  // reason to refuse the whole edition list.
+  .passthrough();
 
 export type CapabilitiesMap = z.infer<typeof CapabilitiesMapSchema>;
 
@@ -128,7 +130,10 @@ const ActivationTenantStatusSchema = z.object({
 
 const ActivationRowSchema = z.object({
   machine_id: z.string(),
+  machine_label: z.string().nullable().optional(),
   tenant_id: z.string(),
+  activated_at_rfc3339: z.string().optional(),
+  revoked_at_rfc3339: z.string().nullable().optional(),
   last_heartbeat_rfc3339: z.string().nullable(),
   app_version: z.string().nullable().optional(),
   trusted_device: z.boolean(),

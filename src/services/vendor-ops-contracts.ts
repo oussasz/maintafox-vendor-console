@@ -133,8 +133,8 @@ export const IncidentDrillThroughRefsV1Schema = z
     sync_batch_id: z.string().optional(),
     rollout_release_id: z.string().optional(),
     correlation_id: z.string().optional(),
-  })
-  .strict();
+  });
+// (Not strict: extra references a newer server sends are dropped, not an error.)
 
 /** Client guard mirroring Rust `tenant_safe_drill_through`. */
 export function tenantSafeDrillThrough(refs: z.infer<typeof IncidentDrillThroughRefsV1Schema>): boolean {

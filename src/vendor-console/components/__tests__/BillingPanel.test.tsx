@@ -75,7 +75,7 @@ describe("BillingPanel", () => {
   it("shows the licence term, slots and the payment status exactly as recorded", async () => {
     vi.mocked(getSubscription).mockResolvedValue(subscription());
     renderPanel();
-    expect(await screen.findByText("billing.licence.daysLeft")).toHaveClass("text-amber-500");
+    expect(await screen.findByText("billing.licence.daysLeft")).toHaveClass("text-attention-text");
     expect(screen.getByText("billing.licence.slots")).toBeInTheDocument();
     const row = screen.getByTestId("payment-order_1");
     expect(within(row).getByText("billing.status.awaiting_payment")).toBeInTheDocument();

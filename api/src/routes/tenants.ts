@@ -326,13 +326,15 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     const tenantId = req.params.tenantId;
     const { cursor, limit, withPagination } = parsePagination(req.query);
     const effectiveLimit = withPagination ? limit : 10_000;
-    const rows = await db.all(`SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind,
-                a.policy_refresh_requested_at, l.update_channel
+    const rows = await db.all(`SELECT a.machine_fingerprint, a.machine_label, a.activated_at, a.last_seen_at, a.app_version, a.revoked_at,
+                a.revocation_kind, a.policy_refresh_requested_at, l.update_channel
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          WHERE a.tenant_id = ?
          ORDER BY a.last_seen_at COLLATE "C" DESC, a.machine_fingerprint COLLATE "C" DESC`, tenantId) as Array<{
         machine_fingerprint: string;
+        machine_label: string | null;
+        activated_at: string;
         last_seen_at: string;
         app_version: string | null;
         policy_refresh_requested_at: string | null;
@@ -356,7 +358,11 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       const heartbeat_freshness = Number.isFinite(ageMs) && ageMs <= 15 * 60_000 ? "live" : "stale";
       return {
         machine_id: row.machine_fingerprint,
+        /** Name the desktop reported for the machine (null when it sent none). */
+        machine_label: row.machine_label,
         tenant_id: tenantId,
+        activated_at_rfc3339: row.activated_at,
+        revoked_at_rfc3339: row.revoked_at,
         last_heartbeat_rfc3339: row.last_seen_at,
         app_version: row.app_version,
         trusted_device: row.revoked_at == null,
