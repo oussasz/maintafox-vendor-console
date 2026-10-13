@@ -49,6 +49,16 @@ describe("AuditLedgerPanel", () => {
     expect(within(sheet).getByText(/fp-1/)).toBeInTheDocument();
   });
 
+  it("shows records of every category the server writes, unknown ones by their code", async () => {
+    vi.mocked(listAuditLedger).mockResolvedValue([
+      { ...record, record_id: "aud-2", sequence: 2, action_code: "login_success", action_category: "vendor_auth" },
+      { ...record, record_id: "aud-3", sequence: 3, action_code: "future_thing", action_category: "future_category" },
+    ]);
+    renderWithConsole(<AuditLedgerPanel />);
+    expect((await screen.findByText("login_success")).closest("tr")).toHaveTextContent("Console sign-in");
+    expect(screen.getByText("future_thing").closest("tr")).toHaveTextContent("future_category");
+  });
+
   it("searches on the server", async () => {
     vi.mocked(listAuditLedger).mockResolvedValue([record]);
     renderWithConsole(<AuditLedgerPanel />);

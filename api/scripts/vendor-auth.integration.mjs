@@ -243,6 +243,12 @@ try {
   });
   assert.equal(oldCode.status, 401, "regeneration invalidates the old codes");
 
+  // The ledger filters by the categories the API writes (shared/audit-action-categories.v1.json).
+  const byCategory = await api.call("GET", "/api/v1/audit/ledger?category=vendor_auth", recoveryAccess);
+  assert.equal(byCategory.status, 200, byCategory.text);
+  assert.ok(byCategory.json.length >= 1 && byCategory.json.every((r) => r.action_category === "vendor_auth"), "vendor_auth filter");
+  assert.equal((await api.call("GET", "/api/v1/audit/ledger?category=not_a_category", recoveryAccess)).status, 400, "unknown category refused");
+
   // --- Logout (this browser) and logout everywhere ----------------------------------------------
   const loggedOut = await postAuth(api.baseUrl, "/api/v1/auth/logout", { cookie });
   assert.equal(loggedOut.status, 204);

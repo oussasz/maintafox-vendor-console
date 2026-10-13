@@ -65,6 +65,47 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:all
 
+  e2e:
+    name: Browser test (sign-in with TOTP enrolment, step-up action, audit ledger)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # e2e/serve-api.mjs starts the real API on a fresh database of this server.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Keep the report and traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e-report
+            e2e-results
+          retention-days: 14
+
   contracts-drift:
     name: Contracts drift against the desktop (IPC types, sync registry, step-up kinds)
     runs-on: ubuntu-24.04

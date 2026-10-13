@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { VendorAdminAuditActionCategoryV1, VendorAdminAuditRecordV1 } from "@maintafox/contracts";
+import auditCategoryCatalog from "@shared/audit-action-categories.v1.json";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,29 +24,23 @@ import {
 import {
   downloadAuditLedgerCsv,
   listAuditLedger,
+  type AuditRecord,
   verifyAuditLedgerChainRemote,
 } from "@/services/vendor-audit-support-service";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { errorText } from "@/lib/error-text";
 
-const CATEGORIES: { value: VendorAdminAuditActionCategoryV1 | "all"; labelKey: string }[] = [
-  { value: "all", labelKey: "audit.ledger.filter.all" },
-  { value: "auth_session", labelKey: "audit.ledger.filter.auth" },
-  { value: "entitlement", labelKey: "audit.ledger.filter.entitlement" },
-  { value: "machine", labelKey: "audit.ledger.filter.machine" },
-  { value: "sync_repair", labelKey: "audit.ledger.filter.sync" },
-  { value: "rollout_intervention", labelKey: "audit.ledger.filter.rollout" },
-  { value: "platform_override", labelKey: "audit.ledger.filter.platform" },
-  { value: "support_intervention", labelKey: "audit.ledger.filter.support" },
-];
+/** Ledger categories (shared with the API, which refuses records in any other one). */
+const CATEGORIES: string[] = auditCategoryCatalog.categories.map((c) => c.category);
+const KNOWN_CATEGORIES = new Set(CATEGORIES);
 
 export function AuditLedgerPanel() {
   const { t } = useTranslation("vendorConsole");
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<VendorAdminAuditActionCategoryV1 | "all">("all");
-  const [detail, setDetail] = useState<VendorAdminAuditRecordV1 | null>(null);
+  const [category, setCategory] = useState<string>("all");
+  const [detail, setDetail] = useState<AuditRecord | null>(null);
   const [chainStatus, setChainStatus] = useState<"idle" | "ok" | "fail" | "checking">("idle");
-  const [rows, setRows] = useState<VendorAdminAuditRecordV1[]>([]);
+  const [rows, setRows] = useState<AuditRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,15 +119,16 @@ export function AuditLedgerPanel() {
           <Label className="text-xs">{t("audit.ledger.category")}</Label>
           <Select
             value={category}
-            onValueChange={(v) => setCategory(v as VendorAdminAuditActionCategoryV1 | "all")}
+            onValueChange={setCategory}
           >
             <SelectTrigger className="h-9 w-48 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="all">{t("audit.ledger.filter.all")}</SelectItem>
               {CATEGORIES.map((c) => (
-                <SelectItem key={c.value} value={c.value}>
-                  {t(c.labelKey, c.value)}
+                <SelectItem key={c} value={c}>
+                  {t(`audit.ledger.categories.${c}`)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -193,7 +188,9 @@ export function AuditLedgerPanel() {
                   <td className="px-3 py-2 text-xs">{row.occurred_at_rfc3339}</td>
                   <td className="px-3 py-2 font-mono text-xs">{row.actor_id}</td>
                   <td className="px-3 py-2 font-mono text-xs">{row.action_code}</td>
-                  <td className="px-3 py-2 text-xs">{row.action_category}</td>
+                  <td className="px-3 py-2 text-xs">
+                    {KNOWN_CATEGORIES.has(row.action_category) ? t(`audit.ledger.categories.${row.action_category}`) : row.action_category}
+                  </td>
                   <td className="px-3 py-2 font-mono text-[10px] text-text-muted">
                     {row.record_integrity_sha256.slice(0, 12)}…
                   </td>

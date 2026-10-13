@@ -5,22 +5,16 @@ import type express from "express";
 import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
+import { isAuditActionCategory } from "../app/audit-categories.js";
 import { parsePagination, sendValidationError } from "../app/http.js";
 import { AUDIT_RECORD_COLUMNS, mapAuditRow, verifyAuditChain, type AuditRecordRow } from "../audit-chain.js";
 
 const AuditLedgerQuery = z.object({
   q: z.string().optional(),
+  // "all" or a category of shared/audit-action-categories.v1.json.
   category: z
-    .enum([
-      "auth_session",
-      "entitlement",
-      "machine",
-      "sync_repair",
-      "rollout_intervention",
-      "platform_override",
-      "support_intervention",
-      "all",
-    ])
+    .string()
+    .refine((value) => value === "all" || isAuditActionCategory(value), { message: "unknown audit category" })
     .optional(),
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 }).strict();

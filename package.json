@@ -15,6 +15,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "api:build": "pnpm --filter maintafox-control-api build",
     "api:dev": "pnpm --filter maintafox-control-api dev",
     "api:start": "pnpm --filter maintafox-control-api start"
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.1",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/forms": "^0.5.0",
     "@tailwindcss/typography": "^0.5.0",
     "@testing-library/jest-dom": "^6.9.1",

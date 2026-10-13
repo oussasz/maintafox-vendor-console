@@ -24,7 +24,8 @@ export default defineConfig({
     // Dialog + step-up flows type many characters in jsdom; 5 s (default) is too tight on a busy
     // machine or CI runner, a hung test still fails.
     testTimeout: 15_000,
-    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**"],
+    // e2e/: Playwright browser tests (pnpm test:e2e), not vitest.
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "e2e/**"],
   },
   base: process.env.VITE_BASE_PATH ?? "/",
 });

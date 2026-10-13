@@ -656,14 +656,7 @@
       "chainFail": "Problème chaîne ou intégrité",
       "open": "Ouvrir",
       "filter": {
-        "all": "Toutes les catégories",
-        "auth": "Auth / session",
-        "entitlement": "Habilitation",
-        "machine": "Machine",
-        "sync": "Réparation sync",
-        "rollout": "Déploiement",
-        "platform": "Plateforme",
-        "support": "Support"
+        "all": "Toutes les catégories"
       },
       "col": {
         "seq": "Seq",
@@ -687,7 +680,21 @@
       "empty": "Aucun enregistrement d'audit pour ce filtre.",
       "export": "Exporter en CSV",
       "loading": "Chargement des enregistrements d'audit…",
-      "refresh": "Actualiser"
+      "refresh": "Actualiser",
+      "categories": {
+        "auth_session": "Connexion / session (bureau)",
+        "entitlement": "Licences et postes",
+        "machine": "Confiance des machines",
+        "sync_repair": "Réparation de synchro",
+        "rollout_intervention": "Mises à jour imposées",
+        "platform_override": "Dérogation plateforme",
+        "support_intervention": "Support",
+        "vendor_auth": "Connexion à la console",
+        "tenant": "Clients",
+        "operator": "Opérateurs",
+        "billing": "Facturation",
+        "rollout": "Gouvernance des déploiements"
+      }
     },
     "support": {
       "intro": "Tickets structurés, paquets diagnostics avec rédaction, réconciliation hors ligne, liens audit.",

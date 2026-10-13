@@ -30,15 +30,8 @@ async function parseOrThrow<T>(res: Response, parser: { parse: (v: unknown) => T
 
 export async function listAuditLedger(input?: {
   q?: string;
-  category?:
-    | "all"
-    | "auth_session"
-    | "entitlement"
-    | "machine"
-    | "sync_repair"
-    | "rollout_intervention"
-    | "platform_override"
-    | "support_intervention";
+  /** "all" or a category of shared/audit-action-categories.v1.json. */
+  category?: string;
   limit?: number;
 }): Promise<AuditRecord[]> {
   const params = new URLSearchParams();

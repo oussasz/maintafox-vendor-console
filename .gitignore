@@ -3,3 +3,6 @@ dist
 .env
 .env.local
 *.log
+# Playwright (pnpm test:e2e)
+e2e-report
+e2e-results

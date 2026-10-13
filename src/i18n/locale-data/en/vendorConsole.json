@@ -656,14 +656,7 @@
       "chainFail": "Chain / integrity issue",
       "open": "Open",
       "filter": {
-        "all": "All categories",
-        "auth": "Auth / session",
-        "entitlement": "Entitlement",
-        "machine": "Machine",
-        "sync": "Sync repair",
-        "rollout": "Rollout",
-        "platform": "Platform override",
-        "support": "Support"
+        "all": "All categories"
       },
       "col": {
         "seq": "Seq",
@@ -687,7 +680,21 @@
       "export": "Export CSV",
       "refresh": "Refresh",
       "loading": "Loading audit records…",
-      "empty": "No audit records for this filter."
+      "empty": "No audit records for this filter.",
+      "categories": {
+        "auth_session": "Desktop sign-in / session",
+        "entitlement": "Licences & slots",
+        "machine": "Machine trust",
+        "sync_repair": "Sync repair",
+        "rollout_intervention": "Forced updates",
+        "platform_override": "Platform override",
+        "support_intervention": "Support",
+        "vendor_auth": "Console sign-in",
+        "tenant": "Customers",
+        "operator": "Operators",
+        "billing": "Billing",
+        "rollout": "Rollout governance"
+      }
     },
     "support": {
       "intro": "Structured tickets, diagnostic bundles with redaction, offline reconciliation, and explicit links to audit records.",
