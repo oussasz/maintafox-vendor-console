@@ -196,7 +196,7 @@ export function SupportOperationsPanel() {
         <CardContent className="grid gap-2 text-sm sm:grid-cols-[1fr_auto_1fr_2fr_auto]">
           <select
             aria-label={t("audit.support.newTicket.tenant")}
-            className="h-9 rounded-lg border border-input bg-white pl-2.5 pr-8 text-xs text-text-primary"
+            className="h-9 rounded-lg border border-input bg-surface-1 pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.tenant_id}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, tenant_id: e.target.value }))}
           >
@@ -209,7 +209,7 @@ export function SupportOperationsPanel() {
           </select>
           <select
             aria-label={t("audit.support.newTicket.severity")}
-            className="h-9 rounded-lg border border-input bg-white pl-2.5 pr-8 text-xs text-text-primary"
+            className="h-9 rounded-lg border border-input bg-surface-1 pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.severity}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, severity: e.target.value as SupportTicket["severity"] }))}
           >

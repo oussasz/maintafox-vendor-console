@@ -204,5 +204,13 @@
       "en": "English",
       "fr": "Français"
     }
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "switchToDark": "Switch to the dark theme",
+    "switchToLight": "Switch to the light theme",
+    "hint": "Saved in this browser only. The console opens in the light theme until you choose otherwise."
   }
 }

@@ -437,7 +437,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
             <Label htmlFor="tenant">{t("entitlement.tenant")}</Label>
             <select
               id="tenant"
-              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
               value={selectedTenantId}
               disabled={loadingTenants}
               onChange={(event) => setSelectedTenantId(event.target.value)}
@@ -465,7 +465,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
             <Label htmlFor="state-filter">{t("entitlement.stateFilter")}</Label>
             <select
               id="state-filter"
-              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
               value={stateFilter}
               onChange={(event) => setStateFilter(event.target.value as LicenseFilter)}
             >
@@ -479,7 +479,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
             <Label htmlFor="sort-key">{t("entitlement.sortBy")}</Label>
             <select
               id="sort-key"
-              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+              className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
               value={sortKey}
               onChange={(event) => setSortKey(event.target.value as LicenseSortKey)}
             >
@@ -670,7 +670,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               <Label htmlFor="edit-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="edit-channel"
-                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
                 value={issueForm.update_channel}
                 onChange={(event) =>
                   setIssueForm((previous) => ({
@@ -882,7 +882,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               <Label htmlFor="issue-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="issue-channel"
-                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+                className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
                 value={issueForm.update_channel}
                 onChange={(event) =>
                   setIssueForm((previous) => ({

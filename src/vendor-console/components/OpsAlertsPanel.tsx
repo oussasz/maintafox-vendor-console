@@ -60,7 +60,7 @@ export function OpsAlertsPanel({
               <p className="mt-2 text-xs text-text-secondary">
                 {t("ops.alerts.drill")}: {drillSummary(a.drill_refs)}
                 {!safe ? (
-                  <span className="ml-2 text-destructive">
+                  <span className="ml-2 text-danger">
                     {t("ops.alerts.unsafe")}
                   </span>
                 ) : null}

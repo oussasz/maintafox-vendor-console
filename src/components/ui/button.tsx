@@ -12,9 +12,9 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary-dark",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         /** A sensitive action shown next to ordinary ones: white, red text and border. */
-        "destructive-outline": "border border-danger-border bg-white text-danger hover:bg-danger-bg",
-        outline: "border border-input bg-white text-text-primary hover:bg-surface-3",
-        secondary: "border border-input bg-white text-text-primary hover:bg-surface-3",
+        "destructive-outline": "border border-danger-border bg-surface-1 text-danger hover:bg-danger-bg",
+        outline: "border border-input bg-surface-1 text-text-primary hover:bg-surface-3",
+        secondary: "border border-input bg-surface-1 text-text-primary hover:bg-surface-3",
         ghost: "text-text-primary hover:bg-surface-3",
         link: "text-primary underline-offset-4 hover:underline",
       },

@@ -152,7 +152,7 @@ export function AuditLedgerPanel({ scopeQuery }: { /** Only records matching thi
           <span className="text-xs text-ok">{t("audit.ledger.chainOk")}</span>
         ) : null}
         {chainStatus === "fail" ? (
-          <span className="text-xs text-destructive">{t("audit.ledger.chainFail")}</span>
+          <span className="text-xs text-danger">{t("audit.ledger.chainFail")}</span>
         ) : null}
       </div>
       {error ? (

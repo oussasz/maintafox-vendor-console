@@ -21,7 +21,7 @@ import { errorText } from "@/lib/error-text";
 /** Licences ending within this many days are highlighted. */
 const RENEWAL_WARNING_DAYS = 30;
 
-const selectClass = "h-11 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
+const selectClass = "h-11 rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 
 function statusVariant(status: PaymentOrder["status"]): "default" | "secondary" | "destructive" {
   if (status === "paid") return "default";

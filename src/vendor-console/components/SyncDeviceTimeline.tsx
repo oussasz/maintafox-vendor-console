@@ -15,7 +15,7 @@ import { errorText } from "@/lib/error-text";
 const TIMELINE_SPANS_HOURS = [24, 72, 168, 720] as const;
 const DEFAULT_SPAN_HOURS = 72;
 
-const selectClass = "h-11 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
+const selectClass = "h-11 rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 
 /**
  * One device's sync history as the server recorded it (exchanges, retries, refused items,

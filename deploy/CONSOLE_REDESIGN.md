@@ -61,6 +61,28 @@ JSON, codes and validation output are never shown (browser test: `e2e/console.sp
   Payments, Editions, Sync across customers, Team, Safeguards): restyled to the new palette, not yet
   rebuilt card by card.
 
+## Light and dark theme, logo
+
+- Light is the default. The Light/Dark button in the top bar (and on the sign-in page) and
+  Settings > Display switch it; the choice is kept in this browser only (localStorage
+  `maintafox.console.theme`). `public/theme-init.js` applies it before the first paint, so there is
+  no flash. The old key `maintafox:theme:v2` is ignored: it could hold "dark" from the old console.
+- All colours are tokens in `src/styles/globals.css`, one set per theme (`:root, .light` and
+  `.dark`); palette colours are RGB channels so Tailwind opacity modifiers work. Components use
+  tokens only (no `bg-white`, `text-white` except on the always-dark navy sidebar, no fixed greys).
+- Guarded by `src/styles/__tests__/contrast.test.ts` (every text/background pair, both themes,
+  WCAG AA: 4.5:1 text, 3:1 borders, focus ring and status dots) and by the e2e run (axe-core
+  colour contrast on every page, every tab, the dialogs, the step-up, the sign-in, authenticator
+  enrolment and an error state, in both themes).
+- Logo: the official files from the desktop app, copied unchanged: `src/assets/logo/maintafox-logo-white.svg`
+  on the navy sidebar and the dark sign-in page, `maintafox-logo-color.svg` on the light sign-in
+  page, `public/favicon.svg` (and `favicon.png`) as the browser icon.
+
+Deploy: console image only (no API change, no migration). Check after deploy: the console opens
+light even in a browser that had chosen dark before; the toggle switches and survives a reload; the
+sidebar shows the white flame-and-gear mark; the browser tab shows the Maintafox icon. Rollback: the
+previous console image.
+
 ## Deploy checklist
 
 Console and API images (one deploy with Phase 4, `deploy/PHASE4_DEPLOY.md`). No migration for the

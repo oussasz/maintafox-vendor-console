@@ -17,7 +17,7 @@ import { ActivationTestPanel } from "../devices/ActivationTestPanel";
 import { DeviceList } from "../devices/DeviceList";
 import { EmptyState, LoadError, Loading, PageHeader, Panel } from "../ui/kit";
 
-const selectClass = "h-11 w-full max-w-sm rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
+const selectClass = "h-11 w-full max-w-sm rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 
 export function DevicesPage() {
   const { t } = useTranslation("vendorConsole");

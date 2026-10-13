@@ -16,7 +16,9 @@ import {
   verifyTotp,
   type TotpEnrolment,
 } from "@/services/vendor-auth-service";
+import { MaintafoxMark } from "@/components/branding/MaintafoxMark";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { errorText } from "@/lib/error-text";
 
 type Step =
@@ -180,7 +182,19 @@ export function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface-0 px-4">
-      <LanguageSwitcher className="absolute right-4 top-4" />
+      <div className="absolute right-4 top-4 flex items-center gap-3">
+        <ThemeToggle />
+        <LanguageSwitcher />
+      </div>
+      <div className="mb-6 flex items-center gap-3">
+        {/* Colour mark on the light ground, white mark on the dark one (both are the official files). */}
+        <MaintafoxMark variant="color" size={44} className="dark:hidden" />
+        <MaintafoxMark variant="white" size={44} className="hidden dark:block" />
+        <div className="flex flex-col">
+          <span className="text-xl font-bold text-text-primary">{t("common:app.name")}</span>
+          <span className="text-sm text-text-secondary">{t("vendorConsole:shell.consoleName")}</span>
+        </div>
+      </div>
       <div className="w-full max-w-md rounded-lg border border-surface-border bg-surface-1 p-6 shadow-panel">
         {step.kind === "credentials" ? (
           <form onSubmit={onCredentials}>

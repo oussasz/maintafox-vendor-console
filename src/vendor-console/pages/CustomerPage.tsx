@@ -135,7 +135,7 @@ export function CustomerPage() {
         ← {t("customer.back")}
       </Link>
 
-      <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-surface-border bg-white px-[22px] py-5">
+      <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-surface-border bg-surface-1 px-[22px] py-5">
         <div className="flex items-center gap-4">
           <div aria-hidden="true" className="flex h-[52px] w-[52px] items-center justify-center rounded-xl bg-primary-bg text-xl font-bold text-primary">
             {initials(tenant.display_name)}
@@ -181,7 +181,7 @@ export function CustomerPage() {
 
         <TabsContent value="overview" className="flex flex-col gap-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.licence")}</span>
               <span className="text-[22px] font-bold text-text-primary">
                 {row?.licence_until
@@ -198,7 +198,7 @@ export function CustomerPage() {
                 </span>
               ) : null}
             </div>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.devices")}</span>
               <span className="text-[22px] font-bold text-text-primary">{t("customer.tiles.seatsUsed", { used: row?.devices_used ?? 0, seats: row?.seats ?? 0 })}</span>
               <div
@@ -212,7 +212,7 @@ export function CustomerPage() {
                 <div className="h-2 bg-primary" style={{ width: `${seatsUsedPct}%` }} />
               </div>
             </div>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.sync")}</span>
               <span className={sync.behind > 0 ? "text-[22px] font-bold text-attention-strong" : "text-[22px] font-bold text-text-primary"}>
                 {sync.active === 0 ? t("customer.tiles.noDevices") : sync.behind > 0 ? t("customer.tiles.behind", { count: sync.behind }) : t("customer.tiles.upToDate")}
@@ -226,7 +226,7 @@ export function CustomerPage() {
           </Panel>
 
           {can("customer.manage") ? (
-            <section aria-labelledby="danger-h" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-white px-[22px] py-5">
+            <section aria-labelledby="danger-h" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-surface-1 px-[22px] py-5">
               <div className="flex flex-[1_1_320px] flex-col gap-1">
                 <h2 id="danger-h" className="text-[15px] font-bold text-text-primary">
                   {t("customer.sensitive.title")}

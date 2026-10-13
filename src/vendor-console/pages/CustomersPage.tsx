@@ -76,7 +76,7 @@ export function CustomersPage() {
                 onClick={() => setParam("status", s)}
                 className={cn(
                   "h-9 rounded-full border px-3.5 text-[13px] font-semibold",
-                  status === s ? "border-primary bg-primary-bg text-primary" : "border-input bg-white text-text-secondary hover:text-text-primary",
+                  status === s ? "border-primary bg-primary-bg text-primary" : "border-input bg-surface-1 text-text-secondary hover:text-text-primary",
                 )}
               >
                 {s ? t(`customers.status.${s}`) : t("customers.page.all")} ({s ? (counts.get(s) ?? 0) : customers.length})

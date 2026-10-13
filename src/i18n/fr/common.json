@@ -204,5 +204,13 @@
       "en": "English",
       "fr": "Français"
     }
+  },
+  "theme": {
+    "label": "Thème",
+    "light": "Clair",
+    "dark": "Sombre",
+    "switchToDark": "Passer au thème sombre",
+    "switchToLight": "Passer au thème clair",
+    "hint": "Enregistré dans ce navigateur uniquement. La console s’ouvre en thème clair tant que vous n’en choisissez pas un autre."
   }
 }

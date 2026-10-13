@@ -1325,14 +1325,14 @@
     "tabs": {
       "team": "Team",
       "audit": "Audit log",
-      "safeguards": "Safeguards"
+      "safeguards": "Safeguards",
+      "display": "Display"
     },
     "audit": {
       "title": "Audit log"
     },
-    "nothing": {
-      "title": "Nothing to set here for your role",
-      "body": "Your language and your account (password, recovery codes) are at the top right."
+    "display": {
+      "title": "Display"
     }
   },
   "sysHealth": {

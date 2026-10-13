@@ -210,7 +210,7 @@ export function VendorConsoleEditionsPage() {
       </header>
 
       <div
-        className="rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-xs text-amber-100"
+        className="rounded-md border border-attention/40 bg-attention-bg px-3 py-2 text-xs text-attention-text"
         role="status"
       >
         {t("editions.reissueBanner")}
@@ -308,7 +308,7 @@ export function VendorConsoleEditionsPage() {
                   <Label htmlFor="clone-from">{t("editions.fields.cloneFrom")}</Label>
                   <select
                     id="clone-from"
-                    className="mt-1 flex h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary"
+                    className="mt-1 flex h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary"
                     value={cloneFromId}
                     onChange={(e) => {
                       setCloneFromId(e.target.value);

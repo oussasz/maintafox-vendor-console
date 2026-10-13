@@ -1325,14 +1325,14 @@
     "tabs": {
       "team": "Équipe",
       "audit": "Journal d'audit",
-      "safeguards": "Garde-fous"
+      "safeguards": "Garde-fous",
+      "display": "Affichage"
     },
     "audit": {
       "title": "Journal d'audit"
     },
-    "nothing": {
-      "title": "Rien à régler ici pour votre rôle",
-      "body": "Votre langue et votre compte (mot de passe, codes de secours) sont en haut à droite."
+    "display": {
+      "title": "Affichage"
     }
   },
   "sysHealth": {

@@ -30,7 +30,7 @@ type TenantMode = "off" | "required" | "emergency" | "inherit";
 type CohortMode = "off" | "required" | "emergency";
 type Policy<M> = { version: string; mode: M; userReason: string };
 
-const selectClass = "h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
+const selectClass = "h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 
 export function ForceUpdatePanel() {
   const { t } = useTranslation("vendorConsole");

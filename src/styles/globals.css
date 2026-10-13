@@ -9,22 +9,14 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── CSS Custom Properties (design tokens, referenced by JS where Tailwind is
-       insufficient, e.g. D3 chart rendering) ───────────────────────────── */
+/* ── Design tokens ───────────────────────────────────────────────────────────
+   Two themes, chosen per browser (Light by default, see public/theme-init.js and
+   src/components/ui/ThemeProvider.tsx). `:root` holds the light theme so a page
+   without a class is never half dark. Palette colours (--c-*) are RGB channels so
+   Tailwind opacity modifiers keep working (`bg-navy-active/60`).
+   Every text/background pair is held to WCAG AA by src/styles/__tests__/contrast.test.ts:
+   change a value there and the test tells you if it is still readable. */
 :root {
-  /* Brand — invariant across themes */
-  --color-primary: #003d8f;
-  --color-primary-dark: #002b6a;
-  --color-primary-light: #4d7bc5;
-  --color-primary-bg: #e8eef8;
-  --color-accent: #f0a500;
-
-  /* Status — invariant across themes */
-  --color-success: #198754;
-  --color-danger: #dc3545;
-  --color-warning: #ffc107;
-  --color-info: #0dcaf0;
-
   /* Layout — invariant across themes */
   --sidebar-width: 240px;
   --sidebar-width-sm: 64px;
@@ -38,50 +30,10 @@
   --transition-slow: 300ms;
 }
 
-/* ── Dark theme (default fallback) ──────────────────────────────────────── */
+/* ── Light theme (default): navy text on a pale blue ground, white cards ──── */
 :root,
-.dark {
-  --surface-0: #0f172a;
-  --surface-1: #1e293b;
-  --surface-2: #263244;
-  --surface-3: #334155;
-  --surface-border: #2d3f55;
-
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --text-danger: #f87171;
-  --text-success: #4ade80;
-  --text-warning: #fbbf24;
-
-  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.4);
-  --shadow-panel: 0 4px 16px 0 rgba(0, 0, 0, 0.5);
-  --shadow-focus: 0 0 0 2px #4d7bc5;
-
-  /* ── Shadcn/ui semantic bridge — maps to Maintafox tokens above ─────── */
-  --background: var(--surface-0);
-  --foreground: var(--text-primary);
-  --card: var(--surface-1);
-  --card-foreground: var(--text-primary);
-  --popover: var(--surface-1);
-  --popover-foreground: var(--text-primary);
-  --primary-foreground: #f1f5f9;
-  --secondary: var(--surface-2);
-  --secondary-foreground: var(--text-primary);
-  --muted: var(--surface-2);
-  --muted-foreground: var(--text-muted);
-  --accent-foreground: #0d1b2e;
-  --destructive: #dc3545;
-  --destructive-foreground: #f1f5f9;
-  --border: var(--surface-border);
-  --input: var(--surface-border);
-  --ring: #4d7bc5;
-  --radius: 0.375rem;
-}
-
-/* ── Light theme — professional, clean ──────────────────────────────────── */
 .light {
-  /* Console palette (2026 redesign): navy text on a pale blue ground, white cards. */
+  color-scheme: light;
   --surface-0: #f4f7fb;
   --surface-1: #ffffff;
   --surface-2: #f4f7fb;
@@ -90,13 +42,45 @@
 
   --text-primary: #0b1f3a;
   --text-secondary: #445874;
-  --text-muted: #5f7390;
+  --text-muted: #52657f;
   --text-danger: #b42318;
   --text-success: #117a3d;
   --text-warning: #8a4a00;
 
   --shadow-card: none;
   --shadow-panel: 0 8px 24px 0 rgba(11, 31, 58, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(0, 73, 172, 0.28);
+
+  --c-primary: 0 73 172; /* #0049ac */
+  --c-primary-dark: 0 58 140; /* #003a8c */
+  --c-primary-light: 77 123 197; /* #4d7bc5 */
+  --c-primary-bg: 230 238 251; /* #e6eefb */
+  --c-primary-fg: 255 255 255; /* #ffffff */
+  --c-accent: 240 165 0; /* #f0a500 */
+  --c-accent-dark: 196 127 0; /* #c47f00 */
+  --c-navy: 11 31 58; /* #0b1f3a */
+  --c-navy-active: 23 50 90; /* #17325a */
+  --c-navy-text: 220 230 244; /* #dce6f4 */
+  --c-navy-muted: 159 179 207; /* #9fb3cf */
+  --c-attention: 246 135 20; /* #f68714 */
+  --c-attention-bg: 255 244 230; /* #fff4e6 */
+  --c-attention-text: 138 74 0; /* #8a4a00 */
+  --c-attention-strong: 180 83 9; /* #b45309 */
+  --c-ok: 17 122 61; /* #117a3d */
+  --c-ok-bg: 234 246 239; /* #eaf6ef */
+  --c-ok-text: 14 90 46; /* #0e5a2e */
+  --c-ok-border: 183 223 198; /* #b7dfc6 */
+  --c-danger: 180 35 24; /* #b42318 */
+  --c-danger-bg: 254 243 242; /* #fef3f2 */
+  --c-danger-border: 232 180 174; /* #e8b4ae */
+  --c-destructive: 180 35 24; /* #b42318 */
+  --c-destructive-fg: 255 255 255; /* #ffffff */
+  --c-status-success: 20 108 67; /* #146c43 */
+  --c-status-danger: 166 27 41; /* #a61b29 */
+  --c-status-warning: 255 193 7; /* #ffc107 */
+  --c-status-info: 11 95 119; /* #0b5f77 */
+  --c-status-neutral: 95 107 118; /* #5f6b76 */
+  --c-overlay: 11 31 58; /* #0b1f3a */
 
   /* ── Shadcn/ui semantic bridge — maps to Maintafox tokens above ─────── */
   --background: var(--surface-0);
@@ -105,19 +89,88 @@
   --card-foreground: var(--text-primary);
   --popover: var(--surface-1);
   --popover-foreground: var(--text-primary);
-  --primary-foreground: #ffffff;
-  --secondary: #ffffff;
+  --primary-foreground: rgb(var(--c-primary-fg));
+  --secondary: var(--surface-1);
   --secondary-foreground: var(--text-primary);
   --muted: var(--surface-3);
   --muted-foreground: var(--text-secondary);
   --accent-foreground: #0b1f3a;
-  --destructive: #b42318;
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: rgb(var(--c-destructive-fg));
   --border: var(--surface-border);
-  --input: #bccadd;
+  /* Field and outline-button borders: 3:1 against a card (WCAG 1.4.11). */
+  --input: #7d8ea8;
   --ring: #0049ac;
   --radius: 0.5rem;
-  --shadow-focus: 0 0 0 3px rgba(0, 73, 172, 0.28);
+}
+
+/* ── Dark theme: deep blue-grey ground, lighter cards, light text ─────────── */
+.dark {
+  color-scheme: dark;
+  --surface-0: #0b1220;
+  --surface-1: #131c2e;
+  --surface-2: #172236;
+  --surface-3: #1e2a40;
+  --surface-border: #2a3954;
+
+  --text-primary: #e6edf7;
+  --text-secondary: #b4c2d6;
+  --text-muted: #95a6bf;
+  --text-danger: #ff8a80;
+  --text-success: #8ef0b0;
+  --text-warning: #ffc58a;
+
+  --shadow-card: none;
+  --shadow-panel: 0 8px 24px 0 rgba(0, 0, 0, 0.5);
+  --shadow-focus: 0 0 0 3px rgba(110, 168, 255, 0.4);
+
+  --c-primary: 110 168 255; /* #6ea8ff */
+  --c-primary-dark: 143 187 255; /* #8fbbff */
+  --c-primary-light: 110 168 255; /* #6ea8ff */
+  --c-primary-bg: 22 41 74; /* #16294a */
+  --c-primary-fg: 11 18 32; /* #0b1220 */
+  --c-accent: 240 165 0; /* #f0a500 */
+  --c-accent-dark: 255 187 51; /* #ffbb33 */
+  --c-navy: 7 13 25; /* #070d19 */
+  --c-navy-active: 27 44 73; /* #1b2c49 */
+  --c-navy-text: 230 237 247; /* #e6edf7 */
+  --c-navy-muted: 167 183 207; /* #a7b7cf */
+  --c-attention: 246 135 20; /* #f68714 */
+  --c-attention-bg: 58 37 16; /* #3a2510 */
+  --c-attention-text: 255 197 138; /* #ffc58a */
+  --c-attention-strong: 255 176 102; /* #ffb066 */
+  --c-ok: 74 222 128; /* #4ade80 */
+  --c-ok-bg: 15 46 29; /* #0f2e1d */
+  --c-ok-text: 142 240 176; /* #8ef0b0 */
+  --c-ok-border: 31 90 56; /* #1f5a38 */
+  --c-danger: 255 138 128; /* #ff8a80 */
+  --c-danger-bg: 58 21 23; /* #3a1517 */
+  --c-danger-border: 122 46 42; /* #7a2e2a */
+  --c-destructive: 217 45 32; /* #d92d20 */
+  --c-destructive-fg: 255 255 255; /* #ffffff */
+  --c-status-success: 74 222 128; /* #4ade80 */
+  --c-status-danger: 255 138 128; /* #ff8a80 */
+  --c-status-warning: 251 191 36; /* #fbbf24 */
+  --c-status-info: 103 232 249; /* #67e8f9 */
+  --c-status-neutral: 160 174 192; /* #a0aec0 */
+  --c-overlay: 0 0 0; /* #000000 */
+
+  --background: var(--surface-0);
+  --foreground: var(--text-primary);
+  --card: var(--surface-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--text-primary);
+  --primary-foreground: rgb(var(--c-primary-fg));
+  --secondary: var(--surface-1);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-3);
+  --muted-foreground: var(--text-secondary);
+  --accent-foreground: #0b1f3a;
+  --destructive-foreground: rgb(var(--c-destructive-fg));
+  --border: var(--surface-border);
+  --input: #6a7c99;
+  --ring: #6ea8ff;
+  --radius: 0.5rem;
 }
 
 @layer base {
@@ -137,7 +190,7 @@
 
   body {
     font-family:
-      Inter,
+      "IBM Plex Sans",
       ui-sans-serif,
       system-ui,
       -apple-system,
@@ -168,7 +221,7 @@
     outline: none;
   }
   :focus-visible {
-    outline: 2px solid var(--color-primary-light);
+    outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
@@ -222,7 +275,7 @@
   /* ── Button primitives ───────────────────────────────────────────── */
   .btn-primary {
     @apply inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5
-           text-sm font-medium text-white transition-colors duration-fast
+           text-sm font-medium text-primary-foreground transition-colors duration-fast
            hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary-light
            disabled:pointer-events-none disabled:opacity-50;
   }
@@ -232,8 +285,8 @@
            hover:bg-surface-3 hover:text-text-primary disabled:opacity-50;
   }
   .btn-danger {
-    @apply inline-flex items-center gap-1.5 rounded-md bg-status-danger px-3 py-1.5
-           text-sm font-medium text-white transition-colors duration-fast
+    @apply inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5
+           text-sm font-medium text-destructive-foreground transition-colors duration-fast
            hover:brightness-90 disabled:opacity-50;
   }
 
