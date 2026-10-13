@@ -186,7 +186,14 @@
       "bundle_not_found": "Lot de diagnostic introuvable.",
       "validation_error": "Certains champs ne sont pas valides.",
       "invalid_body": "Certains champs ne sont pas valides.",
-      "internal_error": "Le serveur n'a pas pu traiter la requête (HTTP {{status}})."
+      "internal_error": "Le serveur n'a pas pu traiter la requête (HTTP {{status}}).",
+      "channel_narrowing_refused": "Une version publiée ne peut qu'être élargie (Interne, puis Pilote, puis Stable). Pour la retirer des appareils, rappelez-la.",
+      "release_unchanged": "Cette version est déjà publiée sur ce cercle à ce pourcentage.",
+      "release_recalled": "Cette version a été rappelée : elle ne peut plus être publiée ni rappelée à nouveau.",
+      "release_not_registered": "Cette version est encore en cours d'envoi et de vérification par le processus de publication. Réessayez quand elle apparaît en brouillon.",
+      "release_not_found": "Cette version n'existe plus. Actualisez la liste.",
+      "publisher_key_not_found": "Cette clé du processus de publication n'existe plus. Actualisez la liste.",
+      "publisher_key_revoked": "Cette clé du processus de publication est déjà révoquée."
     }
   },
   "permissions": {

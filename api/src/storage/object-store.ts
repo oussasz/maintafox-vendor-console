@@ -179,6 +179,38 @@ export class TenantMediaObjectStore {
     return { byteSize, sha256: hash.digest("hex") };
   }
 
+  /**
+   * Size, SHA-256 and BLAKE2b-512 of one object in one read (release artifacts: the SHA-256 is
+   * compared with the declared one, the BLAKE2b-512 is what the updater signature signs).
+   * Returns null when the object does not exist; throws `object_too_large` past `maxBytes`.
+   */
+  async readObjectDigests(
+    objectKey: string,
+    maxBytes: number,
+  ): Promise<{ byteSize: number; sha256: string; blake2b512: Buffer } | null> {
+    let out;
+    try {
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchKey") return null;
+      throw err;
+    }
+    if (!out.Body) return null;
+    const sha = createHash("sha256");
+    const blake = createHash("blake2b512");
+    let byteSize = 0;
+    for await (const chunk of out.Body as AsyncIterable<Uint8Array>) {
+      byteSize += chunk.length;
+      if (byteSize > maxBytes) {
+        (out.Body as { destroy?: () => void }).destroy?.();
+        throw new Error("object_too_large");
+      }
+      sha.update(chunk);
+      blake.update(chunk);
+    }
+    return { byteSize, sha256: sha.digest("hex"), blake2b512: blake.digest() };
+  }
+
   /** Streams one object's content into `writeTo` (used by the off-site media backup). */
   async downloadObject(objectKey: string, writeTo: NodeJS.WritableStream): Promise<void> {
     const out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));

@@ -94,6 +94,41 @@ export function semverCompare(a?: string | null, b?: string | null): number {
 
 export type ForceUpdateMode = "off" | "required" | "emergency" | "inherit";
 
+/**
+ * Effective force-update policy of a device: the tenant policy unless it is "inherit", then its
+ * (channel, cohort) policy. Used by activation (claim / policy refresh) and the update manifest.
+ */
+export function resolveForceUpdatePolicy(input: {
+  appVersion?: string;
+  tenantMinVersion: string | null;
+  tenantMode: ForceUpdateMode;
+  tenantReason: string | null;
+  cohortMinVersion: string | null;
+  cohortMode: Exclude<ForceUpdateMode, "inherit">;
+  cohortReason: string | null;
+}): {
+  force_min_app_version: string | null;
+  force_update_mode: Exclude<ForceUpdateMode, "inherit">;
+  force_update_reason: string | null;
+  force_update_required: boolean;
+  policy_source: "tenant" | "cohort";
+} {
+  const policySource: "tenant" | "cohort" = input.tenantMode === "inherit" ? "cohort" : "tenant";
+  const mode =
+    policySource === "tenant" ? (input.tenantMode as Exclude<ForceUpdateMode, "inherit">) : input.cohortMode;
+  const minVersion = policySource === "tenant" ? input.tenantMinVersion : input.cohortMinVersion;
+  const reason = policySource === "tenant" ? input.tenantReason : input.cohortReason;
+  const forceUpdateRequired =
+    mode === "emergency" || (mode === "required" && (!input.appVersion || !minVersion || semverCompare(input.appVersion, minVersion) < 0));
+  return {
+    force_min_app_version: minVersion,
+    force_update_mode: mode,
+    force_update_reason: reason,
+    force_update_required: forceUpdateRequired,
+    policy_source: policySource,
+  };
+}
+
 /** Constant-time comparison of two secrets (webhook signature, scrape token). */
 export function safeEqualUtf8(a: string, b: string): boolean {
   const ab = Buffer.from(a, "utf8");

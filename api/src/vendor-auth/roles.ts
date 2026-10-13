@@ -104,6 +104,14 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/rollouts/:channel/:cohort/pause": "rollout.manage",
   "POST /api/v1/rollouts/:channel/:cohort/resume": "rollout.manage",
   "POST /api/v1/rollouts/:channel/:cohort/recall": "rollout.manage",
+  // Release catalog (routes/release-catalog.ts; the CI upload routes use a publisher key instead)
+  "GET /api/v1/releases": "console.view",
+  "PATCH /api/v1/releases/:releaseId/notes": "rollout.manage",
+  "POST /api/v1/releases/:releaseId/publish": "rollout.manage",
+  "POST /api/v1/releases/:releaseId/recall": "rollout.manage",
+  "GET /api/v1/release-publisher-keys": "console.view",
+  "POST /api/v1/release-publisher-keys": "rollout.manage",
+  "POST /api/v1/release-publisher-keys/:keyId/revoke": "rollout.manage",
 
   // Operations dashboards
   "GET /api/v1/ops/sync-overview": "sync.operate",

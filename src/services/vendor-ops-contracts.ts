@@ -65,7 +65,11 @@ export const SyncOverviewV1Schema = z.object({
 });
 
 export const RolloutImpactPreviewV1Schema = z.object({
-  release_id: z.string().min(1),
+  /** Latest published, not recalled release (null until one is published). */
+  release_id: z.string().min(1).nullable(),
+  release_version: z.string().min(1).nullable(),
+  release_channel: z.string().min(1).nullable(),
+  release_rollout_percent: z.number().int().min(0).max(100).nullable(),
   affected_tenants: z.number().nonnegative(),
   affected_machines: z.number().nonnegative(),
   entitlement_channel_ok: z.boolean(),

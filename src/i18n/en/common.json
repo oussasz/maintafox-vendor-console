@@ -186,7 +186,14 @@
       "bundle_not_found": "Diagnostic bundle not found.",
       "validation_error": "Some fields are not valid.",
       "invalid_body": "Some fields are not valid.",
-      "internal_error": "The server failed to process the request (HTTP {{status}})."
+      "internal_error": "The server failed to process the request (HTTP {{status}}).",
+      "channel_narrowing_refused": "A published version can only be widened (Internal, then Pilot, then Stable). To take it back from devices, recall it.",
+      "release_unchanged": "This version is already published to this ring at this percentage.",
+      "release_recalled": "This version was recalled: it can no longer be published or recalled again.",
+      "release_not_registered": "This version is still being uploaded and checked by the release workflow. Try again once it shows as a draft.",
+      "release_not_found": "This version no longer exists. Refresh the list.",
+      "publisher_key_not_found": "This release workflow key no longer exists. Refresh the list.",
+      "publisher_key_revoked": "This release workflow key is already revoked."
     }
   },
   "permissions": {

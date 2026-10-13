@@ -154,6 +154,8 @@ services:
       S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-prod}
+      # Desktop updater public key (deploy/RELEASES.md). Unset = releases cannot be registered.
+      RELEASE_UPDATER_PUBLIC_KEY: ${RELEASE_UPDATER_PUBLIC_KEY:-}
       SLICKPAY_PUBLIC_KEY: ${SLICKPAY_PUBLIC_KEY:-}
       SLICKPAY_SECRET_KEY: ${SLICKPAY_SECRET_KEY:-}
       SLICKPAY_WEBHOOK_SECRET: ${SLICKPAY_WEBHOOK_SECRET:-}

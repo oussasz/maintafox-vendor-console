@@ -253,7 +253,6 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         action_code: "cohort_update_policy_set",
         step_up_kind: StepUpKinds.rolloutPublish,
         action_category: "rollout_intervention",
-        entity_refs: { release_id: `${channel}:${cohort}` },
         payload: {
           channel,
           cohort_label: cohort,
@@ -329,8 +328,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         action_code: "cohort_update_policy_rollback",
         step_up_kind: StepUpKinds.forcedRollback,
         action_category: "rollout_intervention",
-        entity_refs: { release_id: `${channel}:${cohort}` },
-        payload: { rollback_to_previous: true },
+        payload: { channel, cohort_label: cohort, rollback_to_previous: true },
       });
       if (!guard.ok) return { status: guard.status, body: guard.body };
       const existing = await db.get("SELECT id FROM cohort_update_policies WHERE channel = ? AND cohort_label = ?", channel, cohort) as { id: string } | undefined;
