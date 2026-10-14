@@ -842,6 +842,18 @@
     {
       "entity_type": "equipment_spare_parts",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_cost_estimates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "wo_cost_settlements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "budget_periods",
+      "scope": "tenant"
     }
   ]
 }
