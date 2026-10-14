@@ -794,6 +794,54 @@
     {
       "entity_type": "unit_conversions",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_cost_profiles",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_studies",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_assets",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_decisions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "reliability_study_record_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "currency_exchange_rates",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_lots",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_valuation_periods",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "inventory_valuation_snapshot_lines",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "procurement_approval_limits",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant"
     }
   ]
 }
