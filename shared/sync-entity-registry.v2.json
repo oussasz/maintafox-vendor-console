@@ -794,6 +794,14 @@
     {
       "entity_type": "unit_conversions",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant"
     }
   ]
 }
