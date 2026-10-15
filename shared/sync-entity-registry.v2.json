@@ -854,6 +854,10 @@
     {
       "entity_type": "budget_periods",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant"
     }
   ]
 }
