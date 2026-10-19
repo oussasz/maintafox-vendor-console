@@ -224,6 +224,64 @@ async function run() {
       body: JSON.stringify({}),
     });
     assert.equal(rollbackRes.status, 200, "tenant policy rollback must succeed");
+
+    // A device with no body and no Content-Type (route level) still gets its refresh and the old
+    // answer under "required" (cohort floor 2.0.0 is back in force after the rollback).
+    const bareRefreshRes = await fetch(`${baseUrl}/api/v1/activation/policy-refresh`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${deviceToken}` },
+    });
+    assert.equal(bareRefreshRes.status, 200, "policy-refresh with no body must succeed");
+    const bareRefresh = await bareRefreshRes.json();
+    deviceToken = bareRefresh.activation_token;
+    assert.equal(bareRefresh.force_update_mode, "required");
+    assert.equal(bareRefresh.force_update_required, true, "policy-refresh with no body keeps the old answer");
+
+    // The operator's floor is validated when set: a floor the activation check cannot read would
+    // block every PC under "required". Loose forms keep working; null clears.
+    const tenantPolicyUrl = `${baseUrl}/api/v1/tenants/${tenant.id}/update-policy`;
+    const cohortPolicyUrl = `${baseUrl}/api/v1/cohorts/stable/stable-main/update-policy`;
+    const readPolicy = async (url) => {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(res.status, 200);
+      const p = await res.json();
+      return { force_min_app_version: p.force_min_app_version, force_update_mode: p.force_update_mode };
+    };
+    const putPolicy = (url, body) =>
+      fetch(url, { method: "PUT", headers: privilegedHeaders, body: JSON.stringify(body) });
+    for (const url of [tenantPolicyUrl, cohortPolicyUrl]) {
+      const before = await readPolicy(url);
+      for (const bad of ["latest", "2.x", "2.0.0.1", "abc", "2.0.0garbage"]) {
+        const res = await putPolicy(url, { force_min_app_version: bad, force_update_mode: "required" });
+        assert.equal(res.status, 400, `${url}: floor ${JSON.stringify(bad)} must be refused`);
+        const json = await res.json();
+        assert.equal(json.error, "invalid_request");
+        assert.ok(json.details?.fieldErrors?.force_min_app_version, "the error names the floor field");
+        assert.deepEqual(await readPolicy(url), before, `${url}: a refused floor must not change the stored policy`);
+      }
+    }
+    for (const [loose, stored] of [["2", "2"], ["2.0", "2.0"], ["v2.0.0", "v2.0.0"], [" 2.1.0 ", "2.1.0"], ["2.0.0-rc.1", "2.0.0-rc.1"]]) {
+      const res = await putPolicy(cohortPolicyUrl, { force_min_app_version: loose, force_update_mode: "required" });
+      assert.equal(res.status, 200, `cohort floor ${JSON.stringify(loose)} must be accepted`);
+      assert.equal((await readPolicy(cohortPolicyUrl)).force_min_app_version, stored);
+    }
+    const tenantLooseRes = await putPolicy(tenantPolicyUrl, { force_min_app_version: "v2.0", force_update_mode: "required" });
+    assert.equal(tenantLooseRes.status, 200, "tenant floor v2.0 must be accepted");
+    const looseRefresh = await policyRefresh({ app_version: "2.0.0" });
+    assert.equal(looseRefresh.status, 200);
+    assert.equal(looseRefresh.json.force_update_required, false, "a loose tenant floor v2.0 means 2.0.0");
+    const looseRefreshOld = await policyRefresh({ app_version: "1.9.9" });
+    assert.equal(looseRefreshOld.json.force_update_required, true, "1.9.9 is below the loose floor v2.0");
+    const tenantClearRes = await putPolicy(tenantPolicyUrl, { force_min_app_version: null, force_update_mode: "inherit" });
+    // null passes validation (the route then keeps the stored floor: `null ?? current`, unchanged here).
+    assert.equal(tenantClearRes.status, 200, "a null tenant floor must pass validation");
+    assert.equal((await readPolicy(tenantPolicyUrl)).force_update_mode, "inherit");
+    const badCreateRes = await fetch(`${baseUrl}/api/v1/tenants`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: "tenant-bad-floor", display_name: "Tenant Bad Floor", force_min_app_version: "latest" }),
+    });
+    assert.equal(badCreateRes.status, 400, "tenant create with an unparsable floor must be refused");
   } catch (err) {
     // The API output explains most failures (startup refusal, unhandled route error).
     console.error(serverOutput);

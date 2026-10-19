@@ -6,13 +6,13 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { resolveActorId, sendValidationError } from "../app/http.js";
-import { CohortForceUpdateModeSchema, ForceUpdateModeSchema } from "../app/schemas.js";
+import { CohortForceUpdateModeSchema, ForceMinAppVersionSchema, ForceUpdateModeSchema } from "../app/schemas.js";
 import { newId, type ForceUpdateMode } from "../app/runtime.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 const UpdatePolicyBody = z
   .object({
-    force_min_app_version: z.string().trim().min(1).max(32).nullable().optional(),
+    force_min_app_version: ForceMinAppVersionSchema.nullable().optional(),
     force_update_mode: CohortForceUpdateModeSchema.optional(),
     force_update_reason: z.string().trim().min(2).max(512).nullable().optional(),
   })
@@ -20,7 +20,7 @@ const UpdatePolicyBody = z
 
 const TenantUpdatePolicyBody = z
   .object({
-    force_min_app_version: z.string().trim().min(1).max(32).nullable().optional(),
+    force_min_app_version: ForceMinAppVersionSchema.nullable().optional(),
     force_update_mode: ForceUpdateModeSchema.optional(),
     force_update_reason: z.string().trim().min(2).max(512).nullable().optional(),
   })

@@ -53,3 +53,39 @@ with the key. Re-deploying 4.2 later re-applies 012: first drop what it created 
 rollout_cohort_governance; DROP FUNCTION mfx_rollout_governance(text, text); ALTER TABLE
 machine_activations DROP COLUMN policy_refresh_requested_at; ALTER TABLE tenants DROP COLUMN
 suspended_at, DROP COLUMN suspended_reason;`).
+
+## Forced-update floor and the PC's version (licence review R4-S2)
+
+- **Floor format.** The minimum app version (tenant override or cohort baseline) must be
+  `MAJOR.MINOR.PATCH`, optionally with a pre-release tag (`2.0.0-rc.1`). The loose forms `2`,
+  `2.0` and `v2.0.0` are accepted and mean `2.0.0`. Anything else (`latest`, `2.x`, `2.0.0.1`) is
+  refused with `400 invalid_request` when it is set (tenant create, tenant and cohort
+  update-policy). A floor that cannot be read blocks every PC under `required`.
+- **Pre-release builds.** A pre-release such as `0.4.0-dev` counts as **below** `0.4.0`. Set the
+  floor to a version the shipped builds actually report, or a dev/rc build stays blocked.
+- **Policy refresh compares the PC's version.** `POST /api/v1/activation/policy-refresh` accepts
+  `{"app_version": "<running version>"}` (optional, string, max 32; unknown fields are ignored;
+  a wrong type is a 400). Under `required`, a PC at or above the floor is no longer told to
+  update. A desktop that does not send the field (body `{}` or no body), or sends a version that is
+  not `MAJOR.MINOR.PATCH[-pre]`, keeps the old answer: update required. `emergency` blocks every
+  version, as before. Claim and preview apply the same rule to their `app_version`.
+
+**Before deploying**, list the stored floors the new rule cannot read and correct them in the
+console (run as the database owner / migration role, which bypasses RLS):
+
+```sql
+WITH floors AS (
+  SELECT 'tenant' AS source, slug AS name, force_min_app_version AS floor, force_update_mode AS mode
+  FROM tenants WHERE force_min_app_version IS NOT NULL
+  UNION ALL
+  SELECT 'cohort', channel || '/' || cohort_label, force_min_app_version, force_update_mode
+  FROM cohort_update_policies WHERE force_min_app_version IS NOT NULL
+)
+SELECT * FROM floors
+WHERE btrim(floor) !~ '^v?(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8}))?(\.(0|[1-9][0-9]{0,8}))?(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$';
+```
+
+Rows with mode `required` are the urgent ones: after the deploy they block every PC of that tenant
+or cohort until the floor is corrected. A policy rollback restores the previous floor from
+`tenant_update_policy_history` / `cohort_update_policy_history` without re-validating it; run the
+same check on `previous_force_min_app_version` there if you plan to roll back.

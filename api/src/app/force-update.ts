@@ -2,12 +2,12 @@
  * Forced-update policy: which policy applies to a PC (tenant override or rollout cohort) and
  * whether that PC must update before it may keep working.
  *
- * Fail-closed rule: under mode "required" a PC is let through only when BOTH its reported app
- * version and the policy's minimum version parse as strict semantic versions and the PC's version
- * is at least the minimum. A missing, empty or unparsable version ("abc", "1.2", "99",
+ * Fail-closed rule: under mode "required" a PC is let through only when its reported app version
+ * parses as a strict semantic version, the policy's minimum version parses (loose forms padded),
+ * and the PC's version is at least the minimum. A missing, empty or unparsable version ("abc", "1.2", "99",
  * "2.0.0garbage", "v2.0.0") counts as "unknown", and unknown never satisfies the floor. The older
- * lenient comparison (`semverCompare`) read "99" as 99.0.0 and "2.0.0garbage" as 2.0.0, so an
- * odd string could pass the floor; it is not used here.
+ * lenient comparison (semverCompare, since removed) read "99" as 99.0.0 and "2.0.0garbage" as
+ * 2.0.0, so an odd string could pass the floor.
  */
 import type { ForceUpdateMode } from "./runtime.js";
 

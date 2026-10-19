@@ -206,7 +206,8 @@ function PolicyEditor<M extends string>({
       <p className="text-sm font-semibold text-text-primary">{heading}</p>
       <div className="grid gap-1.5">
         <Label htmlFor={`${idPrefix}-min-version`}>{t("customers.policy.minVersion")}</Label>
-        <Input id={`${idPrefix}-min-version`} value={policy.version} placeholder="1.8.0" onChange={(e) => onChange({ ...policy, version: e.target.value })} />
+        <Input id={`${idPrefix}-min-version`} value={policy.version} placeholder="1.8.0" aria-describedby={`${idPrefix}-min-version-hint`} onChange={(e) => onChange({ ...policy, version: e.target.value })} />
+        <p id={`${idPrefix}-min-version-hint`} className="text-[12px] text-text-secondary">{t("customers.policy.minVersionHint")}</p>
       </div>
       <div className="grid gap-1.5">
         <Label htmlFor={`${idPrefix}-force-mode`}>{t("customers.policy.mode")}</Label>
