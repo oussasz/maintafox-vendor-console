@@ -26,6 +26,33 @@ const TenantUpdatePolicyBody = z
   })
   .strict();
 
+/**
+ * Removing the forced-update floor: the caller names the floor it saw (the one its confirmation
+ * showed). Nothing else is accepted, so a stray force_min_app_version or flag is a 400.
+ */
+const ClearMinVersionBody = z
+  .object({ expected_force_min_app_version: z.string().trim().min(1).max(32) })
+  .strict();
+
+/**
+ * 409 when there is no floor to remove, when it is not the one the operator confirmed, or when the
+ * policy's own mode is "required": under "required" a policy with no floor blocks every PC (fail
+ * closed, app/force-update.ts), so the operator switches the mode first (the same reason the policy
+ * PUT refuses a floor it cannot read).
+ */
+function floorRemovalRefusal(
+  stored: string | null,
+  mode: ForceUpdateMode,
+  expected: string,
+): { status: number; body: unknown } | null {
+  if (stored === null || stored.trim() === "") return { status: 409, body: { error: "no_force_min_app_version" } };
+  if (stored.trim() !== expected) {
+    return { status: 409, body: { error: "force_min_app_version_changed", force_min_app_version: stored } };
+  }
+  if (mode === "required") return { status: 409, body: { error: "force_min_app_version_needed_by_required_mode" } };
+  return null;
+}
+
 const UPDATE_CHANNELS = ["stable", "pilot", "internal"] as const;
 
 const GovernanceBody = z.object({ reason: z.string().trim().min(4).max(512) }).strict();
@@ -188,6 +215,84 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
           force_min_app_version: previous.previous_force_min_app_version,
           force_update_mode: previous.previous_force_update_mode,
           force_update_reason: previous.previous_force_update_reason,
+          audit_record_id: guard.auditRecordId,
+        },
+      };
+    });
+  });
+
+  /**
+   * Removes the forced-update floor (force_min_app_version) and nothing else. A dedicated route so
+   * that the policy PUT keeps "missing / null = unchanged" and can never clear the floor by
+   * accident; the caller must name the floor it is removing (409 when it differs from the stored
+   * one). Same audit reason and step-up (rollout_publish) as setting a policy; the history row keeps
+   * the old floor, so a rollback restores it.
+   */
+  app.post("/api/v1/tenants/:tenantId/update-policy/clear-min-version", authMiddleware, async (req, res) => {
+    const parsed = ClearMinVersionBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
+           FROM tenants
+           WHERE id = ?`, req.params.tenantId) as
+        | {
+            tenant_id: string;
+            update_channel: string;
+            rollout_cohort: string;
+            force_min_app_version: string | null;
+            force_update_mode: ForceUpdateMode;
+            force_update_reason: string | null;
+          }
+        | undefined;
+      if (!current) {
+        return { status: 404, body: { error: "tenant_not_found" } };
+      }
+      const refusal = floorRemovalRefusal(current.force_min_app_version, current.force_update_mode, parsed.data.expected_force_min_app_version);
+      if (refusal) return refusal;
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "tenant_update_policy_min_version_removed",
+        step_up_kind: StepUpKinds.rolloutPublish,
+        action_category: "rollout_intervention",
+        scope_tenant_id: current.tenant_id,
+        entity_refs: { tenant_id: current.tenant_id },
+        payload: {
+          tenant_id: current.tenant_id,
+          floor_removed: true,
+          removed_force_min_app_version: current.force_min_app_version,
+          force_update_mode: current.force_update_mode,
+          previous: {
+            force_min_app_version: current.force_min_app_version,
+            force_update_mode: current.force_update_mode,
+            force_update_reason: current.force_update_reason,
+          },
+        },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      await db.run(`INSERT INTO tenant_update_policy_history
+         (id, tenant_id, previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason,
+          changed_at_rfc3339, changed_by_actor_id, reason_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, newId("tph"),
+        current.tenant_id,
+        current.force_min_app_version,
+        current.force_update_mode,
+        current.force_update_reason,
+        new Date().toISOString(),
+        resolveActorId(req),
+        guard.reasonCode);
+      await db.run(`UPDATE tenants SET force_min_app_version = NULL WHERE id = ?`, current.tenant_id);
+      return {
+        status: 200,
+        body: {
+          tenant_id: current.tenant_id,
+          update_channel: current.update_channel,
+          rollout_cohort: current.rollout_cohort,
+          force_min_app_version: null,
+          force_update_mode: current.force_update_mode,
+          force_update_reason: current.force_update_reason,
+          removed_force_min_app_version: current.force_min_app_version,
           audit_record_id: guard.auditRecordId,
         },
       };
@@ -364,6 +469,80 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
           force_min_app_version: previous.previous_force_min_app_version,
           force_update_mode: previous.previous_force_update_mode,
           force_update_reason: previous.previous_force_update_reason,
+          audit_record_id: guard.auditRecordId,
+        },
+      };
+    });
+  });
+
+  app.post("/api/v1/cohorts/:channel/:cohort/update-policy/clear-min-version", authMiddleware, async (req, res) => {
+    const parsed = ClearMinVersionBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      const channel = req.params.channel;
+      const cohort = req.params.cohort;
+      if (!["stable", "pilot", "internal"].includes(channel)) {
+        return { status: 400, body: { error: "invalid_channel" } };
+      }
+      const current = await db.get(`SELECT id, force_min_app_version, force_update_mode, force_update_reason
+           FROM cohort_update_policies
+           WHERE channel = ? AND cohort_label = ?`, channel, cohort) as
+        | {
+            id: string;
+            force_min_app_version: string | null;
+            force_update_mode: Exclude<ForceUpdateMode, "inherit">;
+            force_update_reason: string | null;
+          }
+        | undefined;
+      const refusal = floorRemovalRefusal(current?.force_min_app_version ?? null, current?.force_update_mode ?? "off", parsed.data.expected_force_min_app_version);
+      if (refusal) return refusal;
+      if (!current) return { status: 409, body: { error: "no_force_min_app_version" } };
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "cohort_update_policy_min_version_removed",
+        step_up_kind: StepUpKinds.rolloutPublish,
+        action_category: "rollout_intervention",
+        entity_refs: { release_id: `${channel}:${cohort}` },
+        payload: {
+          channel,
+          cohort_label: cohort,
+          floor_removed: true,
+          removed_force_min_app_version: current.force_min_app_version,
+          force_update_mode: current.force_update_mode,
+          previous: {
+            force_min_app_version: current.force_min_app_version,
+            force_update_mode: current.force_update_mode,
+            force_update_reason: current.force_update_reason,
+          },
+        },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      await db.run(`INSERT INTO cohort_update_policy_history
+         (id, channel, cohort_label, previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason,
+          changed_at_rfc3339, changed_by_actor_id, reason_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, newId("cph"),
+        channel,
+        cohort,
+        current.force_min_app_version,
+        current.force_update_mode,
+        current.force_update_reason,
+        new Date().toISOString(),
+        resolveActorId(req),
+        guard.reasonCode);
+      await db.run(`UPDATE cohort_update_policies
+         SET force_min_app_version = NULL, updated_at_rfc3339 = ?, updated_by_actor_id = ?
+         WHERE id = ?`, new Date().toISOString(), resolveActorId(req), current.id);
+      return {
+        status: 200,
+        body: {
+          channel,
+          cohort_label: cohort,
+          force_min_app_version: null,
+          force_update_mode: current.force_update_mode,
+          force_update_reason: current.force_update_reason,
+          removed_force_min_app_version: current.force_min_app_version,
           audit_record_id: guard.auditRecordId,
         },
       };
