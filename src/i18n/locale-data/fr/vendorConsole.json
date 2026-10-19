@@ -468,6 +468,32 @@
         "title": "Demander à cet appareil de rafraîchir sa politique ?",
         "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
         "confirm": "Demander le rafraîchissement"
+      },
+      "recovery": {
+        "title": "Donner à ce PC un code de récupération administrateur ?",
+        "body": "Crée un nouveau compte administrateur sur {{fingerprint}} (valable 24 h, usage unique). À utiliser quand le site ne peut plus administrer ce PC, par exemple quand son seul administrateur a oublié son mot de passe. Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
+        "confirm": "Émettre le code",
+        "pointOnce": "Il crée un administrateur SUPPLÉMENTAIRE : il ne réinitialise ni ne débloque aucun compte existant. Le client désactive ensuite l'ancien compte.",
+        "pointNotice": "Chaque administrateur actif du PC voit un avis permanent indiquant qu'un code de récupération a été utilisé, jusqu'à ce qu'il en prenne connaissance.",
+        "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
+        "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
+        "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
+        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}}).",
+        "requestedByLabel": "Qui l'a demandé chez le client (nom et fonction)",
+        "identityCheckLabel": "Comment vous avez vérifié son identité auprès du contact enregistré du client",
+        "identityCheckChoose": "Choisir…",
+        "identityCheck": {
+          "callback_registered_phone": "Rappel au numéro de téléphone enregistré",
+          "email_from_registered_address": "E-mail venant de l'adresse enregistrée",
+          "in_person": "En personne",
+          "other": "Autre (précisez ci-dessous)"
+        },
+        "identityNoteRequired": "Comment l'identité a été vérifiée (obligatoire, 5 à 200 caractères)",
+        "identityNoteOptional": "Remarque sur la vérification d'identité (facultative)",
+        "historyTitle": "Codes émis pour ce PC",
+        "historyRow": "{{at}} : demandé par {{who}}, {{check}}",
+        "historyValid": "valable jusqu'au {{at}}",
+        "historyExpired": "expiré"
       }
     },
     "activationClaim": "Revendication d'activation (API réelle)",
@@ -880,7 +906,8 @@
       "sync_repair": "rejouer ou réparer la synchronisation d'un appareil",
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
-      "own_mfa_change": "générer de nouveaux codes de secours"
+      "own_mfa_change": "générer de nouveaux codes de secours",
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur"
     }
   },
   "account": {
@@ -1288,7 +1315,18 @@
       "refresh": "Lui demander d'actualiser sa licence maintenant",
       "seeWhatHappened": "Voir ce qui s'est passé",
       "block": "Bloquer cet appareil",
+      "recoveryCode": "Code de récupération administrateur",
       "more": "Autres actions pour {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Code de récupération administrateur",
+      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit dans Maintafox desktop (récupération administrateur) pour créer un nouveau compte administrateur ; les comptes existants ne sont pas modifiés.",
+      "copy": "Copier le code",
+      "copied": "Copié",
+      "copyFailed": "Copie automatique impossible : sélectionnez le code et copiez-le à la main.",
+      "expires": "Valable jusqu'au {{at}}, une seule fois.",
+      "shownOnce": "Il n'est affiché que cette fois : Maintafox ne le conserve pas. Copiez-le maintenant. S'il est perdu, émettez-en un nouveau.",
+      "done": "Terminé"
     },
     "offline": {
       "title": "Règles hors ligne",

@@ -32,4 +32,5 @@ export const StepUpKinds = {
   vendorUserAdmin: kind("vendor_user_admin"),
   tenantDelete: kind("tenant_delete"),
   ownMfaChange: kind("own_mfa_change"),
+  adminRecoveryCode: kind("admin_recovery_code"),
 } as const;

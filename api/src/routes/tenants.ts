@@ -237,6 +237,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
           tenantId,
         );
         await db.run(`DELETE FROM support_tickets WHERE tenant_id = ?`, tenantId);
+        await db.run(`DELETE FROM admin_recovery_codes WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM machine_activations WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM license_keys WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`, tenantId);

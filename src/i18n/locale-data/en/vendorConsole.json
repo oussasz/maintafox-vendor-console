@@ -468,6 +468,32 @@
         "title": "Ask this device to refresh its policy?",
         "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
         "confirm": "Request refresh"
+      },
+      "recovery": {
+        "title": "Give this PC an administrator recovery code?",
+        "body": "Creates one new administrator account on {{fingerprint}} (valid 24 h, single use). Use it when the site can no longer administer this PC, for example when its only administrator forgot their password. The code is signed by Maintafox and works only on this PC:",
+        "confirm": "Issue the code",
+        "pointOnce": "It creates an EXTRA administrator: it does not reset or unlock an existing account. The customer disables the old account afterwards.",
+        "pointNotice": "Every active administrator of the PC sees a persistent notice that a recovery code was used, until they acknowledge it.",
+        "pointExpiry": "It is valid for 24 hours and can be used only once.",
+        "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
+        "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
+        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}}).",
+        "requestedByLabel": "Who asked at the customer (name and role)",
+        "identityCheckLabel": "How you checked their identity against the customer's registered contact",
+        "identityCheckChoose": "Choose…",
+        "identityCheck": {
+          "callback_registered_phone": "Called back on the registered phone number",
+          "email_from_registered_address": "Email from the registered address",
+          "in_person": "In person",
+          "other": "Other (explain below)"
+        },
+        "identityNoteRequired": "How the identity was checked (required, 5 to 200 characters)",
+        "identityNoteOptional": "Note on the identity check (optional)",
+        "historyTitle": "Codes issued for this PC",
+        "historyRow": "{{at}}: asked by {{who}}, {{check}}",
+        "historyValid": "valid until {{at}}",
+        "historyExpired": "expired"
       }
     },
     "tenant": "Tenant",
@@ -880,7 +906,8 @@
       "sync_repair": "replay or repair a device's synchronisation",
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
-      "own_mfa_change": "generate new recovery codes"
+      "own_mfa_change": "generate new recovery codes",
+      "admin_recovery_code": "give a PC a code that creates a new administrator"
     }
   },
   "account": {
@@ -1288,7 +1315,18 @@
       "refresh": "Ask it to refresh its licence now",
       "seeWhatHappened": "See what happened",
       "block": "Block this device",
+      "recoveryCode": "Administrator recovery code",
       "more": "More actions for {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Administrator recovery code",
+      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it in the Maintafox desktop (administrator recovery) to create one new administrator account; existing accounts are not changed.",
+      "copy": "Copy the code",
+      "copied": "Copied",
+      "copyFailed": "Could not copy automatically: select the code and copy it by hand.",
+      "expires": "Valid until {{at}}, once.",
+      "shownOnce": "It is shown only this once: Maintafox does not keep it. Copy it now. If it is lost, issue a new one.",
+      "done": "Done"
     },
     "offline": {
       "title": "Offline rules",
