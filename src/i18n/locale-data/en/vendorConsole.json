@@ -471,10 +471,10 @@
       },
       "recovery": {
         "title": "Give this PC an administrator recovery code?",
-        "body": "Use it only when nobody can sign in as an administrator on {{fingerprint}} any more (every administrator account is gone, disabled or locked out). The code is signed by Maintafox and works only on this PC:",
+        "body": "Creates one new administrator account on {{fingerprint}} (valid 24 h, single use). Use it when the site can no longer administer this PC, for example when its only administrator forgot their password. The code is signed by Maintafox and works only on this PC:",
         "confirm": "Issue the code",
-        "pointOnce": "On this PC, it opens \"create an administrator\" once; the new administrator then manages the other accounts.",
-        "pointNoAdmin": "The PC accepts it only while it has no active administrator.",
+        "pointOnce": "It creates an EXTRA administrator: it does not reset or unlock an existing account. The customer disables the old account afterwards.",
+        "pointNotice": "Every active administrator of the PC is told that a recovery code was used.",
         "pointExpiry": "It is valid for 24 hours and can be used only once.",
         "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
         "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
@@ -892,7 +892,7 @@
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
       "own_mfa_change": "generate new recovery codes",
-      "admin_recovery_code": "give a PC an administrator recovery code"
+      "admin_recovery_code": "give a PC a code that creates a new administrator"
     }
   },
   "account": {
@@ -1305,7 +1305,7 @@
     },
     "recoveryCode": {
       "issuedTitle": "Administrator recovery code",
-      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it on the sign-in screen to create a new administrator.",
+      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it in the Maintafox desktop (administrator recovery) to create one new administrator account; existing accounts are not changed.",
       "copy": "Copy the code",
       "copied": "Copied",
       "copyFailed": "Could not copy automatically: select the code and copy it by hand.",

@@ -1,7 +1,7 @@
 /**
  * Administrator recovery codes (decision register 2026-10-19, "No active administrator left on a
- * PC", part a): a vendor-signed, single-use code bound to one PC activation that lets that PC open
- * "create an administrator" once after it has lost every active administrator.
+ * PC", part a, rule as amended the same day): a vendor-signed, single-use code bound to one PC
+ * activation that creates one new administrator account on that PC (no existing account is reset).
  *
  * Format agreed with the desktop licensing verifier (byte for byte):
  *

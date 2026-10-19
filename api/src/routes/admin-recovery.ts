@@ -1,7 +1,8 @@
 /**
  * Administrator recovery codes (decision register 2026-10-19, "No active administrator left on a
- * PC", part a). An operator issues a vendor-signed code bound to one PC activation; on that PC, and
- * only while it has no active administrator, the code reopens "create an administrator" once.
+ * PC", part a, rule as amended the same day). An operator issues a vendor-signed code bound to one
+ * PC activation; on that PC it creates one new administrator account (no existing account is reset
+ * or unlocked; the desktop then notifies every active administrator).
  * Valid 24 h; single use is enforced by the desktop (it records the code_id). Format and checks:
  * api/src/admin-recovery-signer.ts and deploy/CONSOLE_ACTIONS.md.
  *
@@ -190,6 +191,8 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
       ...(fp === undefined ? [tenantId] : [tenantId, fp]),
     );
     const nowMs = Date.now();
+    // Operator reasons: not for shared caches.
+    res.setHeader("Cache-Control", "no-store");
     res.json(rows.map((r) => ({ ...r, expired: Date.parse(r.expires_at) <= nowMs })));
   });
 }

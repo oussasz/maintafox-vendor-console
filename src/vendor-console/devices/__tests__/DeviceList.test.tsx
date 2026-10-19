@@ -146,7 +146,7 @@ describe("DeviceList", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Give this PC an administrator recovery code?")).toBeInTheDocument();
     expect(within(dialog).getByText("It is valid for 24 hours and can be used only once.")).toBeInTheDocument();
-    expect(within(dialog).getByText("The PC accepts it only while it has no active administrator.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/creates an EXTRA administrator: it does not reset or unlock an existing account/)).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText("Reason (kept in the audit log)"), "site lost every admin");
     await user.click(within(dialog).getByRole("button", { name: "Issue the code" }));
     await user.type(await screen.findByLabelText("6-digit code from your authenticator app"), "246810");
@@ -195,6 +195,41 @@ describe("DeviceList", () => {
     await enterCode("135790");
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("The control API cannot be reached");
     expect(screen.queryByTestId("admin-recovery-code")).not.toBeInTheDocument();
+  });
+
+  it("a code list that arrives after the dialog moved to another device is ignored", async () => {
+    let resolveFirst: (rows: Awaited<ReturnType<typeof listAdminRecoveryCodes>>) => void = () => undefined;
+    vi.mocked(listAdminRecoveryCodes)
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)))
+      .mockResolvedValueOnce([]);
+    renderWithConsole(<DeviceList tenantId="tenant_1" />);
+    const open = async (name: string) => {
+      await userEvent.click(within(await rowOf(name)).getByRole("button", { name: `More actions for ${name}` }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Administrator recovery code" }));
+      return screen.findByRole("dialog");
+    };
+    await open("Bureau-Maintenance");
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const second = await open("Atelier-02");
+    expect(listAdminRecoveryCodes).toHaveBeenLastCalledWith("tenant_1", quiet.machine_id);
+    resolveFirst([
+      {
+        code_id: "c-stale",
+        tenant_id: "tenant_1",
+        license_id: "lic_1",
+        machine_fingerprint: online.machine_id,
+        issued_by: "1",
+        reason: "earlier",
+        issued_at: new Date(now - 3_600_000).toISOString(),
+        expires_at: new Date(now + 20 * 3_600_000).toISOString(),
+        key_id: "prod-1",
+        audit_record_id: "audit_0",
+        expired: false,
+      },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(within(second).queryByText(/still valid/)).not.toBeInTheDocument();
   });
 
   it("explains an empty list", async () => {

@@ -6,7 +6,7 @@
  * authenticator code (step-up machine_trust_change; admin_recovery_code for the recovery code).
  */
 import { MoreHorizontal } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -71,6 +71,8 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
   const [issuedCode, setIssuedCode] = useState<{ issued: AdminRecoveryCodeIssued; label: string } | null>(null);
   /** Codes already issued for the PC of the open recovery dialog that are still valid (null: unknown). */
   const [validCodes, setValidCodes] = useState<{ count: number; until: string | null } | null>(null);
+  /** Increases on every ask(): a code list that arrives for an earlier dialog is ignored. */
+  const askSeq = useRef(0);
   const canManage = can("entitlement.manage");
 
   const load = useCallback(async () => {
@@ -121,15 +123,19 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
     setRebindTarget("");
     setValidCodes(null);
     setPending({ row, action });
+    const seq = ++askSeq.current;
     if (action === "recovery") {
       // Tells the operator when codes sent earlier are still usable (the list never holds codes).
       listAdminRecoveryCodes(row.tenant_id, row.machine_id)
         .then((codes) => {
+          if (seq !== askSeq.current) return;
           const valid = codes.filter((c) => !c.expired);
           const until = valid.map((c) => c.expires_at).sort().pop() ?? null;
           setValidCodes({ count: valid.length, until });
         })
-        .catch(() => setValidCodes(null));
+        .catch(() => {
+          if (seq === askSeq.current) setValidCodes(null);
+        });
     }
   };
 
@@ -215,7 +221,7 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
           <div className="grid gap-2 text-sm text-text-secondary">
             <ul className="list-disc space-y-1 pl-5">
               <li>{t("machines.dialog.recovery.pointOnce")}</li>
-              <li>{t("machines.dialog.recovery.pointNoAdmin")}</li>
+              <li>{t("machines.dialog.recovery.pointNotice")}</li>
               <li>{t("machines.dialog.recovery.pointExpiry")}</li>
               <li>{t("machines.dialog.recovery.pointShownOnce")}</li>
             </ul>

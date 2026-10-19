@@ -119,4 +119,45 @@ assert.ok(verify(null, Buffer.from(vector.signed_message_hex, "hex"), publicKey,
 assert.equal(vector.public_key_hex, TEST_ENTITLEMENT_PUBLIC_KEY_HEX);
 assert.equal(verifyCode(vector.tampered.code).why, "signature", "tampered vector is refused");
 
+// The primary vector is what the desktop pinned first: it must never change.
+assert.equal(
+  vector.code,
+  "MFXREC1.eyJ2IjoxLCJwdXJwb3NlIjoiYWRtaW5fcmVjb3ZlcnkiLCJjb2RlX2lkIjoiM2Y2YzFkMmUtOWE0Yi00YzdkLThlMWYtMmEzYjRjNWQ2ZTdmIiwidGVuYW50X2lkIjoidGVuX3ZlY3Rvcl8wMDAxIiwibWFjaGluZV9maW5nZXJwcmludCI6ImZwLXZlY3Rvci05YzQxZTdiMmEwNWQiLCJsaWNlbnNlX2lkIjoibGljX3ZlY3Rvcl8wMDAxIiwiaXNzdWVyIjoibWFpbnRhZm94LXZwcyIsImtleV9pZCI6InRlc3QtZWQyNTUxOS1kby1ub3QtdHJ1c3QiLCJzaWduYXR1cmVfYWxnIjoiZWQyNTUxOTphZG1pbi1yZWNvdmVyeTp2MSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTlUMDg6MzA6MDAuMDAwWiIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDA4OjMwOjAwLjAwMFoifQ.c8fcd87bbe8824f9c58badedd5f4470cfde793fca305963167bfbe7660b0003ad057f9ffb05059882acdb5fcb68f329f3652604a3f0c75eb3536bed38748b406",
+);
+
+// ── Extra cases: a reference verifier (the desktop's checks that need no local state) ──────
+/** Result name of REFUSAL_CODES for `code` at `now`, the claim being the payload's own ids. */
+function judge(code, nowIso) {
+  const r = verifyCodeFull(code);
+  if (r.why) return r.why;
+  const now = Date.parse(nowIso);
+  if (now >= Date.parse(r.payload.expires_at)) return "expired";
+  if (Date.parse(r.payload.issued_at) > now + 5 * 60_000) return "issued_in_future";
+  return "valid";
+}
+function verifyCodeFull(code) {
+  const [, b64, sigHex] = code.split(".");
+  const payloadJson = Buffer.from(b64, "base64url").toString("utf8");
+  const payload = JSON.parse(payloadJson);
+  if (canonicalAdminRecoveryPayload(payload) !== payloadJson) return { why: "non_canonical" };
+  if (payload.purpose !== "admin_recovery") return { why: "wrong_purpose" };
+  const message = Buffer.from(ADMIN_RECOVERY_SIGNING_DOMAIN + payloadJson, "utf8");
+  if (!verify(null, message, publicKey, Buffer.from(sigHex, "hex"))) return { why: "invalid_signature" };
+  return { payload };
+}
+assert.deepEqual(
+  vector.extra_cases.map((c) => c.name),
+  ["escaped_fingerprint", "bare_payload_signature", "expired", "issued_in_future", "wrong_purpose", "keys_reordered"],
+);
+for (const c of vector.extra_cases) {
+  assert.ok(c.expected in vector.refusal_codes, `${c.name}: expected result is documented`);
+  assert.equal(judge(c.code, c.now), c.expected, c.name);
+  assert.equal(Buffer.from(c.code.split(".")[1], "base64url").toString("utf8"), c.payload_json, `${c.name}: code carries payload_json`);
+  assert.equal(c.signed_message_hex, Buffer.from(ADMIN_RECOVERY_SIGNING_DOMAIN + c.payload_json, "utf8").toString("hex"));
+}
+assert.equal(judge(vector.code, "2026-10-19T09:00:00.000Z"), "valid");
+const esc = vector.extra_cases[0];
+assert.equal(JSON.parse(esc.payload_json).machine_fingerprint, 'fp-"q"\\b\u0001c\nd/\u00e9\u{1F600}');
+assert.ok(esc.payload_json.includes('fp-\\"q\\"\\\\b\\u0001c\\nd/é😀'), "JSON escaping: \\\", \\\\, \\u0001, \\n; é, emoji and / raw");
+
 console.log("admin-recovery-signer: OK");

@@ -471,10 +471,10 @@
       },
       "recovery": {
         "title": "Donner à ce PC un code de récupération administrateur ?",
-        "body": "À utiliser seulement quand plus personne ne peut se connecter en administrateur sur {{fingerprint}} (tous les comptes administrateur ont disparu, sont désactivés ou bloqués). Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
+        "body": "Crée un nouveau compte administrateur sur {{fingerprint}} (valable 24 h, usage unique). À utiliser quand le site ne peut plus administrer ce PC, par exemple quand son seul administrateur a oublié son mot de passe. Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
         "confirm": "Émettre le code",
-        "pointOnce": "Sur ce PC, il ouvre une seule fois « créer un administrateur » ; le nouvel administrateur gère ensuite les autres comptes.",
-        "pointNoAdmin": "Le PC ne l'accepte que s'il n'a plus aucun administrateur actif.",
+        "pointOnce": "Il crée un administrateur SUPPLÉMENTAIRE : il ne réinitialise ni ne débloque aucun compte existant. Le client désactive ensuite l'ancien compte.",
+        "pointNotice": "Chaque administrateur actif du PC est averti qu'un code de récupération a été utilisé.",
         "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
         "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
         "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
@@ -892,7 +892,7 @@
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
       "own_mfa_change": "générer de nouveaux codes de secours",
-      "admin_recovery_code": "donner à un PC un code de récupération administrateur"
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur"
     }
   },
   "account": {
@@ -1305,7 +1305,7 @@
     },
     "recoveryCode": {
       "issuedTitle": "Code de récupération administrateur",
-      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit sur l'écran de connexion pour créer un nouvel administrateur.",
+      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit dans Maintafox desktop (récupération administrateur) pour créer un nouveau compte administrateur ; les comptes existants ne sont pas modifiés.",
       "copy": "Copier le code",
       "copied": "Copié",
       "copyFailed": "Copie automatique impossible : sélectionnez le code et copiez-le à la main.",

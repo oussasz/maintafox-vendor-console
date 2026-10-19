@@ -55,6 +55,15 @@ try {
   };
   const issue = (tenantId, fp, headers, token = admin) =>
     api.call("POST", `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(fp)}/admin-recovery-code`, token, {}, headers);
+  /** Like api.call, with the response headers (Cache-Control checks). */
+  const raw = async (method, path, headers = {}) => {
+    const res = await fetch(`${api.baseUrl}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json", ...headers },
+      body: method === "GET" ? undefined : "{}",
+    });
+    return { status: res.status, headers: res.headers, json: await res.json() };
+  };
   const list = (tenantId, fp, token = admin) =>
     api.call("GET", `/api/v1/tenants/${encodeURIComponent(tenantId)}/admin-recovery-codes${fp ? `?machine_fingerprint=${encodeURIComponent(fp)}` : ""}`, token);
 
@@ -74,8 +83,14 @@ try {
 
   // ── Issue ────────────────────────────────────────────────────────────────────────────────
   const before = Date.now();
-  const issued = await issue(tenant.id, fpA, await privileged());
-  assert.equal(issued.status, 201, issued.text);
+  const issuedRaw = await raw(
+    "POST",
+    `/api/v1/tenants/${encodeURIComponent(tenant.id)}/machines/${encodeURIComponent(fpA)}/admin-recovery-code`,
+    await privileged(),
+  );
+  assert.equal(issuedRaw.status, 201, JSON.stringify(issuedRaw.json));
+  assert.equal(issuedRaw.headers.get("cache-control"), "no-store", "the code is not cached");
+  const issued = { status: issuedRaw.status, json: issuedRaw.json };
   const { payload, sigHex } = decodeAndVerify(issued.json.code);
   assert.deepEqual(Object.keys(payload), [
     "v", "purpose", "code_id", "tenant_id", "machine_fingerprint", "license_id", "issuer", "key_id", "signature_alg", "issued_at", "expires_at",
@@ -118,9 +133,16 @@ try {
     assert.ok(!dump.includes(sigHex) && !dump.includes(b64) && !dump.includes("MFXREC1"), `${table} never holds the code`);
   }
 
+  // Nor in the API's own output (logs).
+  const logs = api.output();
+  assert.ok(logs.length > 0, "server output captured");
+  for (const secret of ["MFXREC1", b64, sigHex]) assert.ok(!logs.includes(secret), "the API never logs the code");
+
   // ── Listing (no code strings) ─────────────────────────────────────────────────────────────
   const listed = await list(tenant.id, fpA);
   assert.equal(listed.status, 200, listed.text);
+  const listedRaw = await raw("GET", `/api/v1/tenants/${encodeURIComponent(tenant.id)}/admin-recovery-codes`);
+  assert.equal(listedRaw.headers.get("cache-control"), "no-store", "the listing (operator reasons) is not cached");
   assert.equal(listed.json.length, 1);
   assert.equal(listed.json[0].code_id, payload.code_id);
   assert.equal(listed.json[0].expired, false);
@@ -204,6 +226,7 @@ try {
   assert.deepEqual([denied.status, denied.json], [403, { error: "permission_denied", required_permission: "entitlement.manage" }]);
   assert.equal((await list(tenant.id, fpA, support.accessToken)).status, 200, "support may see the history");
 
+  assert.ok(!api.output().includes("MFXREC1"), "no code in the server output after every issuance");
   console.log("admin-recovery integration: OK");
 } catch (err) {
   console.error(api.output().slice(-4000));

@@ -123,13 +123,14 @@ same check on `previous_force_min_app_version` there if you plan to roll back.
 > no existing table changes). It runs automatically at API start.
 
 **What it is.** A one-time code, signed by Maintafox, bound to one PC activation (tenant, machine
-fingerprint, licence). On that PC, and only while the PC has **no active administrator**, it
-reopens "create an administrator" **once**. It is valid for **24 hours** and works **once**; the
-new administrator then fixes the other accounts.
+fingerprint, licence). It **creates one new administrator account on that PC** (valid **24 h**,
+**single use**). It does **not** reset or unlock an existing account; the customer disables the old
+account afterwards. The desktop accepts it whatever the PC's administrator state (rule amended by
+the CMMS Advisor on 2026-10-19: no "no active administrator" precondition), and every active
+administrator of the PC then sees a persistent notice that a recovery code was used.
 
-**When to use it.** The customer's site has lost every administrator on a PC (accounts deleted,
-disabled or locked out, nobody knows a password) and the PC cannot be managed any more. Not for a
-forgotten password of one user while an administrator still exists: that administrator resets it.
+**When to use it.** When the site can no longer administer the PC, e.g. the only administrator
+forgot their password. The site enters the code in the Maintafox desktop (administrator recovery).
 
 **How.** Customer → Devices → the PC's "⋯" menu → "Administrator recovery code" → reason (ledger)
 → authenticator code (step-up kind `admin_recovery_code`). The code is shown **once** with a copy
@@ -155,7 +156,10 @@ says when codes sent earlier for that PC are still valid.
 
 **Format** (agreed with the desktop licensing verifier; implementation
 `api/src/admin-recovery-signer.ts`, test vector `api/testdata/admin-recovery-vector.json`, regenerate
-with `node api/scripts/admin-recovery-vector.mjs` after `pnpm --filter maintafox-control-api build`):
+with `node api/scripts/admin-recovery-vector.mjs` after `pnpm --filter maintafox-control-api build`;
+besides the primary vector it holds `extra_cases`: an escaped fingerprint that must verify, and
+negatives with their expected result named in `refusal_codes`: bare-payload signature, expired,
+issued in the future, wrong purpose, keys reordered):
 
 ```
 MFXREC1.<payload, base64url without padding>.<Ed25519 signature, 128 lowercase hex chars>
@@ -170,8 +174,9 @@ signature = Ed25519("maintafox-admin-recovery:v1\n" + payload) with the entitlem
 (re-serialised, bytes compared); `v`, `purpose`, `signature_alg`; `issuer`; `key_id` pinned and not
 compromised; the signature; `tenant_id`, `machine_fingerprint`, `license_id` equal to its stored
 activation claim; now < `expires_at`; `issued_at` not more than 5 minutes in the future; `code_id`
-not used before (single use is enforced on the PC; no consumption report to the server in v1);
-the PC has no active administrator.
+not used before (single use is enforced on the PC; no consumption report to the server in v1).
+There is no check on the PC's administrator state: the code creates one extra administrator and
+the desktop shows every active administrator a persistent notice.
 
 **Key rotation.** Codes are signed with the current entitlement signing key: after a rotation, codes
 issued with the old key stop working on desktops that no longer pin it (issue a new one).
