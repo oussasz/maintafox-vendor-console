@@ -10,42 +10,12 @@ import { JWT_SECRET } from "../app/config.js";
 import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { observeActivationOutcome } from "../app/observability.js";
 import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
-import { newId, semverCompare, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { resolveForceUpdatePolicy } from "../app/force-update.js";
+import { newId, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { DEVICE_TOKEN_ROTATE_AFTER_SECONDS, signDeviceActivationToken } from "../auth-tokens.js";
 import { editionExists, loadCapabilitiesJsonForSign } from "../edition-catalog-store.js";
 import { parseEditionId } from "../edition-catalog.js";
 import { addHoursIso, buildSignedEntitlementEnvelope, capabilitiesDigest, type EntitlementEnvelopePayload } from "../entitlement-signer.js";
-
-function resolveForceUpdatePolicy(input: {
-  appVersion?: string;
-  tenantMinVersion: string | null;
-  tenantMode: ForceUpdateMode;
-  tenantReason: string | null;
-  cohortMinVersion: string | null;
-  cohortMode: Exclude<ForceUpdateMode, "inherit">;
-  cohortReason: string | null;
-}): {
-  force_min_app_version: string | null;
-  force_update_mode: Exclude<ForceUpdateMode, "inherit">;
-  force_update_reason: string | null;
-  force_update_required: boolean;
-  policy_source: "tenant" | "cohort";
-} {
-  const policySource: "tenant" | "cohort" = input.tenantMode === "inherit" ? "cohort" : "tenant";
-  const mode =
-    policySource === "tenant" ? (input.tenantMode as Exclude<ForceUpdateMode, "inherit">) : input.cohortMode;
-  const minVersion = policySource === "tenant" ? input.tenantMinVersion : input.cohortMinVersion;
-  const reason = policySource === "tenant" ? input.tenantReason : input.cohortReason;
-  const forceUpdateRequired =
-    mode === "emergency" || (mode === "required" && (!input.appVersion || !minVersion || semverCompare(input.appVersion, minVersion) < 0));
-  return {
-    force_min_app_version: minVersion,
-    force_update_mode: mode,
-    force_update_reason: reason,
-    force_update_required: forceUpdateRequired,
-    policy_source: policySource,
-  };
-}
 
 const ActivationClaimBody = z.object({
   license_key: z.string().min(8),

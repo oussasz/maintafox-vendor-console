@@ -119,6 +119,28 @@ async function run() {
     assert.equal(lowVersionClaim.force_update_mode, "required");
     assert.equal(lowVersionClaim.force_update_policy_source, "cohort");
 
+    // Preview / claim: an unparsable version must never pass the floor (the old lenient compare
+    // read "99" as 99.0.0 and "2.0.0garbage" as 2.0.0).
+    async function previewRequired(appVersion) {
+      const res = await fetch(`${baseUrl}/api/v1/activation/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          license_key: license.license_key,
+          machine_fingerprint: "machine-force-1",
+          ...(appVersion === undefined ? {} : { app_version: appVersion }),
+        }),
+      });
+      assert.equal(res.status, 200, `preview with ${JSON.stringify(appVersion)} must succeed`);
+      return (await res.json()).force_update_required;
+    }
+    assert.equal(await previewRequired("2.0.1"), false, "preview: up-to-date version passes the floor");
+    assert.equal(await previewRequired("1.9.9"), true, "preview: old version is blocked");
+    assert.equal(await previewRequired(undefined), true, "preview: missing version is blocked");
+    for (const bogus of ["99", "abc", "", "1.2", "2.0.0garbage", "v9.0.0"]) {
+      assert.equal(await previewRequired(bogus), true, `preview: invalid version ${JSON.stringify(bogus)} is blocked`);
+    }
+
     const tenantEmergencyRes = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}/update-policy`, {
       method: "PUT",
       headers: privilegedHeaders,
