@@ -69,6 +69,29 @@ suspended_at, DROP COLUMN suspended_reason;`).
   update. A desktop that does not send the field (body `{}` or no body), or sends a version that is
   not `MAJOR.MINOR.PATCH[-pre]`, keeps the old answer: update required. `emergency` blocks every
   version, as before. Claim and preview apply the same rule to their `app_version`.
+- **An empty field never removes the floor.** On the update-policy `PUT` a missing or `null`
+  `force_min_app_version` keeps the stored floor, and `""` is a 400. The console sends `null` for
+  an empty field, so emptying the field and applying changes nothing.
+- **"Required" always has a floor.** A policy `PUT` whose result would be `required` with no floor
+  is refused with `409 force_min_app_version_needed_by_required_mode` (nothing written); the policy
+  routes lock the policy row (`FOR UPDATE`) so a concurrent change cannot slip in between.
+- **Remove minimum version** (console: Updates > Force-update governance, the button under the
+  minimum version, shown only when one is stored; a confirmation names the floor and the customer,
+  or the channel and rollout group). Its own routes:
+  `POST /api/v1/tenants/:tenantId/update-policy/clear-min-version` and
+  `POST /api/v1/cohorts/:channel/:cohort/update-policy/clear-min-version`, body
+  `{"expected_force_min_app_version": "<the floor shown to the operator>"}` and nothing else (any
+  other field, a missing or empty value: 400). Permission `rollout.manage`, audit reason and step-up
+  `rollout_publish`, like applying a policy. Only the floor is removed; mode and user message stay.
+  Refusals (409): `no_force_min_app_version` (nothing stored), `force_min_app_version_changed`
+  (the stored floor is not the one confirmed), `force_min_app_version_needed_by_required_mode`
+  (the policy is `required`: without a floor `required` blocks every PC, so switch the mode first).
+  Ledger: `tenant_update_policy_min_version_removed` / `cohort_update_policy_min_version_removed`,
+  category `rollout_intervention`; the payload (stored as its hash in the chain) carries
+  `floor_removed: true` and the removed value. The policy history keeps the old floor, so
+  **Roll back** (step-up `forced_rollback`) restores it. The confirmation tells the operator what
+  PCs see: under `emergency` every PC stays blocked until the mode changes; under `off` (or a
+  customer on `inherit`) nothing changes for PCs now.
 
 **Before deploying**, list the stored floors the new rule cannot read and correct them in the
 console (run as the database owner / migration role, which bypasses RLS):

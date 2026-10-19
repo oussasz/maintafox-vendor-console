@@ -279,7 +279,7 @@
       "auditReason": "Motif d’audit (conservé dans le journal d’audit)",
       "tenantOverride": "Dérogation du tenant ({{slug}})",
       "minVersion": "Version minimale de l’application",
-      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0.",
+      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0. Laisser vide conserve la version minimale actuelle ; « Retirer la version minimale » la supprime.",
       "mode": "Mode",
       "modes": {
         "inherit": "Hériter de la politique de la cohorte",
@@ -293,7 +293,22 @@
       "applyCohort": "Appliquer la politique de la cohorte",
       "rollbackTenant": "Revenir à la politique précédente du tenant",
       "rollbackCohort": "Revenir à la politique précédente de la cohorte",
-      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})"
+      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})",
+      "removeFloor": "Retirer la version minimale",
+      "floorRemoved": "Version minimale {{floor}} retirée. Un retour en arrière la rétablit.",
+      "removeFloorDialog": {
+        "title": "Retirer la version minimale ?",
+        "tenantTarget": "Retire la version minimale {{floor}} de la règle du client {{name}}. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "cohortTarget": "Retire la version minimale {{floor}} de la règle du groupe de déploiement {{cohort}} sur le canal {{channel}} : elle couvre tous les clients de ce groupe qui suivent la règle du groupe. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "effect": {
+          "emergency": "Le mode Urgence reste actif : tous les PC couverts par cette règle restent bloqués, quelle que soit leur version, jusqu’à ce que le mode change.",
+          "required": "En mode « Obligatoire », une règle sans version minimale demande à tous les PC de se mettre à jour : elle ne peut donc pas être retirée maintenant. Passez d’abord le mode sur Désactivé, puis retirez la version minimale.",
+          "off": "Le mode est Désactivé : rien ne change pour les PC maintenant.",
+          "inherit": "Ce client suit la règle de son groupe de déploiement : rien ne change pour les PC maintenant."
+        },
+        "rollbackNote": "La règle d’avant est conservée : un retour en arrière rétablit {{floor}}.",
+        "confirm": "Retirer la version minimale"
+      }
     },
     "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :",
     "status": {

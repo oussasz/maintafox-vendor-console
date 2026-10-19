@@ -285,6 +285,13 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       return;
     }
     await runIdempotent(req, res, async () => {
+      // Row lock before the audit append (requirePrivilegedAction holds the audit-chain lock to the
+      // end of the transaction), the same order as every other tenant writer: taking them the other
+      // way round deadlocks against a concurrent update-policy or suspend on the same customer.
+      const tenant = await db.get("SELECT id FROM tenants WHERE id = ? FOR UPDATE", tenantId) as { id: string } | undefined;
+      if (!tenant) {
+        return { status: 404, body: { error: "tenant_not_found" } };
+      }
       const guard = await requirePrivilegedAction(req, {
         action_code: "offline_policy_update",
         step_up_kind: StepUpKinds.offlinePolicyChange,
@@ -295,10 +302,6 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       });
       if (!guard.ok) {
         return { status: guard.status, body: guard.body };
-      }
-      const tenant = await db.get("SELECT id FROM tenants WHERE id = ?", tenantId) as { id: string } | undefined;
-      if (!tenant) {
-        return { status: 404, body: { error: "tenant_not_found" } };
       }
       const input = parsed.data;
       await db.run(`UPDATE tenants

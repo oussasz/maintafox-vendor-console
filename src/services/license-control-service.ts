@@ -580,6 +580,43 @@ export async function rollbackCohortUpdatePolicy(
   return CohortUpdatePolicySchema.parse(await res.json());
 }
 
+/**
+ * Removes the customer's minimum version (and nothing else). `expectedFloor` is the floor the
+ * operator confirmed; the server refuses (409) when the stored one differs.
+ */
+export async function clearTenantMinAppVersion(
+  tenantId: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<TenantUpdatePolicy> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/clear-min-version`, {
+    method: "POST",
+    body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+    headers: privilegedHeaders(privileged),
+  });
+  await throwIfNotOk(res);
+  return TenantUpdatePolicySchema.parse(await res.json());
+}
+
+/** Removes the rollout group's minimum version (see clearTenantMinAppVersion). */
+export async function clearCohortMinAppVersion(
+  channel: "stable" | "pilot" | "internal",
+  cohortLabel: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<CohortUpdatePolicy> {
+  const res = await authFetch(
+    `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/clear-min-version`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+      headers: privilegedHeaders(privileged),
+    },
+  );
+  await throwIfNotOk(res);
+  return CohortUpdatePolicySchema.parse(await res.json());
+}
+
 async function postMachineAction(
   tenantId: string,
   machineFingerprint: string,

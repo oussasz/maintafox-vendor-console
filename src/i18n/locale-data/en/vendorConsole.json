@@ -279,7 +279,7 @@
       "auditReason": "Audit reason (kept in the audit log)",
       "tenantOverride": "Tenant override ({{slug}})",
       "minVersion": "Minimum app version",
-      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0.",
+      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0. Leaving it empty keeps the current minimum version; \"Remove minimum version\" takes it off.",
       "mode": "Mode",
       "modes": {
         "inherit": "Inherit the cohort policy",
@@ -293,7 +293,22 @@
       "applyCohort": "Apply cohort policy",
       "rollbackTenant": "Roll back tenant policy",
       "rollbackCohort": "Roll back cohort policy",
-      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})"
+      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})",
+      "removeFloor": "Remove minimum version",
+      "floorRemoved": "Minimum version {{floor}} removed. Rolling back restores it.",
+      "removeFloorDialog": {
+        "title": "Remove the minimum version?",
+        "tenantTarget": "Removes the minimum version {{floor}} from the rule of customer {{name}}. The mode and the message shown to users stay as they are.",
+        "cohortTarget": "Removes the minimum version {{floor}} from the rule of rollout group {{cohort}} on channel {{channel}}: it covers every customer of this group that follows the group rule. The mode and the message shown to users stay as they are.",
+        "effect": {
+          "emergency": "Emergency mode stays on: every PC this rule covers stays blocked, whatever its version, until the mode is changed.",
+          "required": "Under \"Required\", a rule without a minimum version asks every PC to update, so it cannot be removed now. Switch the mode to Off first, then remove the minimum version.",
+          "off": "The mode is Off, so nothing changes for PCs now.",
+          "inherit": "This customer follows its rollout group's rule, so nothing changes for PCs now."
+        },
+        "rollbackNote": "The rule before the change is kept: rolling back restores {{floor}}.",
+        "confirm": "Remove minimum version"
+      }
     },
     "completeBeforeAdding": "Complete the following before adding this customer:",
     "status": {
