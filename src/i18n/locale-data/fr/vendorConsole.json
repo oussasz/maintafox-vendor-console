@@ -478,7 +478,22 @@
         "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
         "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
         "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
-        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}})."
+        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}}).",
+        "requestedByLabel": "Qui l'a demandé chez le client (nom et fonction)",
+        "identityCheckLabel": "Comment vous avez vérifié son identité auprès du contact enregistré du client",
+        "identityCheckChoose": "Choisir…",
+        "identityCheck": {
+          "callback_registered_phone": "Rappel au numéro de téléphone enregistré",
+          "email_from_registered_address": "E-mail venant de l'adresse enregistrée",
+          "in_person": "En personne",
+          "other": "Autre (précisez ci-dessous)"
+        },
+        "identityNoteRequired": "Comment l'identité a été vérifiée (obligatoire, 5 à 200 caractères)",
+        "identityNoteOptional": "Remarque sur la vérification d'identité (facultative)",
+        "historyTitle": "Codes émis pour ce PC",
+        "historyRow": "{{at}} : demandé par {{who}}, {{check}}",
+        "historyValid": "valable jusqu'au {{at}}",
+        "historyExpired": "expiré"
       }
     },
     "activationClaim": "Revendication d'activation (API réelle)",

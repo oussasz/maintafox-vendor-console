@@ -21,7 +21,22 @@ import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 /** More unexpired codes than this for one PC is refused (409): wait, or use one already sent. */
 export const ADMIN_RECOVERY_MAX_UNEXPIRED_PER_DEVICE = 3;
 
-const IssueBody = z.object({}).strict();
+/** How the operator checked the requester against the customer's registered contact on file. */
+export const IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
+
+const IssueBody = z
+  .object({
+    /** Name and role of the person at the customer who asked for the code. */
+    requested_by: z.string().trim().min(2).max(120),
+    identity_check: z.enum(IDENTITY_CHECKS),
+    /** Required with identity_check "other", optional otherwise. */
+    identity_check_note: z.string().trim().min(5).max(200).optional(),
+  })
+  .strict()
+  .refine((b) => b.identity_check !== "other" || b.identity_check_note !== undefined, {
+    message: "identity_check_note is required when identity_check is other",
+    path: ["identity_check_note"],
+  });
 
 const ListQuery = z
   .object({
@@ -36,6 +51,9 @@ type CodeRow = {
   machine_fingerprint: string;
   issued_by: string;
   reason: string;
+  requested_by: string;
+  identity_check: string;
+  identity_check_note: string | null;
   issued_at: string;
   expires_at: string;
   key_id: string;
@@ -47,7 +65,9 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
 
   /**
    * Issues a code for the PC (tenant, machine fingerprint). Reason (X-Operator-Reason) and a
-   * step-up of kind `admin_recovery_code` are required. Refusals:
+   * step-up of kind `admin_recovery_code` are required, and the body says who at the customer asked
+   * and how their identity was checked against the registered contact (400 invalid_request
+   * otherwise). Refusals:
    * 404 tenant_not_found | activation_not_found;
    * 409 tenant_suspended | activation_revoked | license_revoked | license_expired |
    *     admin_recovery_code_limit (ADMIN_RECOVERY_MAX_UNEXPIRED_PER_DEVICE unexpired codes already).
@@ -59,6 +79,8 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
       return;
     }
     const { tenantId, machineFingerprint } = req.params;
+    const requester = parsed.data;
+    const identityNote = requester.identity_check_note ?? null;
     // A plain transaction (no Idempotency-Key replay): the response holds the code, which must not
     // be persisted anywhere.
     const out = await db.tx(async () => {
@@ -130,19 +152,26 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
           key_id: payload.key_id,
           issued_at: payload.issued_at,
           expires_at: payload.expires_at,
+          requested_by: requester.requested_by,
+          identity_check: requester.identity_check,
+          identity_check_note: identityNote,
         },
       });
       if (!guard.ok) return { status: guard.status, body: guard.body };
       await db.run(
         `INSERT INTO admin_recovery_codes
-          (code_id, tenant_id, license_id, machine_fingerprint, issued_by, reason, issued_at, expires_at, key_id, audit_record_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (code_id, tenant_id, license_id, machine_fingerprint, issued_by, reason,
+           requested_by, identity_check, identity_check_note, issued_at, expires_at, key_id, audit_record_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         payload.code_id,
         tenantId,
         payload.license_id,
         payload.machine_fingerprint,
         resolveActorId(req),
         guard.reasonCode ?? "",
+        requester.requested_by,
+        requester.identity_check,
+        identityNote,
         payload.issued_at,
         payload.expires_at,
         payload.key_id,
@@ -165,6 +194,9 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
           issued_at: payload.issued_at,
           expires_at: payload.expires_at,
           key_id: payload.key_id,
+          requested_by: requester.requested_by,
+          identity_check: requester.identity_check,
+          identity_check_note: identityNote,
           audit_record_id: guard.auditRecordId,
         },
       };
@@ -183,7 +215,8 @@ export function registerAdminRecoveryRoutes(app: express.Express, ctx: ApiContex
     const { tenantId } = req.params;
     const fp = parsed.data.machine_fingerprint;
     const rows = await db.all<CodeRow>(
-      `SELECT code_id, tenant_id, license_id, machine_fingerprint, issued_by, reason, issued_at, expires_at, key_id, audit_record_id
+      `SELECT code_id, tenant_id, license_id, machine_fingerprint, issued_by, reason,
+              requested_by, identity_check, identity_check_note, issued_at, expires_at, key_id, audit_record_id
        FROM admin_recovery_codes
        WHERE tenant_id = ?${fp === undefined ? "" : " AND machine_fingerprint = ?"}
        ORDER BY issued_at DESC, code_id DESC

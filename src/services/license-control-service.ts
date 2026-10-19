@@ -674,6 +674,9 @@ const AdminRecoveryCodeIssuedSchema = z.object({
   issued_at: z.string(),
   expires_at: z.string(),
   key_id: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
   audit_record_id: z.string(),
 });
 export type AdminRecoveryCodeIssued = z.infer<typeof AdminRecoveryCodeIssuedSchema>;
@@ -685,6 +688,9 @@ const AdminRecoveryCodeRowSchema = z.object({
   machine_fingerprint: z.string(),
   issued_by: z.string(),
   reason: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
   issued_at: z.string(),
   expires_at: z.string(),
   key_id: z.string(),
@@ -692,6 +698,17 @@ const AdminRecoveryCodeRowSchema = z.object({
   expired: z.boolean(),
 });
 export type AdminRecoveryCodeRow = z.infer<typeof AdminRecoveryCodeRowSchema>;
+
+/** How the operator checked the requester against the customer's registered contact (API enum). */
+export const ADMIN_RECOVERY_IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
+export type AdminRecoveryIdentityCheck = (typeof ADMIN_RECOVERY_IDENTITY_CHECKS)[number];
+export type AdminRecoveryRequester = {
+  /** Name and role of the person at the customer who asked (2-120 chars). */
+  requested_by: string;
+  identity_check: AdminRecoveryIdentityCheck;
+  /** Required (5-200 chars) with "other"; optional otherwise. */
+  identity_check_note?: string;
+};
 
 /**
  * Issues a signed one-time administrator recovery code for the PC (step-up `admin_recovery_code`).
@@ -701,11 +718,18 @@ export type AdminRecoveryCodeRow = z.infer<typeof AdminRecoveryCodeRowSchema>;
 export async function issueAdminRecoveryCode(
   tenantId: string,
   machineFingerprint: string,
+  requester: AdminRecoveryRequester,
   privileged: PrivilegedActionContext,
 ): Promise<AdminRecoveryCodeIssued> {
+  const note = requester.identity_check_note?.trim();
+  const body = {
+    requested_by: requester.requested_by.trim(),
+    identity_check: requester.identity_check,
+    ...(note ? { identity_check_note: note } : {}),
+  };
   const res = await authFetch(
     `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/admin-recovery-code`,
-    { method: "POST", body: JSON.stringify({}), headers: privilegedHeaders(privileged) },
+    { method: "POST", body: JSON.stringify(body), headers: privilegedHeaders(privileged) },
   );
   await throwIfNotOk(res);
   return AdminRecoveryCodeIssuedSchema.parse(await res.json());

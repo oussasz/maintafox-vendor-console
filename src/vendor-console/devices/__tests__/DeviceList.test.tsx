@@ -6,6 +6,7 @@ import "@/test/i18n";
 
 vi.mock("@/services/license-control-service", () => ({
   PRIVILEGED_REASON_MIN_LENGTH: 4,
+  ADMIN_RECOVERY_IDENTITY_CHECKS: ["callback_registered_phone", "email_from_registered_address", "in_person", "other"],
   listTenantActivations: vi.fn(),
   revokeMachine: vi.fn(),
   reinstateMachine: vi.fn(),
@@ -137,6 +138,9 @@ describe("DeviceList", () => {
       issued_at: "2026-10-19T08:30:00.000Z",
       expires_at: "2026-10-20T08:30:00.000Z",
       key_id: "prod-1",
+      requested_by: "Karim B., maintenance manager",
+      identity_check: "callback_registered_phone",
+      identity_check_note: null,
       audit_record_id: "audit_1",
     });
     const user = userEvent.setup();
@@ -147,15 +151,30 @@ describe("DeviceList", () => {
     expect(within(dialog).getByText("Give this PC an administrator recovery code?")).toBeInTheDocument();
     expect(within(dialog).getByText("It is valid for 24 hours and can be used only once.")).toBeInTheDocument();
     expect(within(dialog).getByText(/creates an EXTRA administrator: it does not reset or unlock an existing account/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Creates one new administrator account on Bureau-Maintenance/)).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText("Reason (kept in the audit log)"), "site lost every admin");
-    await user.click(within(dialog).getByRole("button", { name: "Issue the code" }));
+    const issueButton = within(dialog).getByRole("button", { name: "Issue the code" });
+    expect(issueButton).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("Who asked at the customer (name and role)"), "Karim B., maintenance manager");
+    expect(issueButton).toBeDisabled();
+    const check = within(dialog).getByLabelText("How you checked their identity against the customer's registered contact");
+    await user.selectOptions(check, "other");
+    expect(issueButton).toBeDisabled();
+    await user.type(within(dialog).getByLabelText(/How the identity was checked \(required/), "ok");
+    expect(issueButton).toBeDisabled();
+    await user.selectOptions(check, "callback_registered_phone");
+    await user.clear(within(dialog).getByLabelText("Note on the identity check (optional)"));
+    expect(issueButton).toBeEnabled();
+    await user.click(issueButton);
     await user.type(await screen.findByLabelText("6-digit code from your authenticator app"), "246810");
     await user.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
-      expect(issueAdminRecoveryCode).toHaveBeenCalledWith("tenant_1", online.machine_id, {
-        reason_code: "site lost every admin",
-        step_up_token: "stepup-admin_recovery_code",
-      }),
+      expect(issueAdminRecoveryCode).toHaveBeenCalledWith(
+        "tenant_1",
+        online.machine_id,
+        { requested_by: "Karim B., maintenance manager", identity_check: "callback_registered_phone", identity_check_note: "" },
+        { reason_code: "site lost every admin", step_up_token: "stepup-admin_recovery_code" },
+      ),
     );
     expect(requestStepUp).toHaveBeenCalledWith("admin_recovery_code", "246810");
     expect(await screen.findByTestId("admin-recovery-code")).toHaveTextContent(code);
@@ -177,6 +196,9 @@ describe("DeviceList", () => {
         machine_fingerprint: online.machine_id,
         issued_by: "1",
         reason: "earlier",
+        requested_by: "Nadia L., plant director",
+        identity_check: "email_from_registered_address",
+        identity_check_note: null,
         issued_at: new Date(now - 3_600_000).toISOString(),
         expires_at: new Date(now + 20 * 3_600_000).toISOString(),
         key_id: "prod-1",
@@ -191,10 +213,25 @@ describe("DeviceList", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/1 code issued earlier for this PC is still valid/)).toBeInTheDocument();
     expect(listAdminRecoveryCodes).toHaveBeenCalledWith("tenant_1", online.machine_id);
+    const history = within(dialog).getByRole("list", { name: "Codes issued for this PC" });
+    expect(history).toHaveTextContent("asked by Nadia L., plant director, Email from the registered address");
+    expect(history).toHaveTextContent(/valid until/);
+    await userEvent.type(within(dialog).getByLabelText("Who asked at the customer (name and role)"), "Karim B.");
+    await userEvent.selectOptions(
+      within(dialog).getByLabelText("How you checked their identity against the customer's registered contact"),
+      "other",
+    );
+    await userEvent.type(within(dialog).getByLabelText(/How the identity was checked \(required/), "video call, ID card shown");
     await confirmWithReason("site lost every admin", "Issue the code");
     await enterCode("135790");
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("The control API cannot be reached");
     expect(screen.queryByTestId("admin-recovery-code")).not.toBeInTheDocument();
+    expect(issueAdminRecoveryCode).toHaveBeenCalledWith(
+      "tenant_1",
+      online.machine_id,
+      { requested_by: "Karim B.", identity_check: "other", identity_check_note: "video call, ID card shown" },
+      expect.objectContaining({ reason_code: "site lost every admin" }),
+    );
   });
 
   it("a code list that arrives after the dialog moved to another device is ignored", async () => {
@@ -221,6 +258,9 @@ describe("DeviceList", () => {
         machine_fingerprint: online.machine_id,
         issued_by: "1",
         reason: "earlier",
+        requested_by: "Nadia L., plant director",
+        identity_check: "email_from_registered_address",
+        identity_check_note: null,
         issued_at: new Date(now - 3_600_000).toISOString(),
         expires_at: new Date(now + 20 * 3_600_000).toISOString(),
         key_id: "prod-1",

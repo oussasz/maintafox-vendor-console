@@ -53,14 +53,16 @@ try {
     const licence = (await api.call("POST", "/api/v1/licenses", admin, { tenant_id: tenant.id, max_machines: maxMachines })).json;
     return { tenant, licence };
   };
-  const issue = (tenantId, fp, headers, token = admin) =>
-    api.call("POST", `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(fp)}/admin-recovery-code`, token, {}, headers);
+  /** Who asked at the customer and how they were checked against the registered contact. */
+  const REQUESTER = { requested_by: "Karim B., maintenance manager", identity_check: "callback_registered_phone" };
+  const issue = (tenantId, fp, headers, token = admin, body = REQUESTER) =>
+    api.call("POST", `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(fp)}/admin-recovery-code`, token, body, headers);
   /** Like api.call, with the response headers (Cache-Control checks). */
   const raw = async (method, path, headers = {}) => {
     const res = await fetch(`${api.baseUrl}${path}`, {
       method,
       headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json", ...headers },
-      body: method === "GET" ? undefined : "{}",
+      body: method === "GET" ? undefined : JSON.stringify(REQUESTER),
     });
     return { status: res.status, headers: res.headers, json: await res.json() };
   };
@@ -70,6 +72,23 @@ try {
   const { tenant, licence } = await setup("recovery");
   const fpA = "fp-recovery-A:Ünïcode/ok";
   await api.claimDevice(licence.license_key, fpA);
+
+  // ── Requester and identity check (400 before anything else) ────────────────────────────
+  for (const [body, why] of [
+    [{}, "no requester"],
+    [{ identity_check: "in_person" }, "requested_by missing"],
+    [{ requested_by: "K", identity_check: "in_person" }, "requested_by too short"],
+    [{ requested_by: "x".repeat(121), identity_check: "in_person" }, "requested_by too long"],
+    [{ requested_by: "Karim B.", identity_check: "trust_me" }, "unknown identity check"],
+    [{ requested_by: "Karim B." }, "identity_check missing"],
+    [{ requested_by: "Karim B.", identity_check: "other" }, "other needs a note"],
+    [{ requested_by: "Karim B.", identity_check: "other", identity_check_note: "ok" }, "note too short"],
+    [{ requested_by: "Karim B.", identity_check: "in_person", identity_check_note: "y".repeat(201) }, "note too long"],
+    [{ ...REQUESTER, extra: 1 }, "unknown field"],
+  ]) {
+    const bad = await issue(tenant.id, fpA, await privileged(), admin, body);
+    assert.deepEqual([bad.status, bad.json.error], [400, "invalid_request"], why);
+  }
 
   // ── Guard: reason, step-up, step-up kind ────────────────────────────────────────────────
   const noReason = await issue(tenant.id, fpA, { "X-Step-Up-Token": await owner.stepUp("admin_recovery_code") });
@@ -121,6 +140,13 @@ try {
   const [row] = await api.su("SELECT * FROM admin_recovery_codes WHERE code_id = $1", [payload.code_id]);
   assert.equal(row.audit_record_id, ledger.record_id);
   assert.equal(row.reason, "customer lost every admin");
+  assert.deepEqual(
+    [row.requested_by, row.identity_check, row.identity_check_note],
+    ["Karim B., maintenance manager", "callback_registered_phone", null],
+    "who asked and how they were checked are recorded",
+  );
+  assert.equal(issued.json.requested_by, "Karim B., maintenance manager");
+  assert.equal(issued.json.identity_check, "callback_registered_phone");
   assert.equal(row.expires_at, payload.expires_at);
   assert.equal(row.key_id, TEST_ENTITLEMENT_KEY_ID);
   const b64 = issued.json.code.split(".")[1];
@@ -147,12 +173,22 @@ try {
   assert.equal(listed.json[0].code_id, payload.code_id);
   assert.equal(listed.json[0].expired, false);
   assert.equal(listed.json[0].issued_by, ledger.actor_id);
+  assert.equal(listed.json[0].requested_by, "Karim B., maintenance manager");
+  assert.equal(listed.json[0].identity_check, "callback_registered_phone");
+  assert.equal(listed.json[0].identity_check_note, null);
   assert.ok(!("code" in listed.json[0]) && !JSON.stringify(listed.json).includes("MFXREC1"));
   assert.equal((await list(tenant.id, "fp-other")).json.length, 0, "filtered by device");
   assert.equal((await list(tenant.id)).json.length, 1);
 
   // ── Re-issue allowed, capped at 3 unexpired codes per PC ─────────────────────────────────
-  assert.equal((await issue(tenant.id, fpA, await privileged())).status, 201);
+  const otherCheck = await issue(tenant.id, fpA, await privileged(), admin, {
+    requested_by: "Nadia L., plant director",
+    identity_check: "other",
+    identity_check_note: "video call, ID card shown, matches contract signatory",
+  });
+  assert.equal(otherCheck.status, 201, otherCheck.text);
+  const [otherRow] = await api.su("SELECT identity_check, identity_check_note FROM admin_recovery_codes WHERE code_id = $1", [otherCheck.json.code_id]);
+  assert.deepEqual(otherRow, { identity_check: "other", identity_check_note: "video call, ID card shown, matches contract signatory" });
   assert.equal((await issue(tenant.id, fpA, await privileged())).status, 201);
   const capped = await issue(tenant.id, fpA, await privileged());
   assert.deepEqual([capped.status, capped.json.error, capped.json.max_unexpired], [409, "admin_recovery_code_limit", 3]);

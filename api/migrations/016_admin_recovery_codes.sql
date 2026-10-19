@@ -12,6 +12,14 @@ CREATE TABLE admin_recovery_codes (
   -- Operator actor id (resolveActorId) and the X-Operator-Reason they gave.
   issued_by TEXT NOT NULL,
   reason TEXT NOT NULL,
+  -- Who at the customer asked for the code (name and role, free text) and how the operator checked
+  -- their identity against the customer's registered contact on file.
+  requested_by TEXT NOT NULL CHECK (char_length(requested_by) BETWEEN 2 AND 120),
+  identity_check TEXT NOT NULL CHECK (identity_check IN
+    ('callback_registered_phone', 'email_from_registered_address', 'in_person', 'other')),
+  -- Required (5-200 chars) when identity_check = 'other'; optional otherwise.
+  identity_check_note TEXT NULL CHECK (identity_check_note IS NULL OR char_length(identity_check_note) BETWEEN 5 AND 200),
+  CHECK (identity_check <> 'other' OR identity_check_note IS NOT NULL),
   -- RFC 3339 UTC strings exactly as signed into the code (toISOString()).
   issued_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,

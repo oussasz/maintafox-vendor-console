@@ -478,7 +478,22 @@
         "pointExpiry": "It is valid for 24 hours and can be used only once.",
         "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
         "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
-        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}})."
+        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}}).",
+        "requestedByLabel": "Who asked at the customer (name and role)",
+        "identityCheckLabel": "How you checked their identity against the customer's registered contact",
+        "identityCheckChoose": "Choose…",
+        "identityCheck": {
+          "callback_registered_phone": "Called back on the registered phone number",
+          "email_from_registered_address": "Email from the registered address",
+          "in_person": "In person",
+          "other": "Other (explain below)"
+        },
+        "identityNoteRequired": "How the identity was checked (required, 5 to 200 characters)",
+        "identityNoteOptional": "Note on the identity check (optional)",
+        "historyTitle": "Codes issued for this PC",
+        "historyRow": "{{at}}: asked by {{who}}, {{check}}",
+        "historyValid": "valid until {{at}}",
+        "historyExpired": "expired"
       }
     },
     "tenant": "Tenant",

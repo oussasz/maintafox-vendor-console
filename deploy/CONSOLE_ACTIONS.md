@@ -119,8 +119,8 @@ same check on `previous_force_min_app_version` there if you plan to roll back.
 
 ## Administrator recovery code (decision register 2026-10-19, "No active administrator left on a PC")
 
-> **NEW MIGRATION: `016_admin_recovery_codes.sql`** (new table `admin_recovery_codes`, tenant RLS;
-> no existing table changes). It runs automatically at API start.
+> **NEW MIGRATION: `016_admin_recovery_codes.sql`** (new table `admin_recovery_codes`, tenant RLS,
+> including `requested_by`, `identity_check`, `identity_check_note`; no existing table changes). It runs automatically at API start.
 
 **What it is.** A one-time code, signed by Maintafox, bound to one PC activation (tenant, machine
 fingerprint, licence). It **creates one new administrator account on that PC** (valid **24 h**,
@@ -132,17 +132,25 @@ administrator of the PC then sees a persistent notice that a recovery code was u
 **When to use it.** When the site can no longer administer the PC, e.g. the only administrator
 forgot their password. The site enters the code in the Maintafox desktop (administrator recovery).
 
-**How.** Customer → Devices → the PC's "⋯" menu → "Administrator recovery code" → reason (ledger)
-→ authenticator code (step-up kind `admin_recovery_code`). The code is shown **once** with a copy
+**How.** First check who is asking: call back the customer's registered phone number, or accept an
+email from the registered address, or see them in person. Then Customer → Devices → the PC's "⋯"
+menu → "Administrator recovery code" → **who asked** (name and role at the customer), **how their
+identity was checked** against the registered contact on file (`callback_registered_phone`,
+`email_from_registered_address`, `in_person`, or `other` with a 5–200 character note), reason
+(ledger) → authenticator code (step-up kind `admin_recovery_code`). The code is shown **once** with a copy
 button and its expiry; send it to the site by email or chat. Maintafox does not keep the code (not
 in the database, the ledger, or the idempotency store); if it is lost, issue a new one. The dialog
-says when codes sent earlier for that PC are still valid.
+lists the codes issued earlier for that PC (when, asked by whom, how checked, valid or expired).
 
 **Server (control API).**
 - `POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/admin-recovery-code`, permission
   `entitlement.manage`, `X-Operator-Reason` + `X-Step-Up-Token` of kind `admin_recovery_code`
-  (console-only kind: `rust_variant` null in `shared/step-up-actions.v1.json`). Returns `201` with
-  `code`, `code_id`, `issued_at`, `expires_at`, `key_id`, `audit_record_id` (`Cache-Control: no-store`).
+  (console-only kind: `rust_variant` null in `shared/step-up-actions.v1.json`). Body (required):
+  `requested_by` (2–120 characters), `identity_check` (`callback_registered_phone` |
+  `email_from_registered_address` | `in_person` | `other`), `identity_check_note` (5–200 characters,
+  required with `other`, optional otherwise); anything else or out of bounds is `400 invalid_request`.
+  Returns `201` with `code`, `code_id`, `issued_at`, `expires_at`, `key_id`, `requested_by`,
+  `identity_check`, `identity_check_note`, `audit_record_id` (`Cache-Control: no-store`).
 - Refusals: `404 tenant_not_found | activation_not_found`; `409 tenant_suspended |
   activation_revoked | license_revoked | license_expired | admin_recovery_code_limit` (at most **3
   unexpired codes per PC**; re-issuing is allowed below that, earlier codes stay valid until they
@@ -150,9 +158,11 @@ says when codes sent earlier for that PC are still valid.
   `403 permission_denied`.
 - Ledger: `admin_recovery_code_issued`, category `entitlement`, entity refs tenant / licence /
   machine, payload `code_id`, `license_id`, `machine_fingerprint`, `key_id`, `issued_at`,
-  `expires_at` — never the code or its signature.
+  `expires_at`, `requested_by`, `identity_check`, `identity_check_note` — never the code or its
+  signature.
 - `GET /api/v1/tenants/:tenantId/admin-recovery-codes[?machine_fingerprint=…]` (`console.view`):
-  issued codes (who, why, when, until when, `expired`), never the codes.
+  issued codes (operator, reason, who asked and how they were checked, when, until when, `expired`),
+  never the codes (`Cache-Control: no-store`).
 
 **Format** (agreed with the desktop licensing verifier; implementation
 `api/src/admin-recovery-signer.ts`, test vector `api/testdata/admin-recovery-vector.json`, regenerate
