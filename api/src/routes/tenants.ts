@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { parsePagination, sendValidationError } from "../app/http.js";
-import { EditionIdSchema, ForceUpdateModeSchema } from "../app/schemas.js";
+import { EditionIdSchema, ForceMinAppVersionSchema, ForceUpdateModeSchema } from "../app/schemas.js";
 import { newId, structuredLog } from "../app/runtime.js";
 import { editionExists } from "../edition-catalog-store.js";
 import { purgeTenantSyncData } from "../sync/index.js";
@@ -15,7 +15,7 @@ import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 const CreateTenantBody = z.object({
   slug: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/),
   display_name: z.string().min(2).max(128),
-  force_min_app_version: z.string().trim().min(1).max(32).optional().nullable(),
+  force_min_app_version: ForceMinAppVersionSchema.optional().nullable(),
   force_update_mode: ForceUpdateModeSchema.optional(),
   force_update_reason: z.string().trim().min(2).max(512).optional().nullable(),
   rollout_cohort: z.string().trim().min(2).max(64).optional(),
