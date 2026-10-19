@@ -1,0 +1,36 @@
+{
+  "description": "Administrator recovery code signed by api/src/admin-recovery-signer.ts with the TEST-ONLY key (api/scripts/lib/test-signing-key.mjs). Never trust this key outside tests.",
+  "format": "MFXREC1.<payload base64url, no padding>.<Ed25519 signature, lowercase hex>",
+  "timestamp_format": "Date.prototype.toISOString(): RFC 3339 UTC with milliseconds, e.g. 2026-10-19T08:30:00.000Z",
+  "ttl_hours": 24,
+  "issuer": "maintafox-vps",
+  "key_id": "test-ed25519-do-not-trust",
+  "signature_alg": "ed25519:admin-recovery:v1",
+  "public_key_hex": "c50587ad5dc4708a166d03aec927bf21abd79074c41fb3c0843140941fdb71ce",
+  "signing_domain": "maintafox-admin-recovery:v1\n",
+  "payload": {
+    "v": 1,
+    "purpose": "admin_recovery",
+    "code_id": "3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f",
+    "tenant_id": "ten_vector_0001",
+    "machine_fingerprint": "fp-vector-9c41e7b2a05d",
+    "license_id": "lic_vector_0001",
+    "issuer": "maintafox-vps",
+    "key_id": "test-ed25519-do-not-trust",
+    "signature_alg": "ed25519:admin-recovery:v1",
+    "issued_at": "2026-10-19T08:30:00.000Z",
+    "expires_at": "2026-10-20T08:30:00.000Z"
+  },
+  "payload_json": "{\"v\":1,\"purpose\":\"admin_recovery\",\"code_id\":\"3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f\",\"tenant_id\":\"ten_vector_0001\",\"machine_fingerprint\":\"fp-vector-9c41e7b2a05d\",\"license_id\":\"lic_vector_0001\",\"issuer\":\"maintafox-vps\",\"key_id\":\"test-ed25519-do-not-trust\",\"signature_alg\":\"ed25519:admin-recovery:v1\",\"issued_at\":\"2026-10-19T08:30:00.000Z\",\"expires_at\":\"2026-10-20T08:30:00.000Z\"}",
+  "payload_b64url": "eyJ2IjoxLCJwdXJwb3NlIjoiYWRtaW5fcmVjb3ZlcnkiLCJjb2RlX2lkIjoiM2Y2YzFkMmUtOWE0Yi00YzdkLThlMWYtMmEzYjRjNWQ2ZTdmIiwidGVuYW50X2lkIjoidGVuX3ZlY3Rvcl8wMDAxIiwibWFjaGluZV9maW5nZXJwcmludCI6ImZwLXZlY3Rvci05YzQxZTdiMmEwNWQiLCJsaWNlbnNlX2lkIjoibGljX3ZlY3Rvcl8wMDAxIiwiaXNzdWVyIjoibWFpbnRhZm94LXZwcyIsImtleV9pZCI6InRlc3QtZWQyNTUxOS1kby1ub3QtdHJ1c3QiLCJzaWduYXR1cmVfYWxnIjoiZWQyNTUxOTphZG1pbi1yZWNvdmVyeTp2MSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTlUMDg6MzA6MDAuMDAwWiIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDA4OjMwOjAwLjAwMFoifQ",
+  "signed_message": "maintafox-admin-recovery:v1\n{\"v\":1,\"purpose\":\"admin_recovery\",\"code_id\":\"3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f\",\"tenant_id\":\"ten_vector_0001\",\"machine_fingerprint\":\"fp-vector-9c41e7b2a05d\",\"license_id\":\"lic_vector_0001\",\"issuer\":\"maintafox-vps\",\"key_id\":\"test-ed25519-do-not-trust\",\"signature_alg\":\"ed25519:admin-recovery:v1\",\"issued_at\":\"2026-10-19T08:30:00.000Z\",\"expires_at\":\"2026-10-20T08:30:00.000Z\"}",
+  "signed_message_hex": "6d61696e7461666f782d61646d696e2d7265636f766572793a76310a7b2276223a312c22707572706f7365223a2261646d696e5f7265636f76657279222c22636f64655f6964223a2233663663316432652d396134622d346337642d386531662d326133623463356436653766222c2274656e616e745f6964223a2274656e5f766563746f725f30303031222c226d616368696e655f66696e6765727072696e74223a2266702d766563746f722d396334316537623261303564222c226c6963656e73655f6964223a226c69635f766563746f725f30303031222c22697373756572223a226d61696e7461666f782d767073222c226b65795f6964223a22746573742d656432353531392d646f2d6e6f742d7472757374222c227369676e61747572655f616c67223a22656432353531393a61646d696e2d7265636f766572793a7631222c226973737565645f6174223a22323032362d31302d31395430383a33303a30302e3030305a222c22657870697265735f6174223a22323032362d31302d32305430383a33303a30302e3030305a227d",
+  "signature_hex": "c8fcd87bbe8824f9c58badedd5f4470cfde793fca305963167bfbe7660b0003ad057f9ffb05059882acdb5fcb68f329f3652604a3f0c75eb3536bed38748b406",
+  "code": "MFXREC1.eyJ2IjoxLCJwdXJwb3NlIjoiYWRtaW5fcmVjb3ZlcnkiLCJjb2RlX2lkIjoiM2Y2YzFkMmUtOWE0Yi00YzdkLThlMWYtMmEzYjRjNWQ2ZTdmIiwidGVuYW50X2lkIjoidGVuX3ZlY3Rvcl8wMDAxIiwibWFjaGluZV9maW5nZXJwcmludCI6ImZwLXZlY3Rvci05YzQxZTdiMmEwNWQiLCJsaWNlbnNlX2lkIjoibGljX3ZlY3Rvcl8wMDAxIiwiaXNzdWVyIjoibWFpbnRhZm94LXZwcyIsImtleV9pZCI6InRlc3QtZWQyNTUxOS1kby1ub3QtdHJ1c3QiLCJzaWduYXR1cmVfYWxnIjoiZWQyNTUxOTphZG1pbi1yZWNvdmVyeTp2MSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTlUMDg6MzA6MDAuMDAwWiIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDA4OjMwOjAwLjAwMFoifQ.c8fcd87bbe8824f9c58badedd5f4470cfde793fca305963167bfbe7660b0003ad057f9ffb05059882acdb5fcb68f329f3652604a3f0c75eb3536bed38748b406",
+  "tampered": {
+    "description": "license_id changed in the payload (one byte), original signature kept: must be refused (signature).",
+    "payload_json": "{\"v\":1,\"purpose\":\"admin_recovery\",\"code_id\":\"3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f\",\"tenant_id\":\"ten_vector_0001\",\"machine_fingerprint\":\"fp-vector-9c41e7b2a05d\",\"license_id\":\"lic_vector_0002\",\"issuer\":\"maintafox-vps\",\"key_id\":\"test-ed25519-do-not-trust\",\"signature_alg\":\"ed25519:admin-recovery:v1\",\"issued_at\":\"2026-10-19T08:30:00.000Z\",\"expires_at\":\"2026-10-20T08:30:00.000Z\"}",
+    "code": "MFXREC1.eyJ2IjoxLCJwdXJwb3NlIjoiYWRtaW5fcmVjb3ZlcnkiLCJjb2RlX2lkIjoiM2Y2YzFkMmUtOWE0Yi00YzdkLThlMWYtMmEzYjRjNWQ2ZTdmIiwidGVuYW50X2lkIjoidGVuX3ZlY3Rvcl8wMDAxIiwibWFjaGluZV9maW5nZXJwcmludCI6ImZwLXZlY3Rvci05YzQxZTdiMmEwNWQiLCJsaWNlbnNlX2lkIjoibGljX3ZlY3Rvcl8wMDAyIiwiaXNzdWVyIjoibWFpbnRhZm94LXZwcyIsImtleV9pZCI6InRlc3QtZWQyNTUxOS1kby1ub3QtdHJ1c3QiLCJzaWduYXR1cmVfYWxnIjoiZWQyNTUxOTphZG1pbi1yZWNvdmVyeTp2MSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTlUMDg6MzA6MDAuMDAwWiIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDA4OjMwOjAwLjAwMFoifQ.c8fcd87bbe8824f9c58badedd5f4470cfde793fca305963167bfbe7660b0003ad057f9ffb05059882acdb5fcb68f329f3652604a3f0c75eb3536bed38748b406",
+    "expected": "invalid_signature"
+  }
+}
