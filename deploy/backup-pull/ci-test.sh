@@ -63,7 +63,10 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [ -s "$root/keys/known_hosts" ] || fail "sshd did not start"
-docker logs "$name" 2>&1 | grep -q 'host key fingerprint' || fail "no host key fingerprint in the logs"
+# Read the logs first, then search them: with pipefail, `docker logs | grep -q` fails at random when
+# grep stops at the first match and docker logs dies of SIGPIPE before it has written everything.
+logs=$(docker logs "$name" 2>&1) || fail "cannot read the container logs"
+grep -q 'host key fingerprint' <<< "$logs" || fail "no host key fingerprint in the logs"
 
 pull() {
   pwsh -NoProfile -File "$here/Pull-MaintafoxBackups.ps1" -ServerHost 127.0.0.1 -Port "$port" -User mfxpull \
