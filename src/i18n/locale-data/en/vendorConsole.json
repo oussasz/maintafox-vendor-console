@@ -468,6 +468,17 @@
         "title": "Ask this device to refresh its policy?",
         "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
         "confirm": "Request refresh"
+      },
+      "recovery": {
+        "title": "Give this PC an administrator recovery code?",
+        "body": "Use it only when nobody can sign in as an administrator on {{fingerprint}} any more (every administrator account is gone, disabled or locked out). The code is signed by Maintafox and works only on this PC:",
+        "confirm": "Issue the code",
+        "pointOnce": "On this PC, it opens \"create an administrator\" once; the new administrator then manages the other accounts.",
+        "pointNoAdmin": "The PC accepts it only while it has no active administrator.",
+        "pointExpiry": "It is valid for 24 hours and can be used only once.",
+        "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
+        "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
+        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}})."
       }
     },
     "tenant": "Tenant",
@@ -880,7 +891,8 @@
       "sync_repair": "replay or repair a device's synchronisation",
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
-      "own_mfa_change": "generate new recovery codes"
+      "own_mfa_change": "generate new recovery codes",
+      "admin_recovery_code": "give a PC an administrator recovery code"
     }
   },
   "account": {
@@ -1288,7 +1300,18 @@
       "refresh": "Ask it to refresh its licence now",
       "seeWhatHappened": "See what happened",
       "block": "Block this device",
+      "recoveryCode": "Administrator recovery code",
       "more": "More actions for {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Administrator recovery code",
+      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it on the sign-in screen to create a new administrator.",
+      "copy": "Copy the code",
+      "copied": "Copied",
+      "copyFailed": "Could not copy automatically: select the code and copy it by hand.",
+      "expires": "Valid until {{at}}, once.",
+      "shownOnce": "It is shown only this once: Maintafox does not keep it. Copy it now. If it is lost, issue a new one.",
+      "done": "Done"
     },
     "offline": {
       "title": "Offline rules",

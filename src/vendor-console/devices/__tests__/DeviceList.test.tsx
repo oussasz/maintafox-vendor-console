@@ -12,6 +12,8 @@ vi.mock("@/services/license-control-service", () => ({
   releaseMachineSlot: vi.fn(),
   rebindMachine: vi.fn(),
   requestMachinePolicyRefresh: vi.fn(),
+  issueAdminRecoveryCode: vi.fn(),
+  listAdminRecoveryCodes: vi.fn(),
 }));
 vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/vendor-auth-service")>()),
@@ -20,6 +22,8 @@ vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
 vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true, canAny: () => true }) }));
 
 import {
+  issueAdminRecoveryCode,
+  listAdminRecoveryCodes,
   listTenantActivations,
   rebindMachine,
   releaseMachineSlot,
@@ -64,6 +68,7 @@ describe("DeviceList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listTenantActivations).mockResolvedValue([online, quiet, released]);
+    vi.mocked(listAdminRecoveryCodes).mockResolvedValue([]);
   });
 
   it("says in plain words how each device is doing", async () => {
@@ -119,6 +124,77 @@ describe("DeviceList", () => {
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("The control API cannot be reached");
     expect(requestStepUp).not.toHaveBeenCalled();
     expect(requestMachinePolicyRefresh).toHaveBeenCalledWith("tenant_1", online.machine_id, "edition changed");
+  });
+
+  it("an administrator recovery code needs a reason and an admin_recovery_code step-up, then is shown once with a copy button", async () => {
+    const code = `MFXREC1.eyJ2IjoxfQ.${"ab".repeat(64)}`;
+    vi.mocked(issueAdminRecoveryCode).mockResolvedValue({
+      code,
+      code_id: "3f6c1d2e-9a4b-4c7d-8e1f-2a3b4c5d6e7f",
+      tenant_id: "tenant_1",
+      machine_fingerprint: online.machine_id,
+      license_id: "lic_1",
+      issued_at: "2026-10-19T08:30:00.000Z",
+      expires_at: "2026-10-20T08:30:00.000Z",
+      key_id: "prod-1",
+      audit_record_id: "audit_1",
+    });
+    const user = userEvent.setup();
+    renderWithConsole(<DeviceList tenantId="tenant_1" />);
+    await user.click(within(await rowOf("Bureau-Maintenance")).getByRole("button", { name: "More actions for Bureau-Maintenance" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Administrator recovery code" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Give this PC an administrator recovery code?")).toBeInTheDocument();
+    expect(within(dialog).getByText("It is valid for 24 hours and can be used only once.")).toBeInTheDocument();
+    expect(within(dialog).getByText("The PC accepts it only while it has no active administrator.")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Reason (kept in the audit log)"), "site lost every admin");
+    await user.click(within(dialog).getByRole("button", { name: "Issue the code" }));
+    await user.type(await screen.findByLabelText("6-digit code from your authenticator app"), "246810");
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(issueAdminRecoveryCode).toHaveBeenCalledWith("tenant_1", online.machine_id, {
+        reason_code: "site lost every admin",
+        step_up_token: "stepup-admin_recovery_code",
+      }),
+    );
+    expect(requestStepUp).toHaveBeenCalledWith("admin_recovery_code", "246810");
+    expect(await screen.findByTestId("admin-recovery-code")).toHaveTextContent(code);
+    expect(screen.getByText(/it is shown only this once/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Valid until .+, once\.$/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy the code" }));
+    expect(await navigator.clipboard.readText()).toBe(code);
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByTestId("admin-recovery-code")).not.toBeInTheDocument());
+  });
+
+  it("the recovery dialog says when codes sent earlier are still valid; a refusal stays in the dialog", async () => {
+    vi.mocked(listAdminRecoveryCodes).mockResolvedValue([
+      {
+        code_id: "c1",
+        tenant_id: "tenant_1",
+        license_id: "lic_1",
+        machine_fingerprint: online.machine_id,
+        issued_by: "1",
+        reason: "earlier",
+        issued_at: new Date(now - 3_600_000).toISOString(),
+        expires_at: new Date(now + 20 * 3_600_000).toISOString(),
+        key_id: "prod-1",
+        audit_record_id: "audit_0",
+        expired: false,
+      },
+    ]);
+    vi.mocked(issueAdminRecoveryCode).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    renderWithConsole(<DeviceList tenantId="tenant_1" />);
+    await userEvent.click(within(await rowOf("Bureau-Maintenance")).getByRole("button", { name: "More actions for Bureau-Maintenance" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Administrator recovery code" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/1 code issued earlier for this PC is still valid/)).toBeInTheDocument();
+    expect(listAdminRecoveryCodes).toHaveBeenCalledWith("tenant_1", online.machine_id);
+    await confirmWithReason("site lost every admin", "Issue the code");
+    await enterCode("135790");
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("The control API cannot be reached");
+    expect(screen.queryByTestId("admin-recovery-code")).not.toBeInTheDocument();
   });
 
   it("explains an empty list", async () => {

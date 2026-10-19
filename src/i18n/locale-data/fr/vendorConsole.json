@@ -468,6 +468,17 @@
         "title": "Demander à cet appareil de rafraîchir sa politique ?",
         "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
         "confirm": "Demander le rafraîchissement"
+      },
+      "recovery": {
+        "title": "Donner à ce PC un code de récupération administrateur ?",
+        "body": "À utiliser seulement quand plus personne ne peut se connecter en administrateur sur {{fingerprint}} (tous les comptes administrateur ont disparu, sont désactivés ou bloqués). Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
+        "confirm": "Émettre le code",
+        "pointOnce": "Sur ce PC, il ouvre une seule fois « créer un administrateur » ; le nouvel administrateur gère ensuite les autres comptes.",
+        "pointNoAdmin": "Le PC ne l'accepte que s'il n'a plus aucun administrateur actif.",
+        "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
+        "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
+        "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
+        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}})."
       }
     },
     "activationClaim": "Revendication d'activation (API réelle)",
@@ -880,7 +891,8 @@
       "sync_repair": "rejouer ou réparer la synchronisation d'un appareil",
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
-      "own_mfa_change": "générer de nouveaux codes de secours"
+      "own_mfa_change": "générer de nouveaux codes de secours",
+      "admin_recovery_code": "donner à un PC un code de récupération administrateur"
     }
   },
   "account": {
@@ -1288,7 +1300,18 @@
       "refresh": "Lui demander d'actualiser sa licence maintenant",
       "seeWhatHappened": "Voir ce qui s'est passé",
       "block": "Bloquer cet appareil",
+      "recoveryCode": "Code de récupération administrateur",
       "more": "Autres actions pour {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Code de récupération administrateur",
+      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit sur l'écran de connexion pour créer un nouvel administrateur.",
+      "copy": "Copier le code",
+      "copied": "Copié",
+      "copyFailed": "Copie automatique impossible : sélectionnez le code et copiez-le à la main.",
+      "expires": "Valable jusqu'au {{at}}, une seule fois.",
+      "shownOnce": "Il n'est affiché que cette fois : Maintafox ne le conserve pas. Copiez-le maintenant. S'il est perdu, émettez-en un nouveau.",
+      "done": "Terminé"
     },
     "offline": {
       "title": "Règles hors ligne",
