@@ -343,6 +343,30 @@ async function run() {
       return (json.items ?? json)[0];
     }
 
+    // Tenant under "required": removal is refused there too, nothing is written.
+    assert.equal((await putPolicy(tenantPolicyUrl, { force_update_mode: "required" })).status, 200);
+    const tenantRequiredFloor = (await readPolicy(tenantPolicyUrl)).force_min_app_version;
+    const ledgerBeforeTenantRequired = (await lastLedgerRecord()).record_id;
+    const tenantRequiredRes = await postClear(tenantClearUrl, { expected_force_min_app_version: tenantRequiredFloor });
+    assert.equal(tenantRequiredRes.status, 409, "tenant removal under required is refused");
+    assert.equal((await tenantRequiredRes.json()).error, "force_min_app_version_needed_by_required_mode");
+    assert.deepEqual(await readPolicy(tenantPolicyUrl), { force_min_app_version: tenantRequiredFloor, force_update_mode: "required" });
+    assert.equal((await lastLedgerRecord()).record_id, ledgerBeforeTenantRequired, "a refused removal writes no ledger record");
+
+    // A policy PUT may not produce "required" without a floor either (it would block every PC).
+    async function assertRequiredWithoutFloorRefused(url) {
+      const before = await readPolicy(url);
+      assert.equal(before.force_min_app_version, null, `${url}: no floor stored for this check`);
+      const ledgerBefore = (await lastLedgerRecord()).record_id;
+      for (const body of [{ force_update_mode: "required" }, { force_update_mode: "required", force_min_app_version: null }]) {
+        const res = await putPolicy(url, body);
+        assert.equal(res.status, 409, `${url}: PUT ${JSON.stringify(body)} without a floor is refused`);
+        assert.equal((await res.json()).error, "force_min_app_version_needed_by_required_mode");
+      }
+      assert.deepEqual(await readPolicy(url), before, `${url}: the refused PUT changed nothing`);
+      assert.equal((await lastLedgerRecord()).record_id, ledgerBefore, `${url}: the refused PUT wrote no ledger record`);
+    }
+
     // Tenant: emergency with a floor; remove it; emergency still blocks; rollback restores the floor.
     assert.equal((await putPolicy(tenantPolicyUrl, { force_update_mode: "emergency" })).status, 200);
     const tenantFloor = (await readPolicy(tenantPolicyUrl)).force_min_app_version;
@@ -362,6 +386,7 @@ async function run() {
     const emergencyAfter = await policyRefresh({ app_version: "9.9.9" });
     assert.equal(emergencyAfter.status, 200);
     assert.equal(emergencyAfter.json.force_update_required, true, "emergency still blocks after the floor is removed");
+    await assertRequiredWithoutFloorRefused(tenantPolicyUrl);
     const againRes = await postClear(tenantClearUrl, { expected_force_min_app_version: tenantFloor });
     assert.equal(againRes.status, 409, "nothing left to remove");
     assert.equal((await againRes.json()).error, "no_force_min_app_version");
@@ -384,6 +409,7 @@ async function run() {
     assert.equal(cohortRecord.record_id, cohortRemoved.audit_record_id);
     assert.equal(cohortRecord.action_code, "cohort_update_policy_min_version_removed");
     assert.equal(cohortRecord.action_category, "rollout_intervention");
+    await assertRequiredWithoutFloorRefused(cohortPolicyUrl);
     const cohortRollback = await fetch(`${cohortPolicyUrl}/rollback`, { method: "POST", headers: rollbackHeaders, body: "{}" });
     assert.equal(cohortRollback.status, 200);
     assert.deepEqual(

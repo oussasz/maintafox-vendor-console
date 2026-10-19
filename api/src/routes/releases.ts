@@ -49,9 +49,18 @@ function floorRemovalRefusal(
   if (stored.trim() !== expected) {
     return { status: 409, body: { error: "force_min_app_version_changed", force_min_app_version: stored } };
   }
-  if (mode === "required") return { status: 409, body: { error: "force_min_app_version_needed_by_required_mode" } };
+  if (mode === "required") return REQUIRED_NEEDS_FLOOR;
   return null;
 }
+
+/**
+ * A policy may not end up "required" with no floor: that blocks every PC (fail closed). Checked
+ * before the audit append so a refusal writes nothing.
+ */
+function requiredWithoutFloor(mode: ForceUpdateMode, floor: string | null): boolean {
+  return mode === "required" && (floor === null || floor.trim() === "");
+}
+const REQUIRED_NEEDS_FLOOR = { status: 409, body: { error: "force_min_app_version_needed_by_required_mode" } } as const;
 
 const UPDATE_CHANNELS = ["stable", "pilot", "internal"] as const;
 
@@ -98,7 +107,8 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
            FROM tenants
-           WHERE id = ?`, req.params.tenantId) as
+           WHERE id = ?
+           FOR UPDATE`, req.params.tenantId) as
         | {
             tenant_id: string;
             update_channel: string;
@@ -111,6 +121,10 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       if (!current) {
         return { status: 404, body: { error: "tenant_not_found" } };
       }
+      const nextMinVersion = parsed.data.force_min_app_version ?? current.force_min_app_version;
+      const nextMode = parsed.data.force_update_mode ?? current.force_update_mode;
+      const nextReason = parsed.data.force_update_reason ?? current.force_update_reason;
+      if (requiredWithoutFloor(nextMode, nextMinVersion)) return REQUIRED_NEEDS_FLOOR;
       const guard = await requirePrivilegedAction(req, {
         action_code: "tenant_update_policy_set",
         step_up_kind: StepUpKinds.rolloutPublish,
@@ -139,9 +153,6 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         new Date().toISOString(),
         resolveActorId(req),
         guard.reasonCode);
-      const nextMinVersion = parsed.data.force_min_app_version ?? current.force_min_app_version;
-      const nextMode = parsed.data.force_update_mode ?? current.force_update_mode;
-      const nextReason = parsed.data.force_update_reason ?? current.force_update_reason;
       await db.run(`UPDATE tenants
          SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?
          WHERE id = ?`, nextMinVersion, nextMode, nextReason, current.tenant_id);
@@ -164,7 +175,8 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
            FROM tenants
-           WHERE id = ?`, req.params.tenantId) as
+           WHERE id = ?
+           FOR UPDATE`, req.params.tenantId) as
         | {
             tenant_id: string;
             update_channel: string;
@@ -237,7 +249,8 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
     await runIdempotent(req, res, async () => {
       const current = await db.get(`SELECT id as tenant_id, update_channel, rollout_cohort, force_min_app_version, force_update_mode, force_update_reason
            FROM tenants
-           WHERE id = ?`, req.params.tenantId) as
+           WHERE id = ?
+           FOR UPDATE`, req.params.tenantId) as
         | {
             tenant_id: string;
             update_channel: string;
@@ -342,9 +355,11 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       if (!["stable", "pilot", "internal"].includes(channel)) {
         return { status: 400, body: { error: "invalid_channel" } };
       }
+      await db.lockXact("cohort-update-policy", `${channel}:${cohort}`);
       const current = await db.get(`SELECT id, channel, cohort_label, force_min_app_version, force_update_mode, force_update_reason
            FROM cohort_update_policies
-           WHERE channel = ? AND cohort_label = ?`, channel, cohort) as
+           WHERE channel = ? AND cohort_label = ?
+           FOR UPDATE`, channel, cohort) as
         | {
             id: string;
             channel: string;
@@ -354,6 +369,13 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
             force_update_reason: string | null;
           }
         | undefined;
+      const prevMin = current?.force_min_app_version ?? null;
+      const prevMode = current?.force_update_mode ?? "off";
+      const prevReason = current?.force_update_reason ?? null;
+      const nextMinVersion = parsed.data.force_min_app_version ?? prevMin;
+      const nextMode = parsed.data.force_update_mode ?? prevMode;
+      const nextReason = parsed.data.force_update_reason ?? prevReason;
+      if (requiredWithoutFloor(nextMode, nextMinVersion)) return REQUIRED_NEEDS_FLOOR;
       const guard = await requirePrivilegedAction(req, {
         action_code: "cohort_update_policy_set",
         step_up_kind: StepUpKinds.rolloutPublish,
@@ -367,9 +389,6 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         },
       });
       if (!guard.ok) return { status: guard.status, body: guard.body };
-      const prevMin = current?.force_min_app_version ?? null;
-      const prevMode = current?.force_update_mode ?? "off";
-      const prevReason = current?.force_update_reason ?? null;
       await db.run(`INSERT INTO cohort_update_policy_history
          (id, channel, cohort_label, previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason,
           changed_at_rfc3339, changed_by_actor_id, reason_code)
@@ -382,9 +401,6 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         new Date().toISOString(),
         resolveActorId(req),
         guard.reasonCode);
-      const nextMinVersion = parsed.data.force_min_app_version ?? prevMin;
-      const nextMode = parsed.data.force_update_mode ?? prevMode;
-      const nextReason = parsed.data.force_update_reason ?? prevReason;
       if (current) {
         await db.run(`UPDATE cohort_update_policies
            SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?,
@@ -416,6 +432,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       if (!["stable", "pilot", "internal"].includes(channel)) {
         return { status: 400, body: { error: "invalid_channel" } };
       }
+      await db.lockXact("cohort-update-policy", `${channel}:${cohort}`);
       const previous = await db.get(`SELECT previous_force_min_app_version, previous_force_update_mode, previous_force_update_reason
            FROM cohort_update_policy_history
            WHERE channel = ? AND cohort_label = ?
@@ -438,7 +455,7 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
         payload: { rollback_to_previous: true },
       });
       if (!guard.ok) return { status: guard.status, body: guard.body };
-      const existing = await db.get("SELECT id FROM cohort_update_policies WHERE channel = ? AND cohort_label = ?", channel, cohort) as { id: string } | undefined;
+      const existing = await db.get("SELECT id FROM cohort_update_policies WHERE channel = ? AND cohort_label = ? FOR UPDATE", channel, cohort) as { id: string } | undefined;
       if (existing) {
         await db.run(`UPDATE cohort_update_policies
            SET force_min_app_version = ?, force_update_mode = ?, force_update_reason = ?,
@@ -487,9 +504,11 @@ export function registerReleasesRoutes(app: express.Express, ctx: ApiContext): v
       if (!["stable", "pilot", "internal"].includes(channel)) {
         return { status: 400, body: { error: "invalid_channel" } };
       }
+      await db.lockXact("cohort-update-policy", `${channel}:${cohort}`);
       const current = await db.get(`SELECT id, force_min_app_version, force_update_mode, force_update_reason
            FROM cohort_update_policies
-           WHERE channel = ? AND cohort_label = ?`, channel, cohort) as
+           WHERE channel = ? AND cohort_label = ?
+           FOR UPDATE`, channel, cohort) as
         | {
             id: string;
             force_min_app_version: string | null;

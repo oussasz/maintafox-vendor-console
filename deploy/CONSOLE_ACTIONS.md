@@ -72,6 +72,9 @@ suspended_at, DROP COLUMN suspended_reason;`).
 - **An empty field never removes the floor.** On the update-policy `PUT` a missing or `null`
   `force_min_app_version` keeps the stored floor, and `""` is a 400. The console sends `null` for
   an empty field, so emptying the field and applying changes nothing.
+- **"Required" always has a floor.** A policy `PUT` whose result would be `required` with no floor
+  is refused with `409 force_min_app_version_needed_by_required_mode` (nothing written); the policy
+  routes lock the policy row (`FOR UPDATE`) so a concurrent change cannot slip in between.
 - **Remove minimum version** (console: Updates > Force-update governance, the button under the
   minimum version, shown only when one is stored; a confirmation names the floor and the customer,
   or the channel and rollout group). Its own routes:

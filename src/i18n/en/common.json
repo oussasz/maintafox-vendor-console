@@ -155,7 +155,7 @@
       "no_policy_history": "No earlier policy to roll back to.",
       "no_force_min_app_version": "No minimum version is set any more. Reload to see the current rule.",
       "force_min_app_version_changed": "The minimum version was changed since this page loaded. Reload and check it before removing it.",
-      "force_min_app_version_needed_by_required_mode": "Under \"Required\", a rule without a minimum version asks every PC to update. Switch the mode first, then remove the minimum version.",
+      "force_min_app_version_needed_by_required_mode": "Under \"Required\", a rule needs a minimum version: without one every PC is asked to update. Keep or set a minimum version, or switch the mode first.",
       "license_revoked": "This licence key is revoked and cannot be changed.",
       "license_expired": "This licence key has expired.",
       "license_not_found": "Licence key not found.",
