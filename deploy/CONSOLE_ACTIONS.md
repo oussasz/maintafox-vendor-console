@@ -159,7 +159,9 @@ lists the codes issued earlier for that PC (when, asked by whom, how checked, va
 - Ledger: `admin_recovery_code_issued`, category `entitlement`, entity refs tenant / licence /
   machine, payload `code_id`, `license_id`, `machine_fingerprint`, `key_id`, `issued_at`,
   `expires_at`, `requested_by`, `identity_check`, `identity_check_note` — never the code or its
-  signature.
+  signature. `requested_by` and the note name a person at the customer: the ledger is hash-chained
+  and cannot be edited, so write only a name and role there (no phone numbers or other personal
+  details), and list it in the data-retention register as audit data kept with the ledger.
 - `GET /api/v1/tenants/:tenantId/admin-recovery-codes[?machine_fingerprint=…]` (`console.view`):
   issued codes (operator, reason, who asked and how they were checked, when, until when, `expired`),
   never the codes (`Cache-Control: no-store`).

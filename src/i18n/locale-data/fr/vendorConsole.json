@@ -474,7 +474,7 @@
         "body": "Crée un nouveau compte administrateur sur {{fingerprint}} (valable 24 h, usage unique). À utiliser quand le site ne peut plus administrer ce PC, par exemple quand son seul administrateur a oublié son mot de passe. Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
         "confirm": "Émettre le code",
         "pointOnce": "Il crée un administrateur SUPPLÉMENTAIRE : il ne réinitialise ni ne débloque aucun compte existant. Le client désactive ensuite l'ancien compte.",
-        "pointNotice": "Chaque administrateur actif du PC est averti qu'un code de récupération a été utilisé.",
+        "pointNotice": "Chaque administrateur actif du PC voit un avis permanent indiquant qu'un code de récupération a été utilisé, jusqu'à ce qu'il en prenne connaissance.",
         "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
         "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
         "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",

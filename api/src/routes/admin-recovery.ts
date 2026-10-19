@@ -24,13 +24,24 @@ export const ADMIN_RECOVERY_MAX_UNEXPIRED_PER_DEVICE = 3;
 /** How the operator checked the requester against the customer's registered contact on file. */
 export const IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
 
+/**
+ * Trimmed text whose length is counted in characters (code points), as Postgres char_length does in
+ * the migration 016 CHECKs; zod's own .min/.max count UTF-16 units, so a one-character emoji would
+ * pass .min(2) here and then fail the database check with a 500.
+ */
+const chars = (min: number, max: number) =>
+  z
+    .string()
+    .trim()
+    .refine((s) => [...s].length >= min && [...s].length <= max, { message: `must be ${min} to ${max} characters` });
+
 const IssueBody = z
   .object({
     /** Name and role of the person at the customer who asked for the code. */
-    requested_by: z.string().trim().min(2).max(120),
+    requested_by: chars(2, 120),
     identity_check: z.enum(IDENTITY_CHECKS),
     /** Required with identity_check "other", optional otherwise. */
-    identity_check_note: z.string().trim().min(5).max(200).optional(),
+    identity_check_note: chars(5, 200).optional(),
   })
   .strict()
   .refine((b) => b.identity_check !== "other" || b.identity_check_note !== undefined, {

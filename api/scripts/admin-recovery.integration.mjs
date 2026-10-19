@@ -78,6 +78,9 @@ try {
     [{}, "no requester"],
     [{ identity_check: "in_person" }, "requested_by missing"],
     [{ requested_by: "K", identity_check: "in_person" }, "requested_by too short"],
+    // One character in two UTF-16 units: counted as the database counts it (400, never a 500).
+    [{ requested_by: "😀", identity_check: "in_person" }, "requested_by one emoji character"],
+    [{ requested_by: "Karim B.", identity_check: "other", identity_check_note: "😀😀" }, "note of two emoji characters"],
     [{ requested_by: "x".repeat(121), identity_check: "in_person" }, "requested_by too long"],
     [{ requested_by: "Karim B.", identity_check: "trust_me" }, "unknown identity check"],
     [{ requested_by: "Karim B." }, "identity_check missing"],

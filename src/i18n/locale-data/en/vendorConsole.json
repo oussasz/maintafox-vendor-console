@@ -474,7 +474,7 @@
         "body": "Creates one new administrator account on {{fingerprint}} (valid 24 h, single use). Use it when the site can no longer administer this PC, for example when its only administrator forgot their password. The code is signed by Maintafox and works only on this PC:",
         "confirm": "Issue the code",
         "pointOnce": "It creates an EXTRA administrator: it does not reset or unlock an existing account. The customer disables the old account afterwards.",
-        "pointNotice": "Every active administrator of the PC is told that a recovery code was used.",
+        "pointNotice": "Every active administrator of the PC sees a persistent notice that a recovery code was used, until they acknowledge it.",
         "pointExpiry": "It is valid for 24 hours and can be used only once.",
         "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
         "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
