@@ -279,7 +279,7 @@
       "auditReason": "Motif d’audit (conservé dans le journal d’audit)",
       "tenantOverride": "Dérogation du tenant ({{slug}})",
       "minVersion": "Version minimale de l’application",
-      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0. Laisser vide pour retirer le plancher.",
+      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0.",
       "mode": "Mode",
       "modes": {
         "inherit": "Hériter de la politique de la cohorte",

@@ -279,7 +279,7 @@
       "auditReason": "Audit reason (kept in the audit log)",
       "tenantOverride": "Tenant override ({{slug}})",
       "minVersion": "Minimum app version",
-      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0. Leave empty to clear the floor.",
+      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0.",
       "mode": "Mode",
       "modes": {
         "inherit": "Inherit the cohort policy",
