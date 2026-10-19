@@ -34,7 +34,7 @@ const OPEN_TICKET_STATES_SQL = OPEN_TICKET_STATES.map((s) => `'${s}'`).join(", "
 
 const DAY_MS = 86_400_000;
 
-type TenantRow = { id: string; slug: string; display_name: string; edition: string; created_at: string; suspended_at: string | null };
+type TenantRow = { id: string; slug: string; display_name: string; edition: string; created_at: string; suspended_at: string | null; is_active: number };
 type LicenceRow = { id: string; tenant_id: string; max_machines: number; expires_at: string | null; revoked_at: string | null };
 type DeviceRow = { tenant_id: string; machine_fingerprint: string; machine_label: string | null; app_version: string | null; last_seen_at: string };
 type Attention = {
@@ -50,8 +50,16 @@ export type CustomerStatus = "active" | "expires_soon" | "expired" | "not_activa
 const iso = (v: Date | string | null): string | null => (v === null ? null : new Date(v).toISOString());
 
 /** The customer's standing, from their licences and devices (most urgent first). */
+/**
+ * Suspension is soft (is_active = 0, devices refused, data kept; deletion is a hard DELETE), so an inactive
+ * tenant is a suspended one. Older rows may be inactive with suspended_at NULL; they count as suspended too.
+ */
+export function isSuspended(t: { is_active: number; suspended_at: string | null }): boolean {
+  return t.is_active !== 1 || t.suspended_at !== null;
+}
+
 function customerStatus(tenant: TenantRow, live: LicenceRow[], valid: LicenceRow[], devicesUsed: number, licenceUntil: string | null, nowMs: number): CustomerStatus {
-  if (tenant.suspended_at) return "suspended";
+  if (isSuspended(tenant)) return "suspended";
   if (live.length === 0) return "no_licence";
   if (valid.length === 0) return "expired";
   if (devicesUsed === 0) return "not_activated";
@@ -101,7 +109,7 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
   app.get("/api/v1/console/overview", authMiddleware, async (_req, res) => {
     const nowMs = Date.now();
     const [tenants, licences, devices, editions, tickets, snap, backups] = await Promise.all([
-      db.all<TenantRow>("SELECT id, slug, display_name, edition, created_at, suspended_at FROM tenants WHERE is_active = 1 ORDER BY display_name"),
+      db.all<TenantRow>("SELECT id, slug, display_name, edition, created_at, suspended_at, is_active FROM tenants ORDER BY display_name"),
       db.all<LicenceRow>("SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys"),
       db.all<DeviceRow>(
         "SELECT tenant_id, machine_fingerprint, machine_label, app_version, last_seen_at FROM machine_activations WHERE revoked_at IS NULL",
@@ -118,7 +126,10 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       loadBackupStatus(db),
     ]);
     const editionLabel = new Map(editions.map((e) => [e.id, e.label]));
+    // Every customer is listed (suspended ones included, so an operator can find and resume them), but
+    // licence / device / health work items only concern customers that are live.
     const tenantById = new Map(tenants.map((t) => [t.id, t]));
+    const liveTenantById = new Map(tenants.filter((t) => !isSuspended(t)).map((t) => [t.id, t]));
     const labelOf = new Map(devices.map((d) => [`${d.tenant_id}::${d.machine_fingerprint}`, d.machine_label]));
     const isValid = (l: LicenceRow) => l.revoked_at === null && (l.expires_at === null || Date.parse(l.expires_at) > nowMs);
 
@@ -146,20 +157,20 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       };
     });
 
-    const validLicences = licences.filter((l) => tenantById.has(l.tenant_id) && isValid(l));
+    const validLicences = licences.filter((l) => liveTenantById.has(l.tenant_id) && isValid(l));
     const expiring = validLicences
       .filter((l) => l.expires_at !== null && Date.parse(l.expires_at) - nowMs <= LICENCE_EXPIRING_DAYS * DAY_MS)
       .sort((a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!));
     const recentlyExpired = licences.filter((l) => {
-      const t = tenantById.get(l.tenant_id);
-      if (!t || t.suspended_at || l.revoked_at !== null || l.expires_at === null) return false;
+      const t = liveTenantById.get(l.tenant_id);
+      if (!t || l.revoked_at !== null || l.expires_at === null) return false;
       const endedMs = Date.parse(l.expires_at);
       // Listed only while the customer has no other valid licence.
       return endedMs <= nowMs && nowMs - endedMs <= LICENCE_RECENTLY_EXPIRED_DAYS * DAY_MS && !validLicences.some((v) => v.tenant_id === l.tenant_id);
     });
-    const tenantDevices = snap.devices.filter((d) => tenantById.has(d.tenant_id));
+    const tenantDevices = snap.devices.filter((d) => liveTenantById.has(d.tenant_id));
     const behind = notSyncing(snap, nowMs)
-      .filter((d) => tenantById.has(d.tenant_id))
+      .filter((d) => liveTenantById.has(d.tenant_id))
       .sort((a, b) => deviceLastSyncMs(a) - deviceLastSyncMs(b));
     const backup = backupFacts(backups, nowMs);
 
@@ -175,7 +186,7 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       attention.push({ kind: "restore_test_overdue", severity: "warn", tenant_id: null, tenant_name: null, facts: { last_at: backup.last_restore_test_at } });
     }
     for (const l of recentlyExpired) {
-      const t = tenantById.get(l.tenant_id)!;
+      const t = liveTenantById.get(l.tenant_id)!;
       attention.push({
         kind: "licence_expired",
         severity: "critical",
@@ -185,7 +196,7 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       });
     }
     for (const l of expiring) {
-      const t = tenantById.get(l.tenant_id)!;
+      const t = liveTenantById.get(l.tenant_id)!;
       attention.push({
         kind: "licence_expiring",
         severity: "warn",
@@ -201,7 +212,7 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       });
     }
     for (const d of behind) {
-      const t = tenantById.get(d.tenant_id)!;
+      const t = liveTenantById.get(d.tenant_id)!;
       const last = deviceLastSyncMs(d);
       attention.push({
         kind: d.last_exchange_rfc3339 === null && d.protocol === "never_synced" ? "device_never_synced" : "device_not_syncing",
@@ -226,15 +237,16 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
       });
     }
 
+    const live = customers.filter((c) => c.status !== "suspended");
     res.json({
       generated_at: new Date(nowMs).toISOString(),
       thresholds: { licence_expiring_days: LICENCE_EXPIRING_DAYS, device_not_syncing_hours: DEVICE_NOT_SYNCING_HOURS },
       figures: {
         customers_total: tenants.length,
-        customers_active: tenants.filter((t) => !t.suspended_at).length,
-        devices_in_use: customers.reduce((s, c) => s + c.devices_used, 0),
-        seats_total: customers.reduce((s, c) => s + c.seats, 0),
-        seats_free: customers.reduce((s, c) => s + Math.max(0, c.seats - c.devices_used), 0),
+        customers_active: tenants.filter((t) => !isSuspended(t)).length,
+        devices_in_use: live.reduce((s, c) => s + c.devices_used, 0),
+        seats_total: live.reduce((s, c) => s + c.seats, 0),
+        seats_free: live.reduce((s, c) => s + Math.max(0, c.seats - c.devices_used), 0),
         licences_expiring: expiring.length,
         open_tickets: tickets.length,
       },

@@ -17,6 +17,10 @@ Every button of the console now calls an audited API endpoint. Code: `api/src/ro
 | Rollouts → Pause / Resume | `POST /rollouts/:channel/:cohort/pause`, `/resume` | `rollout_publish` | `rollout_governance` in its policy (claim / policy refresh) |
 | Rollouts → Recall | `POST /rollouts/:channel/:cohort/recall` `{recalled_version}` | `forced_rollback` | `rollout_governance: "recalled"`, `rollout_recalled_version` |
 
+A suspended customer stays in the Customers list and the Overview (status "Suspended"; counted in the
+total but not as active, and its licences and devices are not "needs attention" items), so an operator can
+find it and lift the suspension.
+
 Every action needs a reason (`X-Operator-Reason`, kept in the audit ledger); dangerous ones also
 need a fresh authenticator code for their kind (`deploy/VENDOR_AUTH.md`).
 
