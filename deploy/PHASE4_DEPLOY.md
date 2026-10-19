@@ -5,6 +5,9 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 `CI.md` "Contracts shared with the desktop" (4.6), `CONSOLE_LANGUAGES.md` and `AUDIT_LEDGER.md` (4.7),
 `CONSOLE_REDESIGN.md` (new console layout).
 
+> **NEW MIGRATION `016_admin_recovery_codes`** (administrator recovery codes, new table only): see
+> `CONSOLE_ACTIONS.md` "Administrator recovery code". Rollback adds version 16 to the list below.
+
 ## Before
 
 - CI green on the commit being deployed (all jobs, including `e2e`; the `Secret scan` job also
@@ -15,7 +18,7 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 ## Deploy
 
 1. **Migrations** run automatically at API start, in order: `011_vendor_auth`, `012_console_actions`,
-   `013_vendor_operators`, `014_billing_reconciliation`, `015_sync_resync_requests`. All additive
+   `013_vendor_operators`, `014_billing_reconciliation`, `015_sync_resync_requests`, `016_admin_recovery_codes`. All additive
    (new columns and tables; every existing operator becomes owner).
 2. **Settings:** none new. `docker-compose.yml` now also passes `BACKUP_LOCAL_RETENTION_DAYS` (already
    in `.env` for the backup service) to the API, for the System health page. TOTP secrets are sealed with a subkey of `SYNC_PAYLOAD_ENCRYPTION_KEY`
@@ -42,7 +45,7 @@ previous images, un-record the Phase 4 migrations (their columns and tables can 
 API ignores them):
 
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15)"
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DELETE FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16)"
 ```
 
 Then start the previous `api` and `vendor-console` images. Consequences: operators sign in with the

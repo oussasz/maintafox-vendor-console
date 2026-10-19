@@ -116,3 +116,67 @@ Rows with mode `required` are the urgent ones: after the deploy they block every
 or cohort until the floor is corrected. A policy rollback restores the previous floor from
 `tenant_update_policy_history` / `cohort_update_policy_history` without re-validating it; run the
 same check on `previous_force_min_app_version` there if you plan to roll back.
+
+## Administrator recovery code (decision register 2026-10-19, "No active administrator left on a PC")
+
+> **NEW MIGRATION: `016_admin_recovery_codes.sql`** (new table `admin_recovery_codes`, tenant RLS;
+> no existing table changes). It runs automatically at API start.
+
+**What it is.** A one-time code, signed by Maintafox, bound to one PC activation (tenant, machine
+fingerprint, licence). On that PC, and only while the PC has **no active administrator**, it
+reopens "create an administrator" **once**. It is valid for **24 hours** and works **once**; the
+new administrator then fixes the other accounts.
+
+**When to use it.** The customer's site has lost every administrator on a PC (accounts deleted,
+disabled or locked out, nobody knows a password) and the PC cannot be managed any more. Not for a
+forgotten password of one user while an administrator still exists: that administrator resets it.
+
+**How.** Customer → Devices → the PC's "⋯" menu → "Administrator recovery code" → reason (ledger)
+→ authenticator code (step-up kind `admin_recovery_code`). The code is shown **once** with a copy
+button and its expiry; send it to the site by email or chat. Maintafox does not keep the code (not
+in the database, the ledger, or the idempotency store); if it is lost, issue a new one. The dialog
+says when codes sent earlier for that PC are still valid.
+
+**Server (control API).**
+- `POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/admin-recovery-code`, permission
+  `entitlement.manage`, `X-Operator-Reason` + `X-Step-Up-Token` of kind `admin_recovery_code`
+  (console-only kind: `rust_variant` null in `shared/step-up-actions.v1.json`). Returns `201` with
+  `code`, `code_id`, `issued_at`, `expires_at`, `key_id`, `audit_record_id` (`Cache-Control: no-store`).
+- Refusals: `404 tenant_not_found | activation_not_found`; `409 tenant_suspended |
+  activation_revoked | license_revoked | license_expired | admin_recovery_code_limit` (at most **3
+  unexpired codes per PC**; re-issuing is allowed below that, earlier codes stay valid until they
+  expire or are used); `403 privileged_action_guard_failed` (no reason, no / wrong step-up),
+  `403 permission_denied`.
+- Ledger: `admin_recovery_code_issued`, category `entitlement`, entity refs tenant / licence /
+  machine, payload `code_id`, `license_id`, `machine_fingerprint`, `key_id`, `issued_at`,
+  `expires_at` — never the code or its signature.
+- `GET /api/v1/tenants/:tenantId/admin-recovery-codes[?machine_fingerprint=…]` (`console.view`):
+  issued codes (who, why, when, until when, `expired`), never the codes.
+
+**Format** (agreed with the desktop licensing verifier; implementation
+`api/src/admin-recovery-signer.ts`, test vector `api/testdata/admin-recovery-vector.json`, regenerate
+with `node api/scripts/admin-recovery-vector.mjs` after `pnpm --filter maintafox-control-api build`):
+
+```
+MFXREC1.<payload, base64url without padding>.<Ed25519 signature, 128 lowercase hex chars>
+payload = {"v":1,"purpose":"admin_recovery","code_id":"<uuid v4>","tenant_id":"…",
+           "machine_fingerprint":"<as stored>","license_id":"…","issuer":"maintafox-vps",
+           "key_id":"<entitlement signing key id>","signature_alg":"ed25519:admin-recovery:v1",
+           "issued_at":"<toISOString()>","expires_at":"<issued_at + 24 h>"}   (exactly this key order)
+signature = Ed25519("maintafox-admin-recovery:v1\n" + payload) with the entitlement signing key
+```
+
+**What the desktop checks** (refuses otherwise): prefix; base64url; JSON shape and key order
+(re-serialised, bytes compared); `v`, `purpose`, `signature_alg`; `issuer`; `key_id` pinned and not
+compromised; the signature; `tenant_id`, `machine_fingerprint`, `license_id` equal to its stored
+activation claim; now < `expires_at`; `issued_at` not more than 5 minutes in the future; `code_id`
+not used before (single use is enforced on the PC; no consumption report to the server in v1);
+the PC has no active administrator.
+
+**Key rotation.** Codes are signed with the current entitlement signing key: after a rotation, codes
+issued with the old key stop working on desktops that no longer pin it (issue a new one).
+
+**Rollback.** Un-record version 16 in `schema_migrations` before starting the previous images (same
+statement as in `PHASE4_DEPLOY.md`, with 16); the previous API ignores the table. Re-deploying later:
+drop the table `admin_recovery_codes` first. Codes already sent stay valid on the desktops until they
+expire (they are verified offline).
