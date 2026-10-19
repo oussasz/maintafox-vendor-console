@@ -7,8 +7,8 @@
  * The console only hides what an operator cannot use; it never decides access.
  *
  * The first seven permission names are the desktop's console RBAC constants
- * (src-tauri/src/rbac, vendor_admin_console.rs); support.manage and operator.manage are
- * console-only.
+ * (src-tauri/src/rbac, vendor_admin_console.rs); support.manage, operator.manage and
+ * billing.price_manage are console-only.
  */
 export const PERMISSIONS = [
   "console.view",
@@ -20,6 +20,7 @@ export const PERMISSIONS = [
   "audit.view",
   "support.manage",
   "operator.manage",
+  "billing.price_manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -28,7 +29,7 @@ export type Role = (typeof ROLES)[number];
 
 /** Least privilege: each role gets only what its job needs. */
 export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
-  /** Everything, including managing operators. */
+  /** Everything, including managing operators and the price list. */
   owner: PERMISSIONS,
   /** Runs customers, licences, machines, rollouts and support; cannot manage operators. */
   operations: [
@@ -138,6 +139,10 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "GET /api/v1/billing/tenants/:tenantId/subscription": "customer.manage",
   "GET /api/v1/billing/payments": "customer.manage",
   "POST /api/v1/billing/payments/:orderId/reconcile": "customer.manage",
+  "GET /api/v1/billing/status": "customer.manage",
+  "GET /api/v1/billing/prices": "customer.manage",
+  "PUT /api/v1/billing/prices/:plan": "billing.price_manage",
+  "POST /api/v1/billing/payment-links": "customer.manage",
 
   // Operators
   "GET /api/v1/operators": "operator.manage",

@@ -1007,7 +1007,7 @@
   },
   "billing": {
     "title": "Facturation et abonnement",
-    "body": "Durée de licence, emplacements, et chaque paiement tel qu'enregistré. « Vérifier auprès de SlickPay » demande le vrai statut à SlickPay : un paiement n'est appliqué que si SlickPay le dit payé ; rien ici ne marque un paiement comme payé à la main.",
+    "body": "Durée de licence, emplacements, chaque paiement tel qu'enregistré, et la grille tarifaire. Un paiement n'est appliqué que si SlickPay lui-même le dit payé (notification, retour du client, revérification automatique ou « Vérifier auprès de SlickPay ») ; rien ici ne marque un paiement comme payé à la main.",
     "customer": "Client",
     "loading": "Chargement…",
     "noLicence": "Aucune licence pour ce client.",
@@ -1017,9 +1017,9 @@
     "extraSlots_one": "+{{count}} emplacement",
     "extraSlots_other": "+{{count}} emplacements",
     "lastChecked": "SlickPay a répondu « {{status}} » ({{at}})",
-    "slickpayOff": "SlickPay n'est pas configuré sur le serveur : liens de paiement et vérifications indisponibles (deploy/BILLING.md).",
-    "openOrders_one": "{{count}} paiement n'est pas soldé : vérifiez-le auprès de SlickPay si le client dit avoir payé.",
-    "openOrders_other": "{{count}} paiements ne sont pas soldés : vérifiez-les auprès de SlickPay si le client dit avoir payé.",
+    "slickpayOff": "Le paiement en ligne est désactivé sur le serveur (SLICKPAY_MODE=disabled) : pas de lien de paiement, pas de vérification auprès de SlickPay (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} paiement est en attente. Il est revérifié automatiquement auprès de SlickPay ; vérifiez-le maintenant si le client dit avoir payé.",
+    "openOrders_other": "{{count}} paiements sont en attente. Ils sont revérifiés automatiquement auprès de SlickPay ; vérifiez-les maintenant si le client dit avoir payé.",
     "manualExtension": "Prolonger ou ajouter des emplacements à la main (Droits)",
     "col": {
       "created": "Créé",
@@ -1033,7 +1033,9 @@
       "pending": "En attente",
       "awaiting_payment": "Paiement attendu",
       "paid": "Payé",
-      "failed": "Échoué"
+      "failed": "Échoué",
+      "expired": "Expiré (non payé)",
+      "needs_review": "À examiner"
     },
     "licence": {
       "until": "Valable jusqu'au {{date}}",
@@ -1049,27 +1051,88 @@
     "reconcile": {
       "button": "Vérifier auprès de SlickPay",
       "title": "Vérifier ce paiement auprès de SlickPay ?",
-      "body": "Le serveur demande à SlickPay le statut de la facture {{invoice}}. Si SlickPay la dit payée et qu'elle n'a pas été appliquée (notification perdue), la licence est renouvelée maintenant, comme pour un paiement normal. Rien d'autre ne change.",
+      "body": "Le serveur demande à SlickPay le statut de la facture {{invoice}}. Si SlickPay la dit payée et qu'elle n'a pas été appliquée, elle l'est maintenant, comme pour un paiement normal. Une commande payée n'est jamais annulée.",
       "confirm": "Vérifier",
       "outcome": {
         "applied": "SlickPay dit payé : le paiement est maintenant appliqué et la licence renouvelée.",
         "unchanged": "SlickPay répond « {{slickpay}} » : rien à changer.",
         "already_paid": "Déjà appliqué : rien à changer.",
-        "license_revoked": "SlickPay dit payé, mais la licence est révoquée : paiement non appliqué (commande marquée échouée).",
-        "issue_failed": "SlickPay dit payé, mais la licence n'a pas pu être renouvelée : voir le journal d'audit.",
-        "mismatch_paid_here_not_at_slickpay": "Enregistré comme payé ici, mais SlickPay répond maintenant « {{slickpay}} ». Rien n'a été annulé : vérifiez auprès de SlickPay et du client."
+        "expired": "Toujours impayée et plus ancienne que le délai d'expiration : la commande est maintenant expirée (un paiement tardif sera quand même appliqué).",
+        "amount_mismatch": "SlickPay dit payé, mais avec un autre montant : non appliqué (à examiner).",
+        "needs_review": "SlickPay dit payé, mais le paiement ne peut pas être appliqué automatiquement : voir la raison sur la commande.",
+        "status_unrecognised": "La réponse de SlickPay n'a pas de statut de paiement reconnaissable : rien n'est appliqué.",
+        "mismatch_paid_here_not_at_slickpay": "Enregistré comme payé ici, mais SlickPay répond maintenant « {{slickpay}} » (remboursement ?). Rien n'a été annulé : vérifiez auprès de SlickPay et du client."
       }
     },
     "link": {
       "button": "Créer un lien de paiement",
       "title": "Créer un lien de paiement SlickPay",
-      "body": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an et les emplacements supplémentaires ajoutés. Prix d'un emplacement supplémentaire : {{price}}.",
-      "bodyNoSlotPrice": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an. Les emplacements supplémentaires nécessitent SLICKPAY_EXTRA_SLOT_PRICE sur le serveur.",
-      "plan": "Nom de l'offre",
-      "amount": "Montant (DZD, hors emplacements supplémentaires)",
-      "extraSlots": "Emplacements supplémentaires",
+      "body": "Le serveur calcule le prix à partir de la grille tarifaire et SlickPay crée la facture ; envoyez le lien au client. Au paiement, la licence est renouvelée pour la durée de l'offre et les postes fixés à ce qui a été payé.",
+      "noPrices": "Aucune offre n'a de prix : renseignez d'abord la grille tarifaire (page Facturation).",
+      "plan": "Offre",
+      "extraSlots": "Postes supplémentaires",
+      "firstname": "Contact client - prénom",
+      "lastname": "Contact client - nom",
+      "email": "Contact client - e-mail (reçoit la confirmation)",
+      "phone": "Contact client - téléphone",
+      "total": "Total : {{amount}} {{currency}} pour {{months}} mois",
       "confirm": "Créer le lien",
       "created": "Lien de paiement créé ({{amount}} {{currency}}) : envoyez-le au client."
+    },
+    "emailOff": "L'e-mail est désactivé sur le serveur (EMAIL_DELIVERY_MODE=disabled) : après un paiement en ligne, le client ne reçoit PAS sa clé de licence par e-mail. Envoyez-la vous-même (page Droits) pour chaque commande marquée « e-mail de licence non envoyé ».",
+    "ignoredSettings": "Ces paramètres du .env du serveur ne sont plus utilisés et peuvent être supprimés : {{names}}.",
+    "reconcilerFailed": "La revérification automatique des commandes impayées a échoué lors de son dernier passage ({{at}}) : voir les journaux de l'API (slickpay_reconcile_failed).",
+    "paidAmount": "carte : {{amount}} {{currency}}",
+    "lastCheckError": "SlickPay n'a pas pu être lu lors de la dernière vérification ({{error}}) ; nouvel essai prévu.",
+    "never": "jamais",
+    "setup": "Notification SlickPay : {{webhook}} - page de retour client : {{returnUrl}} - commandes impayées revérifiées à partir de toutes les {{interval}} min, expirées après {{expiry}} h - dernière vérification automatique : {{lastRun}}.",
+    "delivery": {
+      "pending": "e-mail de licence en cours d'envoi",
+      "sent": "e-mail de licence envoyé",
+      "failed": "e-mail de licence ÉCHOUÉ : envoyez la clé vous-même",
+      "disabled": "e-mail de licence non envoyé : envoyez la clé vous-même"
+    },
+    "reason": {
+      "amount_mismatch": "SlickPay indique un autre montant que celui de la commande : non appliqué. Comparez avec le tableau de bord SlickPay, puis prolongez à la main ou remboursez.",
+      "tenant_inactive": "Payé, mais le client est suspendu : réactivez le client, puis « Vérifier auprès de SlickPay ».",
+      "tenant_not_found": "Payé, mais le client n'existe plus : à traiter à la main (remboursement ou recréation).",
+      "license_revoked": "Payé, mais la licence du client est révoquée : décidez, puis prolongez à la main ou remboursez.",
+      "legacy_order_without_price_snapshot": "Commande payée antérieure à la grille tarifaire : l'achat n'est pas enregistré précisément ; prolongez à la main.",
+      "new_customer_without_company": "Payé, mais sans nom d'entreprise pour créer le client : créez-le à la main.",
+      "plan_edition_missing": "Payé pour une offre qui n'est plus une édition : à traiter à la main.",
+      "slickpay_status_unrecognised": "La réponse de SlickPay n'avait aucun statut de paiement reconnaissable jusqu'à l'expiration : vérifiez le tableau de bord SlickPay.",
+      "invoice_never_created": "La facture SlickPay n'a jamais été créée (rien n'a pu être payé).",
+      "order_vanished": "La commande a disparu pendant son traitement : voir le journal d'audit."
+    },
+    "review": {
+      "title_one": "{{count}} paiement demande une intervention",
+      "title_other": "{{count}} paiements demandent une intervention",
+      "body": "SlickPay les dit payés (ou ne peut pas le dire), mais ils n'ont pas été appliqués automatiquement. La raison est indiquée sur chacun ; rien n'est perdu."
+    },
+    "prices": {
+      "title": "Grille tarifaire (paiement en ligne)",
+      "body": "Les seuls prix utilisés par le paiement en ligne : le site affiche les offres vendues sur le site et le serveur les facture. Une offre tarifée mais non vendue sur le site reste utilisable pour les liens de paiement de cette console (prix négocié, petit prix de test réel…). Les modifications sont auditées et ne s'appliquent qu'aux nouvelles commandes.",
+      "none": "Aucun prix : le paiement en ligne refuse toute commande tant que vous n'en ajoutez pas.",
+      "add": "Ajouter le prix d'une offre",
+      "edit": "Modifier",
+      "plan": "Offre (identifiant d'édition, ex. core, professional)",
+      "base": "Prix de base (DZD)",
+      "included": "Postes inclus",
+      "extra": "Prix d'un poste supplémentaire (DZD)",
+      "extraValue": "{{amount}} {{currency}} (max {{max}})",
+      "maxExtra": "Postes supplémentaires maximum par commande",
+      "term": "Durée",
+      "termValue_one": "{{count}} mois",
+      "termValue_other": "{{count}} mois",
+      "termMonths": "Durée (mois)",
+      "state": "Sur le site",
+      "active": "oui",
+      "inactive": "non",
+      "activeLabel": "Vendu sur le site (décoché : liens de paiement de la console uniquement)",
+      "dialogTitle": "Fixer le prix d'une offre",
+      "dialogBody": "S'applique aux commandes créées à partir de maintenant ; les commandes existantes gardent leur prix.",
+      "save": "Enregistrer le prix",
+      "saved": "Prix de {{plan}} enregistré."
     }
   },
   "entitlements": {

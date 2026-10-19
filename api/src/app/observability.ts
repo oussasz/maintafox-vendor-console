@@ -52,7 +52,13 @@ export function observeActivationOutcome(
   incrementReasonBucket(observabilityWindow.activation_failures_by_reason, reason);
 }
 
-/** Outcome of the last sync retention run (hourly timer in index.ts), shown by the platform overview. */
+type WorkerRun = { at_rfc3339: string; ok: boolean; detail: Record<string, unknown> };
+
+/**
+ * Outcome of the last run of each background worker (timers in index.ts): sync retention (platform
+ * overview) and SlickPay reconciliation (console Billing page).
+ */
 export const workerState: {
-  last_sync_retention: { at_rfc3339: string; ok: boolean; detail: Record<string, unknown> } | null;
-} = { last_sync_retention: null };
+  last_sync_retention: WorkerRun | null;
+  last_slickpay_reconcile: WorkerRun | null;
+} = { last_sync_retention: null, last_slickpay_reconcile: null };

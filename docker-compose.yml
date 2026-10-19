@@ -154,13 +154,17 @@ services:
       S3_BUCKET: ${S3_BUCKET:-maintafox-tenant-media}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
       DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:-prod}
+      # SlickPay (deploy/BILLING.md): disabled | enabled. The other SLICKPAY_* are read only with enabled.
+      SLICKPAY_MODE: ${SLICKPAY_MODE:?set SLICKPAY_MODE in .env (disabled or enabled)}
       SLICKPAY_PUBLIC_KEY: ${SLICKPAY_PUBLIC_KEY:-}
-      SLICKPAY_SECRET_KEY: ${SLICKPAY_SECRET_KEY:-}
-      SLICKPAY_WEBHOOK_SECRET: ${SLICKPAY_WEBHOOK_SECRET:-}
-      SLICKPAY_API_BASE_URL: ${SLICKPAY_API_BASE_URL:-https://prodapi.slick-pay.com}
-      SLICKPAY_WEBHOOK_URL: ${SLICKPAY_WEBHOOK_URL:-https://api.maintafox.systems/api/v1/webhooks/slickpay}
-      SLICKPAY_DEFAULT_RETURN_URL: ${SLICKPAY_DEFAULT_RETURN_URL:-https://console.maintafox.systems/vendor-console/entitlements}
-      SLICKPAY_EXTRA_SLOT_PRICE: ${SLICKPAY_EXTRA_SLOT_PRICE:-0}
+      SLICKPAY_API_BASE_URL: ${SLICKPAY_API_BASE_URL:-}
+      SLICKPAY_WEBHOOK_URL: ${SLICKPAY_WEBHOOK_URL:-}
+      SLICKPAY_RETURN_URL: ${SLICKPAY_RETURN_URL:-}
+      SLICKPAY_HTTP_TIMEOUT_MS: ${SLICKPAY_HTTP_TIMEOUT_MS:-}
+      SLICKPAY_RECONCILE_INTERVAL_MINUTES: ${SLICKPAY_RECONCILE_INTERVAL_MINUTES:-}
+      SLICKPAY_ORDER_EXPIRY_HOURS: ${SLICKPAY_ORDER_EXPIRY_HOURS:-}
+      # Optional: shared with the website (CONTROL_PLANE_PROXY_TOKEN on Vercel); per-customer rate limits.
+      WEBSITE_PROXY_TOKEN: ${WEBSITE_PROXY_TOKEN:-}
     # Holds the legacy SQLite control-plane.db, read only by the one-shot Postgres import
     # (deploy/PHASE2_POSTGRES_CUTOVER.md). Keep it until the cutover is final.
     volumes:

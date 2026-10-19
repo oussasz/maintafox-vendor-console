@@ -18,6 +18,7 @@ import {
   DEFAULT_JSON_BODY_LIMIT,
   OPERATOR_ACCESS_LOG_RETENTION_DAYS,
   SEED_BEHAVIOR,
+  SLICKPAY_CONFIG,
   SYNC_EXCHANGE_BODY_LIMIT,
 } from "./app/config.js";
 import type { ApiContext } from "./app/context.js";
@@ -123,6 +124,8 @@ app.use(helmet({ contentSecurityPolicy: false }));
 // Sync batches carry up to SYNC_MAX_OUTBOX_BATCH rows; every other route keeps the small default.
 // body-parser skips already-parsed bodies, so the route-specific parser must be registered first.
 app.use("/api/v1/sync/exchange", express.json({ limit: SYNC_EXCHANGE_BODY_LIMIT }));
+// SlickPay's webhook may arrive form-encoded (its WHMCS module reads $_POST), so this route also parses that.
+app.use("/api/v1/webhooks/slickpay", express.urlencoded({ extended: true, limit: DEFAULT_JSON_BODY_LIMIT }));
 app.use(express.json({ limit: DEFAULT_JSON_BODY_LIMIT }));
 
 app.use(cors(corsOptionsDelegate));
@@ -167,7 +170,7 @@ registerEditionsRoutes(app, ctx);
 registerTenantsRoutes(app, ctx);
 registerReleasesRoutes(app, ctx);
 registerLicencesRoutes(app, ctx);
-registerBillingRoutes(app, ctx);
+const billingWorker = registerBillingRoutes(app, ctx);
 registerAuditRoutes(app, ctx);
 registerSupportRoutes(app, ctx);
 registerSyncRoutes(app, ctx);
@@ -209,6 +212,32 @@ const syncRetentionTimer = setInterval(() => {
     });
 }, syncConfig.retentionIntervalMinutes * 60_000);
 syncRetentionTimer.unref();
+
+/**
+ * SlickPay reconciliation: re-checks unpaid orders whose next check is due (each order backs off
+ * from SLICKPAY_RECONCILE_INTERVAL_MINUTES), so a payment whose webhook was lost is still fulfilled.
+ */
+if (SLICKPAY_CONFIG.mode === "enabled") {
+  let reconcileRunning = false;
+  const slickpayReconcileTimer = setInterval(() => {
+    if (reconcileRunning) return;
+    reconcileRunning = true;
+    runAsSystem(db, "slickpay-reconcile", () => billingWorker.reconcileDueOrders())
+      .then((counts) => {
+        workerState.last_slickpay_reconcile = { at_rfc3339: new Date().toISOString(), ok: true, detail: counts };
+        if (Object.keys(counts).length > 0) structuredLog("slickpay_reconcile_run", counts);
+      })
+      .catch((err) => {
+        const error = err instanceof Error ? err.message : String(err);
+        workerState.last_slickpay_reconcile = { at_rfc3339: new Date().toISOString(), ok: false, detail: { error } };
+        structuredLog("slickpay_reconcile_failed", { error });
+      })
+      .finally(() => {
+        reconcileRunning = false;
+      });
+  }, SLICKPAY_CONFIG.reconcileIntervalMinutes * 60_000);
+  slickpayReconcileTimer.unref();
+}
 
 getMediaStore();
 app.listen(port, "0.0.0.0", () => {

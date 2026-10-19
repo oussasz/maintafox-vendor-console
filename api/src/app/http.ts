@@ -7,7 +7,8 @@ import type express from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 
-import { CONSOLE_CORS_ORIGINS, DESKTOP_APP_ORIGINS, isDeviceRoute } from "./config.js";
+import { CONSOLE_CORS_ORIGINS, DESKTOP_APP_ORIGINS, isDeviceRoute, WEBSITE_PROXY_TOKEN } from "./config.js";
+import { safeEqualUtf8 } from "./runtime.js";
 
 /**
  * Admin/console routes: only CORS_ORIGIN (credentialed). Device routes additionally accept
@@ -86,10 +87,47 @@ export const activationRateLimiter = rateLimit({
   handler: rateLimitedResponse,
 });
 
-/** Public checkout creates tenants from unauthenticated input (per client IP). */
+/**
+ * Rate-limit key of a public payment call: the customer's IP forwarded by the website's server when
+ * it presents WEBSITE_PROXY_TOKEN (all website calls come from Vercel's shared addresses), otherwise
+ * the caller's own address.
+ */
+function publicClientKey(req: express.Request): string {
+  const token = req.header("X-Maintafox-Proxy-Token");
+  const forwarded = req.header("X-Maintafox-Client-Ip")?.trim();
+  if (WEBSITE_PROXY_TOKEN && token && forwarded && safeEqualUtf8(token, WEBSITE_PROXY_TOKEN)) {
+    return `client:${forwarded.slice(0, 64)}`;
+  }
+  return `ip:${req.ip ?? "unknown"}`;
+}
+
+/** Public checkout: each order creates a SlickPay invoice (per customer, see publicClientKey). */
 export const publicCheckoutRateLimiter = rateLimit({
   windowMs: 60 * 60_000,
   limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: publicClientKey,
+  handler: rateLimitedResponse,
+});
+
+/**
+ * Public price list and order status page (per client IP). The website's status page polls every
+ * few seconds while a payment is confirmed; this only stops a client hammering SlickPay through us.
+ */
+export const publicPaymentReadRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: publicClientKey,
+  handler: rateLimitedResponse,
+});
+
+/** SlickPay webhook (per client IP): each accepted call costs one status read at SlickPay. */
+export const paymentWebhookRateLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   handler: rateLimitedResponse,
