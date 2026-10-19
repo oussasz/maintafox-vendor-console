@@ -91,6 +91,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/release": "entitlement.manage",
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/rebind": "entitlement.manage",
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/policy-refresh": "entitlement.manage",
+  "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/admin-recovery-code": "entitlement.manage",
+  "GET /api/v1/tenants/:tenantId/admin-recovery-codes": "console.view",
   "GET /api/v1/tenants/:tenantId/offline-policy": "console.view",
   "PUT /api/v1/tenants/:tenantId/offline-policy": "entitlement.manage",
 
