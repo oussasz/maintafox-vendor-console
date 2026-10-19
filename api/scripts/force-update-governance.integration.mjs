@@ -141,6 +141,51 @@ async function run() {
       assert.equal(await previewRequired(bogus), true, `preview: invalid version ${JSON.stringify(bogus)} is blocked`);
     }
 
+    // Policy refresh (review R4-S2): the desktop reports its running version in the body, so an
+    // up-to-date PC is no longer held behind the "required" floor until the operator turns it off.
+    let deviceToken = lowVersionClaim.activation_token;
+    assert.ok(deviceToken, "claim must return a device token");
+    async function policyRefresh(body) {
+      const res = await fetch(`${baseUrl}/api/v1/activation/policy-refresh`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${deviceToken}`, "Content-Type": "application/json" },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (res.status === 200) deviceToken = json.activation_token;
+      return { status: res.status, json };
+    }
+    async function refreshRequired(body) {
+      const { status, json } = await policyRefresh(body);
+      assert.equal(status, 200, `policy-refresh with ${JSON.stringify(body)} must succeed`);
+      assert.equal(json.force_update_mode, "required");
+      assert.equal(json.force_min_app_version, "2.0.0");
+      return json.force_update_required;
+    }
+    assert.equal(await refreshRequired("{}"), true, "policy-refresh: old desktop body {} keeps today's answer (blocked)");
+    assert.equal(await refreshRequired({ app_version: "2.0.0" }), false, "policy-refresh: version == floor is not blocked");
+    assert.equal(await refreshRequired({ app_version: "2.3.1" }), false, "policy-refresh: up-to-date PC is not blocked");
+    assert.equal(await refreshRequired({ app_version: "1.9.9" }), true, "policy-refresh: old PC is blocked");
+    assert.equal(await refreshRequired({ app_version: "2.0.0-dev" }), true, "policy-refresh: pre-release of the floor is blocked");
+    for (const bogus of ["", "abc", "1.2", "99", "2.0.0garbage", "v9.0.0", " 9.0.0"]) {
+      assert.equal(
+        await refreshRequired({ app_version: bogus }),
+        true,
+        `policy-refresh: invalid version ${JSON.stringify(bogus)} behaves like a missing one`,
+      );
+    }
+    assert.equal(
+      await refreshRequired({ app_version: "2.3.1", future_field: { anything: true } }),
+      false,
+      "policy-refresh: an unknown extra field from a newer desktop is ignored",
+    );
+    for (const badType of [{ app_version: 200 }, { app_version: null }, { app_version: ["2.3.1"] }, { app_version: "9".repeat(33) }]) {
+      const { status, json } = await policyRefresh(badType);
+      assert.equal(status, 400, `policy-refresh: ${JSON.stringify(badType).slice(0, 40)} must be rejected`);
+      assert.equal(json.error, "invalid_body");
+      assert.ok(json.details, "invalid_body carries zod details like the claim route");
+    }
+
     const tenantEmergencyRes = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}/update-policy`, {
       method: "PUT",
       headers: privilegedHeaders,
@@ -165,6 +210,13 @@ async function run() {
     assert.equal(emergencyClaim.force_update_required, true, "emergency mode must force update regardless of version");
     assert.equal(emergencyClaim.force_update_mode, "emergency");
     assert.equal(emergencyClaim.force_update_policy_source, "tenant");
+
+    for (const body of ["{}", { app_version: "9.9.9" }, { app_version: "abc" }]) {
+      const { status, json } = await policyRefresh(body);
+      assert.equal(status, 200);
+      assert.equal(json.force_update_mode, "emergency");
+      assert.equal(json.force_update_required, true, `policy-refresh: emergency blocks ${JSON.stringify(body)}`);
+    }
 
     const rollbackRes = await fetch(`${baseUrl}/api/v1/tenants/${tenant.id}/update-policy/rollback`, {
       method: "POST",
