@@ -67,7 +67,9 @@ fi
 log "Verification"
 systemctl is-active docker fail2ban ufw
 curl -sf https://api.maintafox.systems/health >/dev/null
-curl -sI http://api.maintafox.systems/health | grep -qi 'location: https://'
+# Headers first, then search: with pipefail, `curl | grep -q` can fail when grep stops early (SIGPIPE).
+http_headers=$(curl -sI http://api.maintafox.systems/health)
+grep -qi 'location: https://' <<< "$http_headers"
 if [[ -d "${COMPOSE_DIR}" ]]; then
   docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps
 fi
