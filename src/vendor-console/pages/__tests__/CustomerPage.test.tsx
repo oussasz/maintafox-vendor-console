@@ -92,6 +92,17 @@ describe("CustomerPage", () => {
     );
   });
 
+  it("an older inactive customer without a suspension date offers to lift the suspension", async () => {
+    vi.mocked(listTenants).mockResolvedValue([{ ...tenant, is_active: 0, suspended_at: null } as ControlTenant]);
+    vi.mocked(getConsoleOverview).mockResolvedValue({
+      customers: [{ ...overview.customers[0], status: "suspended" }],
+    } as unknown as ConsoleOverview);
+    renderAt("/vendor-console/customers/tenant_1");
+    const sensitive = (await screen.findByRole("heading", { name: "Sensitive actions" })).closest("section") as HTMLElement;
+    expect(within(sensitive).getByRole("button", { name: "Lift suspension" })).toBeInTheDocument();
+    expect(within(sensitive).queryByRole("button", { name: "Suspend customer" })).not.toBeInTheDocument();
+  });
+
   it("the History tab shows the audit log of this customer only", async () => {
     renderAt("/vendor-console/customers/tenant_1?tab=history");
     await waitFor(() => expect(listAuditLedger).toHaveBeenCalledWith(expect.objectContaining({ q: "tenant_1" })));

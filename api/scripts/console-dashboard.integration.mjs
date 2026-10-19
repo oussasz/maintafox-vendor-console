@@ -14,7 +14,9 @@ const DAY = 86_400_000;
 const inDays = (n) => new Date(Date.now() + n * DAY).toISOString();
 
 try {
-  const token = (await loginOperator(api.baseUrl, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)).accessToken;
+  const session = await loginOperator(api.baseUrl, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD);
+  const token = session.accessToken;
+  const privileged = async (kind, reason) => ({ "X-Operator-Reason": reason, "X-Step-Up-Token": await session.stepUp(kind) });
   const get = async (path) => {
     const r = await api.call("GET", path, token);
     assert.equal(r.status, 200, `${path}: ${r.text}`);
@@ -102,11 +104,39 @@ try {
   assert.equal(overview.health.devices_syncing, 1);
   assert.equal(overview.health.status, "attention");
 
-  // A suspended customer no longer counts as active.
-  await api.su("UPDATE tenants SET suspended_at = now()::text WHERE id = $1", [gamma.id]);
+  // A suspended customer stays in the list (so it can be found and resumed), marked suspended; it counts
+  // in the total but not as active, and its licences / devices stop being work items.
+  const suspend = (tenant, reason) =>
+    privileged("entitlement_suspension", reason).then((h) => api.call("POST", `/api/v1/tenants/${tenant.id}/suspend`, token, { reason }, h));
+  const resume = (tenant, reason) =>
+    privileged("tenant_restore", reason).then((h) => api.call("POST", `/api/v1/tenants/${tenant.id}/resume`, token, { reason }, h));
+  const before = overview.figures;
+  assert.equal((await suspend(gamma, "unpaid invoice")).status, 200);
   overview = await get("/api/v1/console/overview");
+  assert.equal(overview.figures.customers_total, 3, "a suspended customer is still a customer");
   assert.equal(overview.figures.customers_active, 2);
+  assert.equal(overview.customers.length, 3);
   assert.equal(overview.customers.find((c) => c.name === "Gamma").status, "suspended");
+  assert.equal(overview.figures.seats_total, before.seats_total - 10, "suspended seats are not counted");
+
+  // Older rows can be inactive without a suspended_at: they are suspended too, and their licence
+  // (expiring soon) and device (not syncing) are no longer "needs action".
+  await api.su("UPDATE tenants SET is_active = 0, suspended_at = NULL WHERE id = $1", [acme.id]);
+  overview = await get("/api/v1/console/overview");
+  assert.equal(overview.customers.find((c) => c.name === "Acme").status, "suspended");
+  assert.equal(overview.figures.customers_total, 3);
+  assert.equal(overview.figures.customers_active, 1);
+  assert.equal(overview.figures.licences_expiring, 0);
+  assert.equal(overview.figures.devices_in_use, 0);
+  assert.ok(!overview.attention.some((x) => x.tenant_name === "Acme" && x.kind !== "ticket_new"), JSON.stringify(overview.attention)); // its open ticket still shows
+
+  // Lifting the suspension makes both active again.
+  assert.equal((await resume(gamma, "paid")).status, 200);
+  assert.equal((await resume(acme, "paid")).status, 200);
+  overview = await get("/api/v1/console/overview");
+  assert.deepEqual(overview.figures, before);
+  assert.equal(overview.customers.find((c) => c.name === "Gamma").status, "not_activated");
+  assert.equal(overview.customers.find((c) => c.name === "Acme").status, "expires_soon");
 
   // Health page.
   const health = await get("/api/v1/console/health");

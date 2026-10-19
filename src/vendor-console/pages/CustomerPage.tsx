@@ -125,7 +125,10 @@ export function CustomerPage() {
   }
   if (!tenant || !devices) return <Loading />;
 
-  const status = row?.status ?? (tenant.suspended_at ? "suspended" : "unknown");
+  // Suspended as the server decides it (suspend/resume check is_active), so an older row that is
+  // inactive without a suspension date still offers "Lift suspension".
+  const suspended = tenant.is_active !== undefined ? tenant.is_active !== 1 : Boolean(tenant.suspended_at);
+  const status = row?.status ?? (suspended ? "suspended" : "unknown");
   const needsLicence = status === "expires_soon" || status === "expired" || status === "no_licence";
   const seatsUsedPct = row && row.seats > 0 ? Math.min(100, Math.round((row.devices_used / row.seats) * 100)) : 0;
 
@@ -234,8 +237,8 @@ export function CustomerPage() {
                 <span className="text-[13px] text-text-secondary">{t("customer.sensitive.body")}</span>
               </div>
               <div className="flex flex-wrap gap-2.5">
-                <Button type="button" variant="outline" onClick={() => setSuspension(tenant.suspended_at ? "resume" : "suspend")}>
-                  {tenant.suspended_at ? t("customers.resumeTenant") : t("customers.suspendTenant")}
+                <Button type="button" variant="outline" onClick={() => setSuspension(suspended ? "resume" : "suspend")}>
+                  {suspended ? t("customers.resumeTenant") : t("customers.suspendTenant")}
                 </Button>
                 {can("entitlement.manage") ? (
                   <Button type="button" variant="destructive-outline" onClick={() => goTab("licence")}>
