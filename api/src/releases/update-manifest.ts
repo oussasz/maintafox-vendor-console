@@ -88,6 +88,19 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * True when an installer file name carries exactly `version` as a token bounded by "_" (or the
+ * start/end of the name) on both sides, as Tauri NSIS names do: `Maintafox_{version}_x64-setup.exe`.
+ * "1.2.3" does not match inside "11.2.3", "1.2.30" or "1.2.3-dev" (catalog versions are plain
+ * x.y.z, RELEASE_VERSION_RE). The updater signature names its file (trusted comment), so
+ * this binds a signed installer to the version it is declared as: an old signed installer cannot
+ * be re-declared as a newer version.
+ */
+export function fileNameCarriesVersion(fileName: string, version: string): boolean {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|_)${escaped}(?:_|$)`).test(fileName);
+}
+
 /** Stable bucket 0..99 of one device for one release. */
 export function rolloutBucket(releaseId: string, tenantId: string, machineFingerprint: string): number {
   const digest = createHash("sha256").update(`${releaseId}:${tenantId}:${machineFingerprint}`).digest();

@@ -59,7 +59,11 @@ aliases such as `win64` or `x64`). `current_version` must be `MAJOR.MINOR.PATCH[
   header `X-Maintafox-Rollback-To`, also while paused): granted only when the header names exactly
   the rollback target. Anything else is `409 rollback_target_not_allowed` with
   `requested_version`, `allowed_version` (the target, or `null` when there is none) and a message;
-  the server never substitutes another version.
+  the server never substitutes another version. Note: the "only the previous release" rule is an
+  availability guarantee (a desktop gets the build it came from, not an arbitrary old one), not a
+  security property: the device reports its own current version, so a modified client could claim
+  any version. The security properties are the ring, recall and forced-update checks, which hold
+  whatever version is claimed.
 - **Recall:** catalog recall (all customers) or cohort recall (Phase 4.2, one channel + cohort). A
   recalled version is never offered. A PC running it is offered a newer release when one is
   available to it, otherwise its rollback target (`mandatory_reason` `recalled_version`). When there
@@ -115,6 +119,14 @@ with the updater key.
 - **The signature is bound to the declared installer.** Besides verifying with the updater key,
   the signature's trusted comment (`file:<name>`, written by `tauri signer sign` and covered by the
   signature) must equal the declared `file_name`; otherwise 422 `updater_signature_file_mismatch`.
+- **The installer is bound to its version.** Release versions are plain `MAJOR.MINOR.PATCH`
+  (no `-dev` or other pre-release tag; the desktop's release builds must carry such a version).
+  Every declared `file_name` must carry exactly the declared version as a token bounded by `_` (or
+  the start/end of the name), as the release workflow's NSIS names do:
+  `Maintafox_1.2.3_x64-setup.exe` for 1.2.3. `1.2.3` does not match inside `11.2.3`, `1.2.30` or
+  `Maintafox_1.2.3-dev_x64-setup.exe`. Since the signed file name must equal the declared one, an old signed installer cannot
+  be re-declared as a newer version (it would be offered as an "upgrade"). Refused with 400
+  `file_name_version_mismatch` at declaration, and checked again at `complete` (422).
 - **No race with a re-run.** Registration happens under the same per-version lock as a
   declaration, and only if the state is still "uploading" and every artifact row still has exactly
   the size, SHA-256, signature, file name and upload key that were verified; otherwise 409

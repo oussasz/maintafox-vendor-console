@@ -27,7 +27,7 @@ import { getMediaStore } from "../app/media.js";
 import { newId, sha256Hex, structuredLog } from "../app/runtime.js";
 import { openOperatorScope, runAsSystem } from "../app/scope.js";
 import { signedFileName, verifyUpdaterSignature } from "../releases/minisign.js";
-import { channelRank, RELEASE_VERSION_RE, UPDATE_CHANNELS, type UpdateChannel } from "../releases/update-manifest.js";
+import { channelRank, fileNameCarriesVersion, RELEASE_VERSION_RE, UPDATE_CHANNELS, type UpdateChannel } from "../releases/update-manifest.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 /** Largest installer accepted (the NSIS installer is ~100 MB; this bounds the verification read). */
@@ -181,6 +181,16 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
       return;
     }
     const input = parsed.data;
+    const misnamed = input.artifacts.find((a) => !fileNameCarriesVersion(a.file_name, input.version));
+    if (misnamed) {
+      res.status(400).json({
+        error: "file_name_version_mismatch",
+        file_name: misnamed.file_name,
+        version: input.version,
+        message: `${misnamed.file_name} does not carry version ${input.version} (expected e.g. Maintafox_${input.version}_x64-setup.exe).`,
+      });
+      return;
+    }
     const publisher = `release_publisher:${(req as PublisherRequest).releasePublisherKeyId}`;
     const result = await db.tx(async () => {
       await db.lockXact("release-version", input.version);
@@ -283,6 +293,16 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
     //    is never served.
     const verified: { a: ArtifactRow; servedKey: string }[] = [];
     for (const a of artifacts) {
+      // Checked at declaration too; again here so a row can never register under another version.
+      if (!fileNameCarriesVersion(a.file_name, release.version)) {
+        res.status(422).json({
+          error: "file_name_version_mismatch",
+          file_name: a.file_name,
+          version: release.version,
+          message: `${a.file_name} does not carry version ${release.version}.`,
+        });
+        return;
+      }
       const servedKey = `${media.config.deploymentEnv}/release-artifacts/${release.version}/${release.release_id}/${a.target}-${a.arch}/${randomBytes(8).toString("hex")}/${a.file_name}`;
       if (!(await media.copyObject(a.upload_key, servedKey))) {
         res.status(409).json({ error: "artifact_not_uploaded", message: `${a.file_name} was not uploaded to its presigned URL.` });

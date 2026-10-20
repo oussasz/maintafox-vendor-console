@@ -39,6 +39,15 @@ const minisign = await import("../dist/releases/minisign.js");
   assert.equal(rolloutBucket("rel_x", "tenant", "fp-1"), buckets[1]);
   const underHalf = buckets.filter((b) => b < 50).length;
   assert.ok(underHalf > 900 && underHalf < 1100, `rollout bucket spread: ${underHalf}/2000 under 50`);
+  // The installer name carries the declared version as a delimited token (review: no replay of an
+  // old signed installer under a new version).
+  const { fileNameCarriesVersion } = manifest;
+  for (const ok of ["Maintafox_1.2.3_x64-setup.exe", "1.2.3_x64-setup.exe", "Maintafox_1.2.3"]) {
+    assert.equal(fileNameCarriesVersion(ok, "1.2.3"), true, ok);
+  }
+  for (const bad of ["Maintafox_11.2.3_x64-setup.exe", "Maintafox_1.2.30_x64-setup.exe", "Maintafox_1.2.3.1_x64-setup.exe", "Maintafox_1x2x3_x64-setup.exe", "Maintafox_1.0.0_x64-setup.exe", "Maintafox1.2.3_x64-setup.exe", "Maintafox_1.2.3.exe", "Maintafox_1.2.3-dev_x64-setup.exe", "Maintafox-1.2.3-x64.msi"]) {
+    assert.equal(fileNameCarriesVersion(bad, "1.2.3"), false, bad);
+  }
   // The real `tauri signer` vector verifies; a changed file does not.
   const key = minisign.parseUpdaterPublicKey(TAURI_VECTOR.publicKey);
   assert.deepEqual(minisign.verifyUpdaterSignature(key, TAURI_VECTOR.signature, minisign.blake2b512(TAURI_VECTOR.file), null), { ok: true });
@@ -85,7 +94,7 @@ try {
 
   // ── Upload and registration ────────────────────────────────────────────────────────────────
   const installers = {};
-  const declare = (version, bytes, { signature } = {}) =>
+  const declare = (version, bytes, { signature, fileName = `Maintafox_${version}_x64-setup.exe` } = {}) =>
     api.call("POST", "/api/v1/release-uploads", publisher, {
       version,
       notes_en: `Maintafox ${version}: fixes and improvements.`,
@@ -96,10 +105,10 @@ try {
         {
           target: "windows",
           arch: "x86_64",
-          file_name: `Maintafox_${version}_x64-setup.exe`,
+          file_name: fileName,
           byte_size: bytes.length,
           sha256: sha256(bytes),
-          updater_signature: signature ?? updater.sign(bytes, `Maintafox_${version}_x64-setup.exe`),
+          updater_signature: signature ?? updater.sign(bytes, fileName),
         },
       ],
     });
@@ -123,6 +132,22 @@ try {
   }
 
   assert.equal((await declare("1.0", Buffer.from("x"))).status, 400, "versions are x.y.z");
+  // Replay: an old signed installer (its .sig names Maintafox_1.0.0_...) declared as 9.9.9.
+  for (const fileName of ["Maintafox_1.0.0_x64-setup.exe", "Maintafox_19.9.9_x64-setup.exe", "Maintafox_9.9.90_x64-setup.exe", "Maintafox_9.9.9-dev_x64-setup.exe"]) {
+    const replay = await declare("9.9.9", Buffer.from("old installer"), { fileName });
+    assert.equal(replay.status, 400, `${fileName}: ${replay.text}`);
+    assert.equal(replay.json.error, "file_name_version_mismatch");
+  }
+  // Checked again at complete (a row that does not carry its version never registers).
+  {
+    const bytes = Buffer.from("installer 0.9.6");
+    const d = await declare("0.9.6", bytes, { fileName: "Maintafox_0.9.6_x64-setup.exe" });
+    assert.equal(d.status, 201, d.text);
+    await put(d.json.uploads[0].url, bytes);
+    await api.su("UPDATE app_release_artifacts SET file_name = 'Maintafox_1.0.0_x64-setup.exe' WHERE release_id = $1", [d.json.release_id]);
+    const c = await complete(d.json.release_id);
+    assert.deepEqual([c.status, c.json.error], [422, "file_name_version_mismatch"], c.text);
+  }
   // Declared but never uploaded.
   const pending = await declare("0.9.0", Buffer.from("pending"));
   assert.equal(pending.status, 201, pending.text);
