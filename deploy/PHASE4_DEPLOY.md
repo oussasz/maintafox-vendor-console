@@ -8,8 +8,9 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 > **NEW MIGRATION `016_admin_recovery_codes`** (administrator recovery codes, new table only): see
 > `CONSOLE_ACTIONS.md` "Administrator recovery code". Rollback adds version 16 to the list below.
 
-> **NEW MIGRATION `017_sync_attachment_archive`** (archive of attachments deleted by sync, forensic
-> device log of safety-setting changes; new tables only): see `SYNC_OPERATIONS.md` "Deleted
+> **NEW MIGRATION `017_sync_attachment_archive`** (archive of attachments deleted or replaced by
+> sync, forensic device log of safety-setting changes; new tables only; deletes of append-only
+> history are now refused with `operation_not_allowed_for_type`): see `SYNC_OPERATIONS.md` "Deleted
 > attachments and the forensic device log". Rollback adds version 17 to the list below.
 
 ## Before
