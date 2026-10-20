@@ -500,6 +500,45 @@ try {
     await setTenantPolicy({ force_update_mode: "off" });
   }
 
+  // ── Device gate (review N4): no manifest for a revoked activation, revoked licence or a
+  //    suspended customer ─────────────────────────────────────────────────────────────────────
+  {
+    const gate = (await api.call("POST", "/api/v1/tenants", admin, { slug: "updates-gate", display_name: "Updates gate", rollout_cohort: "main", update_channel: "stable" })).json;
+    const issue = async () => {
+      const l = await api.call("POST", "/api/v1/licenses", admin, { tenant_id: gate.id, max_machines: 2, update_channel: "stable" });
+      assert.equal(l.status, 201, l.text);
+      return l.json;
+    };
+    const machineLicence = await issue();
+    const machineToken = await api.claimDevice(machineLicence.license_key, "fp-gate-machine");
+    const licenceLicence = await issue();
+    const licenceToken = await api.claimDevice(licenceLicence.license_key, "fp-gate-licence");
+    for (const token of [machineToken, licenceToken]) {
+      assert.equal((await check(token, "0.4.0-dev")).status, 200, "served before the refusal");
+    }
+    const machineRevoked = await api.call(
+      "POST",
+      `/api/v1/tenants/${gate.id}/machines/fp-gate-machine/revoke`,
+      admin,
+      { reason: "stolen laptop" },
+      await privileged("machine_trust_change"),
+    );
+    assert.equal(machineRevoked.status, 200, machineRevoked.text);
+    const afterMachine = await check(machineToken, "0.4.0-dev");
+    assert.deepEqual([afterMachine.status, afterMachine.json?.error], [403, "activation_revoked"]);
+    const licenceRevoked = await api.call("POST", `/api/v1/licenses/${licenceLicence.id}/revoke`, admin, { reason: "contract ended" }, await privileged("entitlement_suspension"));
+    assert.equal(licenceRevoked.status, 200, licenceRevoked.text);
+    const afterLicence = await check(licenceToken, "0.4.0-dev");
+    assert.deepEqual([afterLicence.status, afterLicence.json?.error], [403, "license_revoked"]);
+    const tenantLicence = await issue();
+    const tenantToken = await api.claimDevice(tenantLicence.license_key, "fp-gate-tenant");
+    assert.equal((await check(tenantToken, "0.4.0-dev")).status, 200);
+    const suspended = await api.call("POST", `/api/v1/tenants/${gate.id}/suspend`, admin, { reason: "unpaid invoices" }, await privileged("entitlement_suspension"));
+    assert.equal(suspended.status, 200, suspended.text);
+    const afterSuspend = await check(tenantToken, "0.4.0-dev");
+    assert.deepEqual([afterSuspend.status, afterSuspend.json?.error], [403, "tenant_inactive"]);
+  }
+
   // ── Revoked publisher key ─────────────────────────────────────────────────────────────────
   const revoked = await api.call("POST", `/api/v1/release-publisher-keys/${created.json.key_id}/revoke`, admin, {}, await privileged("release_publisher_key"));
   assert.equal(revoked.status, 200, revoked.text);
