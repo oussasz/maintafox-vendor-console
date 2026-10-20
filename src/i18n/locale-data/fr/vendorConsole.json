@@ -613,6 +613,40 @@
     "loading": "Chargement de la télémétrie de synchronisation…",
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
+    "deletedAttachments": {
+      "title": "Photos et pièces jointes supprimées",
+      "body": "Photos et pièces jointes retirées par un appareil via la synchronisation. Le serveur garde l'élément supprimé et l'appareil qui a envoyé la suppression (il ne peut pas savoir quelle personne utilisait cet appareil). Le fichier lui-même n'est jamais retiré du stockage. Restaurer remet l'élément sur tous les appareils.",
+      "loading": "Chargement des pièces jointes supprimées…",
+      "empty": "Aucune photo ni pièce jointe n'a été supprimée par la synchronisation.",
+      "col": {
+        "deletedAt": "Supprimé le",
+        "item": "Élément",
+        "device": "Appareil qui a supprimé",
+        "state": "État",
+        "action": "Action"
+      },
+      "type": {
+        "media_attachments": "Photo ou fichier",
+        "asset_photos": "Photo d'équipement",
+        "di_attachments": "Pièce jointe de demande",
+        "work_order_attachments": "Pièce jointe d'ordre de travail"
+      },
+      "state": {
+        "deleted": "Supprimé",
+        "restored": "Restauré"
+      },
+      "restoredBy": "Restauré le {{at}} par {{by}}",
+      "blocker": {
+        "already_restored": "Déjà restauré",
+        "nothing_to_restore": "Rien à restaurer",
+        "entity_changed_since_delete": "Modifié depuis"
+      },
+      "restore": "Restaurer",
+      "restoreTitle": "Restaurer cette pièce jointe supprimée ?",
+      "restoreBody": "{{id}} (supprimé par {{device}}) est renvoyé à tous les appareils de ce client, exactement comme avant la suppression. À utiliser quand la suppression était une erreur.",
+      "restoreConfirm": "Restaurer sur tous les appareils",
+      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation."
+    },
     "retry": "Réessayer"
   },
   "rollouts": {
@@ -907,7 +941,8 @@
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
       "own_mfa_change": "générer de nouveaux codes de secours",
-      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur"
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur",
+      "sync_attachment_restore": "restaurer une photo ou une pièce jointe supprimée par la synchronisation"
     }
   },
   "account": {

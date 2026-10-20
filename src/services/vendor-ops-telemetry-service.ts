@@ -85,3 +85,50 @@ export async function requestDeviceResync(
   });
   if (!res.ok) throw await apiRequestError(res);
 }
+
+const DeletedAttachmentSchema = z.object({
+  id: z.string(),
+  entity_type: z.string(),
+  entity_sync_id: z.string(),
+  deleted_at: z.string(),
+  deleted_by: z.object({ license_id: z.string(), machine_fingerprint: z.string() }),
+  delete_row_version: z.number(),
+  prior_state: z.enum(["present", "already_deleted", "unknown"]),
+  prior_row_version: z.number().nullable(),
+  content_sha256: z.string().nullable(),
+  byte_size: z.number().nullable(),
+  restored: z
+    .object({
+      at: z.string(),
+      by: z.string().nullable(),
+      reason: z.string().nullable(),
+      audit_record_id: z.string().nullable(),
+      row_version: z.number().nullable(),
+    })
+    .nullable(),
+  restore_blocker: z.enum(["already_restored", "nothing_to_restore", "entity_changed_since_delete"]).nullable(),
+});
+export type DeletedAttachment = z.infer<typeof DeletedAttachmentSchema>;
+const DeletedAttachmentsSchema = z.object({ tenant_id: z.string(), items: z.array(DeletedAttachmentSchema) });
+
+/** Photos and attachments deleted by synchronisation for one customer (archive; no file content). */
+export async function listDeletedAttachments(tenantId: string): Promise<DeletedAttachment[]> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments`);
+  return (await parseOrThrow(res, DeletedAttachmentsSchema)).items;
+}
+
+/** Restores one archived attachment on every device (step-up `sync_attachment_restore`, reason, audited). */
+export async function restoreDeletedAttachment(
+  tenantId: string,
+  archiveId: string,
+  privileged: { reason_code: string; step_up_token: string },
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments/${encodeURIComponent(archiveId)}/restore`,
+    {
+      method: "POST",
+      headers: { "X-Operator-Reason": privileged.reason_code, "X-Step-Up-Token": privileged.step_up_token },
+    },
+  );
+  if (!res.ok) throw await apiRequestError(res);
+}

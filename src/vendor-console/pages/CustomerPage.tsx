@@ -25,6 +25,7 @@ import { AuditLedgerPanel } from "../components/AuditLedgerPanel";
 import { BillingPanel } from "../components/BillingPanel";
 import { EntitlementLifecyclePanel } from "../components/EntitlementLifecyclePanel";
 import { OperatorActionDialog } from "../components/OperatorActionDialog";
+import { DeletedAttachmentsPanel } from "../components/DeletedAttachmentsPanel";
 import { SyncDeviceTimeline } from "../components/SyncDeviceTimeline";
 import { CustomerFormDialog } from "../customers/CustomerFormDialog";
 import { CustomerSupportTab } from "../customers/CustomerSupportTab";
@@ -261,9 +262,14 @@ export function CustomerPage() {
 
         <TabsContent value="sync">
           {can("sync.operate") ? (
-            <Panel>
-              <SyncDeviceTimeline fixedTenantId={tenant.id} initialMachineId={focusDevice} />
-            </Panel>
+            <div className="flex flex-col gap-5">
+              <Panel>
+                <SyncDeviceTimeline fixedTenantId={tenant.id} initialMachineId={focusDevice} />
+              </Panel>
+              <Panel>
+                <DeletedAttachmentsPanel tenantId={tenant.id} />
+              </Panel>
+            </div>
           ) : (
             <EmptyState title={t("customer.sync.noAccess")} />
           )}

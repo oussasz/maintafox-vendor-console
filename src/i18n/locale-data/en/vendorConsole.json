@@ -609,6 +609,40 @@
         "operator_action": "Operator"
       }
     },
+    "deletedAttachments": {
+      "title": "Deleted photos and attachments",
+      "body": "Photos and attachments removed by a device through synchronisation. The server keeps the deleted entry and the device that sent the delete (it cannot know which person used that device). The file itself is never removed from storage. Restoring puts the entry back on every device.",
+      "loading": "Loading deleted attachments…",
+      "empty": "No photo or attachment has been deleted by synchronisation.",
+      "col": {
+        "deletedAt": "Deleted",
+        "item": "Item",
+        "device": "Deleting device",
+        "state": "State",
+        "action": "Action"
+      },
+      "type": {
+        "media_attachments": "Photo or file",
+        "asset_photos": "Equipment photo",
+        "di_attachments": "Request attachment",
+        "work_order_attachments": "Work order attachment"
+      },
+      "state": {
+        "deleted": "Deleted",
+        "restored": "Restored"
+      },
+      "restoredBy": "Restored {{at}} by {{by}}",
+      "blocker": {
+        "already_restored": "Already restored",
+        "nothing_to_restore": "Nothing to restore",
+        "entity_changed_since_delete": "Changed since"
+      },
+      "restore": "Restore",
+      "restoreTitle": "Restore this deleted attachment?",
+      "restoreBody": "{{id}} (deleted by {{device}}) is sent again to every device of this customer, exactly as it was before the delete. Use it when the delete was a mistake.",
+      "restoreConfirm": "Restore on every device",
+      "restored": "Restored: {{id}} is sent to every device at their next sync."
+    },
     "retry": "Retry",
     "refreshing": "Refreshing…",
     "refresh": "Refresh",
@@ -907,7 +941,8 @@
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
       "own_mfa_change": "generate new recovery codes",
-      "admin_recovery_code": "give a PC a code that creates a new administrator"
+      "admin_recovery_code": "give a PC a code that creates a new administrator",
+      "sync_attachment_restore": "restore a photo or attachment deleted by synchronisation"
     }
   },
   "account": {
