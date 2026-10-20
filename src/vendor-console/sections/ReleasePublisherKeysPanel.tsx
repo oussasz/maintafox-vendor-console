@@ -33,7 +33,8 @@ export const RELEASE_PUBLISHER_SECRET_NAME = "MAINTAFOX_RELEASE_PUBLISHER_TOKEN"
 export function ReleasePublisherKeysPanel() {
   const { t } = useTranslation("vendorConsole");
   const { can } = usePermissions();
-  const canManage = can("rollout.manage");
+  // CI credentials: owner only (operator.manage), like console operators themselves.
+  const canManage = can("operator.manage");
   const { requireStepUp } = useVendorConsole();
   const [keys, setKeys] = useState<PublisherKey[] | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -14,7 +14,13 @@ vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/vendor-auth-service")>()),
   requestStepUp: vi.fn(async (actionKind: string) => ({ token: `stepup-${actionKind}`, actionKind, expiresAtMs: Date.now() + 300_000 })),
 }));
-vi.mock("@/hooks/use-permissions", () => ({ usePermissions: () => ({ can: () => true, canAny: () => true }) }));
+const granted = vi.hoisted(() => ({ permissions: null as string[] | null }));
+vi.mock("@/hooks/use-permissions", () => ({
+  usePermissions: () => ({
+    can: (p: string) => granted.permissions === null || granted.permissions.includes(p),
+    canAny: () => true,
+  }),
+}));
 
 import { createPublisherKey, listPublisherKeys, revokePublisherKey, type PublisherKey } from "@/services/release-catalog-service";
 import { requestStepUp } from "@/services/vendor-auth-service";
@@ -46,7 +52,16 @@ async function enterCode(code: string) {
 describe("ReleasePublisherKeysPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    granted.permissions = null;
     vi.mocked(listPublisherKeys).mockResolvedValue([existing]);
+  });
+
+  it("offers create and revoke only with operator.manage (rollout.manage is not enough)", async () => {
+    granted.permissions = ["console.view", "rollout.manage"];
+    renderWithConsole(<ReleasePublisherKeysPanel />);
+    expect(await screen.findByText("desktop repo")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New key" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument();
   });
 
   it("creates a key with the release_publisher_key step-up and shows its token once", async () => {

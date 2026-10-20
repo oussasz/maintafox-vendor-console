@@ -133,6 +133,8 @@ the internal `minio:9000`); nothing is registered half-way.
 ## Release workflow key (one-time setup)
 
 1. Console > Updates > Releases > Release workflow keys > Create (name e.g. "GitHub Actions").
+   Owners only (permission `operator.manage`, like managing operators: these are credentials);
+   operations operators see the list but cannot create or revoke keys.
    Confirm with your authenticator code. Copy the token shown once.
 2. On your computer, in the desktop repository folder:
    `gh secret set MAINTAFOX_RELEASE_PUBLISHER_TOKEN` and paste the token when asked.

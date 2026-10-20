@@ -114,8 +114,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/releases/:releaseId/publish": "rollout.manage",
   "POST /api/v1/releases/:releaseId/recall": "rollout.manage",
   "GET /api/v1/release-publisher-keys": "console.view",
-  "POST /api/v1/release-publisher-keys": "rollout.manage",
-  "POST /api/v1/release-publisher-keys/:keyId/revoke": "rollout.manage",
+  "POST /api/v1/release-publisher-keys": "operator.manage",
+  "POST /api/v1/release-publisher-keys/:keyId/revoke": "operator.manage",
 
   // Operations dashboards
   "GET /api/v1/ops/sync-overview": "sync.operate",

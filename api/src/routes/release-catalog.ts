@@ -12,7 +12,7 @@
  *   PATCH /api/v1/releases/:releaseId/notes            release notes (audited)
  *   POST  /api/v1/releases/:releaseId/publish          ring + rollout % (step-up rollout_publish)
  *   POST  /api/v1/releases/:releaseId/recall           never offered again (step-up forced_rollback)
- *   GET/POST /api/v1/release-publisher-keys, POST .../:keyId/revoke  CI credentials (step-up release_publisher_key)
+ *   GET/POST /api/v1/release-publisher-keys, POST .../:keyId/revoke  CI credentials (operator.manage, step-up release_publisher_key)
  * Devices read the published catalog through routes/updates.ts.
  */
 import { randomBytes } from "node:crypto";
