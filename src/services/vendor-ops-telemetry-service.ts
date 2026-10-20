@@ -118,22 +118,43 @@ const DeletedAttachmentSchema = z.object({
   restores: z.array(z.object({ at: z.string(), by: z.string(), reason: z.string(), audit_record_id: z.string(), row_version: z.number() })),
 });
 export type DeletedAttachment = z.infer<typeof DeletedAttachmentSchema>;
-const DeletedAttachmentsSchema = z.object({ tenant_id: z.string(), items: z.array(DeletedAttachmentSchema) });
+const NothingKeptGroupSchema = z.object({
+  machine_fingerprint: z.string(),
+  license_id: z.string().nullable(),
+  entity_type: z.string(),
+  count: z.number(),
+  last_at: z.string(),
+});
+export type NothingKeptGroup = z.infer<typeof NothingKeptGroupSchema>;
+const DeletedAttachmentsPageSchema = z.object({
+  tenant_id: z.string(),
+  items: z.array(DeletedAttachmentSchema),
+  next_cursor: z.string().nullable(),
+  /** Deletes of items the server never held (or had already deleted), counted per device and type. */
+  nothing_kept_summary: z.array(NothingKeptGroupSchema),
+});
+export type DeletedAttachmentsPage = z.infer<typeof DeletedAttachmentsPageSchema>;
 
-/**
- * Photos, attachments and document links deleted or replaced for one customer (archive; no file
- * content). "relevant": deletes and changes that moved the file; "all": also caption/title edits.
- */
-export async function listDeletedAttachments(
-  tenantId: string,
-  options: { filter?: "relevant" | "all"; since?: string } = {},
-): Promise<DeletedAttachment[]> {
+export type DeletedAttachmentsQuery = {
+  /** kept (default): entries that kept a version; nothing_kept: deletes of items the server never held; all. */
+  view?: "kept" | "nothing_kept" | "all";
+  since?: string;
+  before?: string;
+  cursor?: string;
+  entity_type?: string;
+  entity_sync_id?: string;
+  limit?: number;
+};
+
+/** One page of photos, attachments and document links deleted or replaced for one customer (no file content). */
+export async function listDeletedAttachments(tenantId: string, options: DeletedAttachmentsQuery = {}): Promise<DeletedAttachmentsPage> {
   const query = new URLSearchParams();
-  if (options.filter) query.set("filter", options.filter);
-  if (options.since) query.set("since", options.since);
+  for (const [k, v] of Object.entries(options)) {
+    if (v !== undefined && v !== "") query.set(k, String(v));
+  }
   const qs = query.toString();
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments${qs ? `?${qs}` : ""}`);
-  return (await parseOrThrow(res, DeletedAttachmentsSchema)).items;
+  return parseOrThrow(res, DeletedAttachmentsPageSchema);
 }
 
 /**
@@ -159,6 +180,7 @@ export async function restoreDeletedAttachment(
       body: JSON.stringify({
         expected_current_row_version: expectedCurrent?.row_version ?? null,
         expected_current_payload_hash: expectedCurrent?.payload_hash ?? null,
+        expected_current_deleted: expectedCurrent?.deleted ?? null,
       }),
     },
   );

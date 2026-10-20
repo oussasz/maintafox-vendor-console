@@ -195,7 +195,8 @@
       "validation_error": "Certains champs ne sont pas valides.",
       "invalid_body": "Certains champs ne sont pas valides.",
       "internal_error": "Le serveur n'a pas pu traiter la requête (HTTP {{status}}).",
-      "entity_changed_since_listing": "Cet élément a changé sur le serveur depuis le chargement de la liste. La liste est à jour : vérifiez ce que la restauration va remplacer, puis réessayez."
+      "entity_changed_since_listing": "Cet élément a changé sur le serveur depuis le chargement de la liste. La liste est à jour : vérifiez ce que la restauration va remplacer, puis réessayez.",
+      "invalid_cursor": "La position dans la liste n'est plus valable. Rechargez la liste."
     }
   },
   "permissions": {

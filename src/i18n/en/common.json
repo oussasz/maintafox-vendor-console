@@ -195,7 +195,8 @@
       "validation_error": "Some fields are not valid.",
       "invalid_body": "Some fields are not valid.",
       "internal_error": "The server failed to process the request (HTTP {{status}}).",
-      "entity_changed_since_listing": "This item changed on the server since the list was loaded. The list is up to date now: check what the restore will replace, then try again."
+      "entity_changed_since_listing": "This item changed on the server since the list was loaded. The list is up to date now: check what the restore will replace, then try again.",
+      "invalid_cursor": "The list position is no longer valid. Reload the list."
     }
   },
   "permissions": {

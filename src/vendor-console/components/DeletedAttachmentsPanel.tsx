@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Badge, Button, Label } from "@/components/ui";
+import { Badge, Button, Input, Label } from "@/components/ui";
 import { errorText } from "@/lib/error-text";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import {
@@ -9,6 +9,8 @@ import {
   restoreDeletedAttachment,
   type AttachmentState,
   type DeletedAttachment,
+  type DeletedAttachmentsQuery,
+  type NothingKeptGroup,
 } from "@/services/vendor-ops-telemetry-service";
 
 import { useVendorConsole } from "../VendorConsoleContext";
@@ -18,6 +20,9 @@ import { OperatorActionDialog } from "./OperatorActionDialog";
 const selectClass = "h-11 rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 /** Periods offered for the time filter (days; 0 = all time). */
 const PERIOD_DAYS = [0, 7, 30, 90] as const;
+/** Entries per page ("Load more" fetches the next one). */
+const PAGE_SIZE = 100;
+type View = NonNullable<DeletedAttachmentsQuery["view"]>;
 
 /**
  * Photos, attachments and document links deleted or replaced for one customer. Every replacement
@@ -33,21 +38,52 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
   const { t } = useTranslation("vendorConsole");
   const { requireStepUp } = useVendorConsole();
   const [items, setItems] = useState<DeletedAttachment[] | null>(null);
-  const [filter, setFilter] = useState<"relevant" | "all">("relevant");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [summary, setSummary] = useState<NothingKeptGroup[]>([]);
+  const [view, setView] = useState<View>("kept");
   const [periodDays, setPeriodDays] = useState<number>(0);
+  const [search, setSearch] = useState("");
+  const [itemId, setItemId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<DeletedAttachment | null>(null);
 
-  const load = useCallback(async () => {
+  const query = useCallback(
+    (cursor?: string): DeletedAttachmentsQuery => ({
+      view,
+      since: periodDays > 0 ? new Date(Date.now() - periodDays * 86_400_000).toISOString() : undefined,
+      entity_sync_id: itemId || undefined,
+      limit: PAGE_SIZE,
+      cursor,
+    }),
+    [view, periodDays, itemId],
+  );
+
+  /** First page again; returns the entries (or null when the request failed). */
+  const load = useCallback(async (): Promise<DeletedAttachment[] | null> => {
     setError(null);
     try {
-      const since = periodDays > 0 ? new Date(Date.now() - periodDays * 86_400_000).toISOString() : undefined;
-      setItems(await listDeletedAttachments(tenantId, { filter, since }));
+      const page = await listDeletedAttachments(tenantId, query());
+      setItems(page.items);
+      setNextCursor(page.next_cursor);
+      setSummary(page.nothing_kept_summary);
+      return page.items;
+    } catch (err) {
+      setError(errorText(err));
+      return null;
+    }
+  }, [tenantId, query]);
+
+  const loadMore = async () => {
+    if (!nextCursor) return;
+    try {
+      const page = await listDeletedAttachments(tenantId, query(nextCursor));
+      setItems((current) => [...(current ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
     } catch (err) {
       setError(errorText(err));
     }
-  }, [tenantId, filter, periodDays]);
+  };
 
   useEffect(() => {
     void load();
@@ -61,8 +97,11 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
         step_up_token: await requireStepUp(StepUpKinds.syncAttachmentRestore),
       });
     } catch (err) {
-      // A refusal (e.g. the entity changed since this listing): show the latest state behind the dialog.
-      await load();
+      // A refusal (e.g. the entity changed since this listing): reload, and point the open dialog at
+      // the reloaded entry so confirming again sends the state the operator now sees.
+      const fresh = await load();
+      const again = fresh?.find((i) => i.id === restoring.id);
+      if (again) setRestoring(again);
       throw err;
     }
     setSuccess(t("sync.deletedAttachments.restored", { id: restoring.entity_sync_id }));
@@ -91,15 +130,16 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
       <p className="text-xs text-text-secondary">{t("sync.deletedAttachments.body")}</p>
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid gap-1">
-          <Label htmlFor="deleted-attachments-filter">{t("sync.deletedAttachments.filter.label")}</Label>
+          <Label htmlFor="deleted-attachments-view">{t("sync.deletedAttachments.view.label")}</Label>
           <select
-            id="deleted-attachments-filter"
+            id="deleted-attachments-view"
             className={selectClass}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value === "all" ? "all" : "relevant")}
+            value={view}
+            onChange={(e) => setView(e.target.value === "nothing_kept" ? "nothing_kept" : e.target.value === "all" ? "all" : "kept")}
           >
-            <option value="relevant">{t("sync.deletedAttachments.filter.relevant")}</option>
-            <option value="all">{t("sync.deletedAttachments.filter.all")}</option>
+            <option value="kept">{t("sync.deletedAttachments.view.kept")}</option>
+            <option value="nothing_kept">{t("sync.deletedAttachments.view.nothing_kept")}</option>
+            <option value="all">{t("sync.deletedAttachments.view.all")}</option>
           </select>
         </div>
         <div className="grid gap-1">
@@ -117,7 +157,40 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
             ))}
           </select>
         </div>
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setItemId(search.trim());
+          }}
+        >
+          <div className="grid gap-1">
+            <Label htmlFor="deleted-attachments-search">{t("sync.deletedAttachments.search.label")}</Label>
+            <Input id="deleted-attachments-search" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <Button type="submit" variant="outline">
+            {t("sync.deletedAttachments.search.submit")}
+          </Button>
+        </form>
       </div>
+      {summary.length > 0 && view === "kept" ? (
+        <ul className="space-y-1 text-xs text-text-secondary" data-testid="nothing-kept-summary">
+          {summary.map((g) => (
+            <li key={`${g.machine_fingerprint}-${g.entity_type}`}>
+              {t("sync.deletedAttachments.nothingKept.summary", {
+                count: g.count,
+                type: t(`sync.deletedAttachments.type.${g.entity_type}`),
+                device: g.machine_fingerprint,
+              })}
+            </li>
+          ))}
+          <li>
+            <Button type="button" size="sm" variant="outline" onClick={() => setView("nothing_kept")}>
+              {t("sync.deletedAttachments.nothingKept.show")}
+            </Button>
+          </li>
+        </ul>
+      ) : null}
       {error ? (
         <ConsoleStatusBanner tone="error" role="alert">
           {error}
@@ -216,6 +289,11 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
           </tbody>
         </table>
       </div>
+      {nextCursor ? (
+        <Button type="button" variant="outline" onClick={() => void loadMore()}>
+          {t("sync.deletedAttachments.loadMore")}
+        </Button>
+      ) : null}
 
       <OperatorActionDialog
         open={restoring !== null}

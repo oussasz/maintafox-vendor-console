@@ -668,17 +668,28 @@
         "live": "Version {{version}} (présente)",
         "deleted": "Version {{version}} (supprimée)"
       },
-      "filter": {
-        "label": "Afficher",
-        "relevant": "Suppressions et changements de fichier",
-        "all": "Tous les changements (aussi légendes et titres)"
-      },
       "period": {
         "label": "Période",
         "all": "Tout",
         "days_one": "Dernier {{count}} jour",
         "days_other": "Derniers {{count}} jours"
-      }
+      },
+      "view": {
+        "label": "Afficher",
+        "kept": "Supprimés ou remplacés (versions conservées)",
+        "nothing_kept": "Suppressions d'éléments que le serveur n'a jamais eus",
+        "all": "Tout"
+      },
+      "search": {
+        "label": "Identifiant de l'élément",
+        "submit": "Rechercher"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} suppression d'un élément que le serveur n'a jamais eu ({{type}}), depuis l'appareil {{device}}",
+        "summary_other": "{{count}} suppressions d'éléments que le serveur n'a jamais eus ({{type}}), depuis l'appareil {{device}}",
+        "show": "Les afficher"
+      },
+      "loadMore": "Afficher plus"
     },
     "retry": "Réessayer"
   },

@@ -664,17 +664,28 @@
         "live": "Version {{version}} (present)",
         "deleted": "Version {{version}} (deleted)"
       },
-      "filter": {
-        "label": "Show",
-        "relevant": "Deletes and file changes",
-        "all": "All changes (also captions and titles)"
-      },
       "period": {
         "label": "Period",
         "all": "All time",
         "days_one": "Last {{count}} day",
         "days_other": "Last {{count}} days"
-      }
+      },
+      "view": {
+        "label": "Show",
+        "kept": "Deleted or replaced (versions kept)",
+        "nothing_kept": "Deletes of items the server never held",
+        "all": "Everything"
+      },
+      "search": {
+        "label": "Item ID",
+        "submit": "Search"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} delete of an item the server never held ({{type}}), from device {{device}}",
+        "summary_other": "{{count}} deletes of items the server never held ({{type}}), from device {{device}}",
+        "show": "List them"
+      },
+      "loadMore": "Load more"
     },
     "retry": "Retry",
     "refreshing": "Refreshing…",
