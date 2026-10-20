@@ -1,15 +1,18 @@
 /**
- * Undoable attachment deletes and the forensic device log (CMMS Advisor decision 2026-10-20,
- * migration 017) against a real Postgres and the real API, through the real sync exchange:
+ * Undoable attachment deletes / overwrites and the forensic device log (CMMS Advisor decision
+ * 2026-10-20, migration 017) against a real Postgres and the real API, through the real exchange:
  *
- * - device A uploads a media attachment (row + media manifest; with TEST_S3_* set, the file bytes
- *   too), device B deletes it by sync → accepted as before, and the archive holds the prior row and
- *   the deleting device (licence + fingerprint);
- * - restore needs sync.operate, a reason and a `sync_attachment_restore` step-up; it re-issues the
- *   row to every device (A and B pull it with the identical payload, object key and checksum, at
- *   row_version + 1), is audited, and is refused twice or after the entity changed again;
- * - an attachment deleted before the server ever held it is archived as `unknown` (no crash) and
- *   cannot be restored;
+ * - every replacement of a live attachment row is archived with the device that sent it: device
+ *   deletes, device overwrites (a caption edit too, hidden from the default listing) and operator
+ *   restores that replace a live row; a delete of nothing / of a delete marker is recorded as
+ *   unknown / already_deleted and cannot be restored;
+ * - restore (sync.operate, reason, `sync_attachment_restore` step-up, the entity's current version
+ *   and hash from the listing) brings back that entry's prior payload byte for byte to every device,
+ *   above every version seen, any time and as often as asked; a stale listing gets 409
+ *   entity_changed_since_listing with the current state. The reviewer's probes m1 / m2 / m3 (delete
+ *   twice, junk twice, junk then delete) and an ABA rewrite by v1 all end with the good version back;
+ * - companion pairing (photo, request and work order attachments), v1 lower versions, document
+ *   links, refusal of deletes of append-only history;
  * - every accepted change of site_settings / site_setting_events / permit_types is kept with its
  *   sending device in sync_forensic_change_log, which retention never compacts.
  *
@@ -191,9 +194,12 @@ try {
   assert.equal(aSeesDelete.operation, "delete");
   assert.equal(aSeesDelete.deleted, true);
 
+  const deletePayload = JSON.stringify({ entity_sync_id: mediaId });
   const [archived] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE tenant_id = $1 AND entity_sync_id = $2", [tenant.id, mediaId]);
   assert.ok(archived, "the delete is archived");
   assert.equal(archived.entity_type, "media_attachments");
+  assert.equal(archived.change_kind, "delete");
+  assert.equal(archived.locator_changed, true);
   assert.equal(archived.prior_state, "present");
   assert.equal(archived.prior_payload_raw, mediaPayload, "the prior payload, byte for byte");
   assert.equal(archived.prior_payload_hash, sha256Hex(mediaPayload));
@@ -201,13 +207,19 @@ try {
   assert.equal(archived.prior_origin_machine_fingerprint, A.fp);
   assert.equal(archived.changed_by_machine_fingerprint, B.fp, "the deleting device");
   assert.equal(archived.changed_by_license_id, licence.id);
+  assert.equal(archived.changed_by_operator, null);
   assert.equal(Number(archived.change_row_version), 2);
   assert.equal(archived.object_refs.payload.object_key, objectKey);
   assert.equal(archived.object_refs.payload.content_sha256, contentSha);
   assert.equal(archived.object_refs.media_manifest.object_key, objectKey);
 
-  // ── Listing (sync.operate), no payload ─────────────────────────────────────────────────────
+  // ── Listing (sync.operate), no payload, with the entity's current state ──────────────────────
   const listUrl = `/api/v1/tenants/${tenant.id}/sync/deleted-attachments`;
+  const list = async (query = "") => {
+    const r = await api.call("GET", `${listUrl}${query}`, token);
+    assert.equal(r.status, 200, r.text);
+    return r.json.items;
+  };
   const listed = await api.call("GET", listUrl, token);
   assert.equal(listed.status, 200, listed.text);
   assert.equal(listed.json.items.length, 1);
@@ -215,28 +227,45 @@ try {
   assert.equal(entry.entity_sync_id, mediaId);
   assert.equal(entry.changed_by.machine_fingerprint, B.fp);
   assert.equal(entry.change_kind, "delete");
+  assert.equal(entry.locator_changed, true);
+  assert.equal(entry.restorable, true);
+  assert.deepEqual(entry.restores, []);
+  assert.deepEqual(entry.current, { row_version: 2, payload_hash: sha256Hex(deletePayload), deleted: true });
   assert.equal(entry.file_on_server, true, "the manifest says the server has the file");
   assert.equal(entry.content_sha256, contentSha);
-  assert.equal(entry.restored, null);
-  assert.equal(entry.restore_blocker, null);
   assert.ok(!listed.text.includes("Seal leak"), "no payload in the listing");
-  assert.equal((await api.call("GET", `${listUrl}?status=bogus`, token)).status, 400);
+  assert.equal((await api.call("GET", `${listUrl}?filter=bogus`, token)).status, 400);
+  assert.equal((await api.call("GET", `${listUrl}?status=all`, token)).status, 400, "unknown query keys are refused");
+  assert.equal((await list(`?since=${encodeURIComponent(new Date(Date.now() + 3600_000).toISOString())}`)).length, 0, "time filter");
+  assert.equal((await list(`?since=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`)).length, 1);
   assert.equal((await api.call("GET", `/api/v1/tenants/no-such-tenant/sync/deleted-attachments`, token)).status, 404);
 
-  // ── Restore guards: permission, reason, step-up kind ──────────────────────────────────────
+  // ── Restore guards: permission, reason, step-up kind, body, stale listing ──────────────────────
   const restoreUrl = (id) => `/api/v1/tenants/${tenant.id}/sync/deleted-attachments/${id}/restore`;
   const reasonOnly = { "X-Operator-Reason": "deleted by mistake on the tablet" };
-  const noReason = await api.call("POST", restoreUrl(entry.id), token, undefined, { "X-Step-Up-Token": await owner.stepUp("sync_attachment_restore") });
+  const expect = (current) => ({
+    expected_current_row_version: current?.row_version ?? null,
+    expected_current_payload_hash: current?.payload_hash ?? null,
+  });
+  const noReason = await api.call("POST", restoreUrl(entry.id), token, expect(entry.current), {
+    "X-Step-Up-Token": await owner.stepUp("sync_attachment_restore"),
+  });
   assert.equal(noReason.status, 403);
   assert.equal(noReason.json.reason, "missing_reason_code");
-  const noStepUp = await api.call("POST", restoreUrl(entry.id), token, undefined, reasonOnly);
+  const noStepUp = await api.call("POST", restoreUrl(entry.id), token, expect(entry.current), reasonOnly);
   assert.equal(noStepUp.status, 403);
   assert.equal(noStepUp.json.reason, "missing_step_up_token");
-  const wrongKind = await api.call("POST", restoreUrl(entry.id), token, undefined, {
+  const wrongKind = await api.call("POST", restoreUrl(entry.id), token, expect(entry.current), {
     ...reasonOnly,
     "X-Step-Up-Token": await owner.stepUp("sync_repair"),
   });
   assert.equal(wrongKind.json.reason, "step_up_action_kind_mismatch");
+  const privileged = { ...reasonOnly, "X-Step-Up-Token": await owner.stepUp("sync_attachment_restore") };
+  assert.equal((await api.call("POST", restoreUrl(entry.id), token, {}, privileged)).status, 400, "the expected current state is required");
+  const stale = await api.call("POST", restoreUrl(entry.id), token, { ...expect(entry.current), expected_current_row_version: 1 }, privileged);
+  assert.equal(stale.status, 409);
+  assert.equal(stale.json.error, "entity_changed_since_listing");
+  assert.deepEqual(stale.json.current, entry.current, "the refusal shows the state to confirm");
 
   // An auditor (no sync.operate) can neither list nor restore.
   const hire = await api.call(
@@ -251,22 +280,30 @@ try {
     enrolmentCode: hire.json.enrolment_code,
   });
   assert.equal((await api.call("GET", listUrl, auditor.accessToken)).status, 403);
-  const auditorRestore = await api.call("POST", restoreUrl(entry.id), auditor.accessToken, undefined, reasonOnly);
+  const auditorRestore = await api.call("POST", restoreUrl(entry.id), auditor.accessToken, expect(entry.current), reasonOnly);
   assert.equal(auditorRestore.status, 403);
   assert.equal(auditorRestore.json.error, "permission_denied");
 
-  const stillDeleted = await api.su("SELECT deleted, row_version FROM sync_entity_state WHERE tenant_id = $1 AND entity_sync_id = $2", [tenant.id, mediaId]);
+  const stillDeleted = await api.su("SELECT deleted FROM sync_entity_state WHERE tenant_id = $1 AND entity_sync_id = $2", [tenant.id, mediaId]);
   assert.equal(stillDeleted[0].deleted, true, "refused restores changed nothing");
   assert.equal((await api.su("SELECT count(*)::int AS n FROM audit_records WHERE action_code = 'sync_attachment_restored'"))[0].n, 0);
 
+  /** Restores an entry against the current state the listing shows now. */
+  const restoreNow = async (archiveId) => {
+    const it = (await list("?filter=all")).find((i) => i.id === String(archiveId));
+    assert.ok(it, `archive entry ${archiveId} listed`);
+    const r = await api.call("POST", restoreUrl(archiveId), token, expect(it.current), privileged);
+    assert.equal(r.status, 200, r.text);
+    return r.json;
+  };
+
   // ── Restore ───────────────────────────────────────────────────────────────────────────────
-  const privileged = { ...reasonOnly, "X-Step-Up-Token": await owner.stepUp("sync_attachment_restore") };
-  const restored = await api.call("POST", restoreUrl(entry.id), token, undefined, privileged);
+  const restored = await api.call("POST", restoreUrl(entry.id), token, expect(entry.current), privileged);
   assert.equal(restored.status, 200, restored.text);
-  assert.equal(restored.json.row_version, 3, "row_version = delete's + 1");
-  assert.equal((await api.call("POST", restoreUrl(entry.id), token, undefined, privileged)).json.error, "already_restored");
-  assert.equal((await api.call("POST", restoreUrl("999999"), token, undefined, privileged)).status, 404);
-  assert.equal((await api.call("POST", restoreUrl("not-a-number"), token, undefined, privileged)).status, 404);
+  assert.equal(restored.json.row_version, 3, "above every version seen");
+  assert.equal(restored.json.replaced_archive_id, null, "a delete marker is not archived again");
+  assert.equal((await api.call("POST", restoreUrl("999999"), token, expect(null), privileged)).status, 404);
+  assert.equal((await api.call("POST", restoreUrl("not-a-number"), token, expect(null), privileged)).status, 404);
 
   // Both devices — the one that deleted it included — receive the row again, identical.
   for (const dev of [A, B]) {
@@ -303,67 +340,96 @@ try {
     assert.ok(down.equals(fileBytes), "the restored attachment's file is byte-identical");
   }
 
-  const [marked] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE id = $1", [archived.id]);
-  assert.ok(marked.restored_at);
-  assert.equal(marked.restore_reason, "deleted by mistake on the tablet");
-  assert.equal(Number(marked.restore_row_version), 3);
+  const [logRow] = await api.su("SELECT * FROM sync_attachment_restore_log WHERE archive_id = $1", [archived.id]);
+  assert.equal(logRow.reason, "deleted by mistake on the tablet");
+  assert.equal(Number(logRow.restore_row_version), 3);
   const [ledger] = await api.su("SELECT * FROM audit_records WHERE action_code = 'sync_attachment_restored'");
   assert.ok(ledger, "audited");
-  assert.equal(ledger.record_id, marked.restore_audit_record_id);
+  assert.equal(ledger.record_id, logRow.audit_record_id);
   assert.equal(ledger.scope_tenant_id, tenant.id);
   assert.ok(!JSON.stringify(ledger).includes("Seal leak"), "no payload in the ledger");
-  const [ingress] = await api.su("SELECT machine_fingerprint, row_version, base_row_version FROM sync_mirror_ingress WHERE id = $1", [marked.restore_ingress_id]);
+  const [ingress] = await api.su("SELECT machine_fingerprint, row_version, base_row_version FROM sync_mirror_ingress WHERE id = $1", [logRow.restore_ingress_id]);
   assert.equal(ingress.machine_fingerprint, "server:attachment-restore");
   assert.equal(Number(ingress.base_row_version), 2);
-  // The archived evidence cannot be rewritten (trigger), even by the database owner.
-  await assert.rejects(api.su("UPDATE sync_deleted_attachment_archive SET prior_payload_raw = 'x' WHERE id = $1", [archived.id]), /already restored/);
-  const listedAfter = (await api.call("GET", `${listUrl}?status=restored`, token)).json.items;
-  assert.equal(listedAfter.length, 1);
-  assert.equal(listedAfter[0].restored.reason, "deleted by mistake on the tablet");
-  assert.equal(listedAfter[0].restore_blocker, "already_restored");
+  // Archive entries and restore records are evidence: never updated, even by the database owner.
+  await assert.rejects(api.su("UPDATE sync_deleted_attachment_archive SET prior_payload_raw = 'x' WHERE id = $1", [archived.id]), /append-only/);
+  await assert.rejects(api.su("UPDATE sync_attachment_restore_log SET reason = 'x' WHERE id = $1", [logRow.id]), /append-only/);
+  const afterFirst = (await list()).find((i) => i.id === entry.id);
+  assert.equal(afterFirst.restores.length, 1);
+  assert.equal(afterFirst.restores[0].reason, "deleted by mistake on the tablet");
+  assert.equal(afterFirst.restorable, true, "an entry stays restorable");
 
-  // ── Overwrite: a valid update that points the row at a junk file is archived and restorable ──
-  const junk = JSON.stringify({ ...JSON.parse(mediaPayload), object_key: `test/media/${tenant.id}/x/y/${"0".repeat(64)}`, content_sha256: "0".repeat(64) });
-  const overwrite = await exchange(A, [item("media_attachments", mediaId, 4, 3, junk, "upsert")]);
-  assert.equal(overwrite.acknowledged_items.length, 1, "acceptance unchanged");
-  const [ow] = await api.su(
+  // The same entry can be restored again (same payload now: nothing replaced, a new version).
+  const again = await restoreNow(entry.id);
+  assert.equal(again.row_version, 4);
+  assert.equal(again.replaced_archive_id, null);
+  assert.equal((await list()).find((i) => i.id === entry.id).restores.length, 2);
+
+  // ── Caption edit: archived (never destroyed) but hidden from the default listing ─────────────
+  const captioned = mediaPayload.replace("before repair", "after repair");
+  assert.equal((await exchange(A, [item("media_attachments", mediaId, 5, 4, captioned, "upsert")])).acknowledged_items.length, 1);
+  const [caption] = await api.su(
     "SELECT * FROM sync_deleted_attachment_archive WHERE tenant_id = $1 AND entity_sync_id = $2 AND change_kind = 'overwrite'",
     [tenant.id, mediaId],
   );
-  assert.ok(ow, "the overwrite is archived");
-  assert.equal(ow.prior_payload_raw, mediaPayload);
-  assert.equal(Number(ow.prior_row_version), 3);
-  assert.equal(ow.change_operation, "upsert");
-  assert.equal(Number(ow.change_row_version), 4);
-  assert.equal(ow.changed_by_machine_fingerprint, A.fp);
-  // Re-sending the same payload destroys nothing: not archived.
-  await exchangeV1(A, [item("media_attachments", mediaId, 4, 3, junk, "upsert")]);
-  const overwrites = await api.su(
-    "SELECT count(*)::int AS n FROM sync_deleted_attachment_archive WHERE entity_sync_id = $1 AND change_kind = 'overwrite'",
-    [mediaId],
-  );
-  assert.equal(overwrites[0].n, 1);
-  const owRestore = await api.call("POST", restoreUrl(ow.id), token, undefined, privileged);
-  assert.equal(owRestore.status, 200, owRestore.text);
-  assert.equal(owRestore.json.row_version, 5);
-  const backFromOverwrite = (await pullAll(B)).find((i) => i.entity_sync_id === mediaId);
-  assert.equal(backFromOverwrite.payload_json, mediaPayload, "the overwritten payload is back, byte for byte");
-  assert.equal(backFromOverwrite.row_version, 5);
+  assert.equal(caption.locator_changed, false, "a caption edit does not move the file");
+  assert.ok(!(await list()).some((i) => i.id === String(caption.id)), "hidden by default");
+  assert.ok((await list("?filter=all")).some((i) => i.id === String(caption.id)), "shown with filter=all");
 
-  // ── Refused after the entity changed: delete again, then re-create, then restore → 409 ─────
-  const del2 = await exchange(B, [item("media_attachments", mediaId, 6, 5, JSON.stringify({ entity_sync_id: mediaId }), "delete")]);
-  assert.equal(del2.acknowledged_items.length, 1);
-  const second = (await api.call("GET", `${listUrl}?status=open`, token)).json.items;
-  assert.equal(second.length, 1);
-  assert.equal(second[0].restore_blocker, null);
-  const recreated = await exchange(A, [item("media_attachments", mediaId, 7, 6, mediaPayload, "upsert")]);
-  assert.equal(recreated.acknowledged_items.length, 1);
-  const archivedForMedia = await api.su("SELECT count(*)::int AS n FROM sync_deleted_attachment_archive WHERE entity_sync_id = $1", [mediaId]);
-  assert.equal(archivedForMedia[0].n, 3, "re-creating over a delete marker destroys nothing: not archived");
-  const afterRecreate = await api.call("POST", restoreUrl(second[0].id), token, undefined, privileged);
-  assert.equal(afterRecreate.status, 409);
-  assert.equal(afterRecreate.json.error, "entity_changed_since_delete");
-  assert.equal((await api.call("GET", `${listUrl}?status=open`, token)).json.items[0].restore_blocker, "entity_changed_since_delete");
+  // ── Probe m1: delete, then delete again. The good version stays restorable ──────────────────
+  const good = (id) => JSON.stringify({ entity_sync_id: id, object_key: `test/media/${tenant.id}/equipment/eq-9/${"a".repeat(64)}`, content_sha256: "a".repeat(64) });
+  const junkOf = (id) => JSON.stringify({ entity_sync_id: id, object_key: `test/media/${tenant.id}/x/y/${"0".repeat(64)}`, content_sha256: "0".repeat(64) });
+  const entriesOf = async (id) =>
+    api.su("SELECT id, change_kind, prior_state, change_row_version FROM sync_deleted_attachment_archive WHERE tenant_id = $1 AND entity_sync_id = $2 ORDER BY id", [tenant.id, id]);
+  await exchange(A, [item("media_attachments", "m1", 1, null, good("m1"), "upsert")]);
+  await exchange(B, [item("media_attachments", "m1", 2, 1, JSON.stringify({ entity_sync_id: "m1" }), "delete")]);
+  await exchange(B, [item("media_attachments", "m1", 3, 2, JSON.stringify({ entity_sync_id: "m1", x: 1 }), "delete")]);
+  const m1 = await entriesOf("m1");
+  assert.deepEqual(m1.map((e) => e.prior_state), ["present", "already_deleted"]);
+  const m1Second = (await list()).find((i) => i.id === String(m1[1].id));
+  const nothing = await api.call("POST", restoreUrl(m1[1].id), token, expect(m1Second.current), privileged);
+  assert.equal(nothing.json.error, "nothing_to_restore");
+  assert.equal((await restoreNow(m1[0].id)).row_version, 4);
+  assert.equal((await pullAll(A)).find((i) => i.entity_sync_id === "m1")?.payload_json, good("m1"), "the good version is back");
+
+  // ── Probe m2: junk overwrite, then the same junk again. The good version stays restorable ─────
+  await exchange(A, [item("media_attachments", "m2", 1, null, good("m2"), "upsert")]);
+  await exchange(B, [item("media_attachments", "m2", 2, 1, junkOf("m2"), "upsert")]);
+  await exchange(B, [item("media_attachments", "m2", 3, 2, junkOf("m2"), "upsert")]);
+  const m2 = await entriesOf("m2");
+  assert.deepEqual(m2.map((e) => e.change_kind), ["overwrite"], "the identical re-send replaced nothing new");
+  const m2Entry = (await list()).find((i) => i.id === String(m2[0].id));
+  assert.equal(m2Entry.locator_changed, true, "a junk object key moves the file: listed by default");
+  const m2Restore = await restoreNow(m2[0].id);
+  assert.equal(m2Restore.row_version, 4);
+  assert.notEqual(m2Restore.replaced_archive_id, null, "the junk the restore replaced is archived too");
+  const [m2Replaced] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE id = $1", [m2Restore.replaced_archive_id]);
+  assert.equal(m2Replaced.change_kind, "restore");
+  assert.equal(m2Replaced.prior_payload_raw, junkOf("m2"));
+  assert.equal(m2Replaced.changed_by_machine_fingerprint, "server:attachment-restore");
+  assert.match(m2Replaced.changed_by_operator, /^user_/);
+  assert.equal(m2Replaced.changed_by_license_id, null);
+  assert.equal((await pullAll(B)).find((i) => i.entity_sync_id === "m2")?.payload_json, good("m2"));
+
+  // ── Probe m3: junk overwrite, then delete. Either archived version can be restored ──────────
+  await exchange(A, [item("media_attachments", "m3", 1, null, good("m3"), "upsert")]);
+  await exchange(B, [item("media_attachments", "m3", 2, 1, junkOf("m3"), "upsert")]);
+  await exchange(B, [item("media_attachments", "m3", 3, 2, JSON.stringify({ entity_sync_id: "m3" }), "delete")]);
+  const m3 = await entriesOf("m3");
+  assert.deepEqual(m3.map((e) => [e.change_kind, e.prior_state]), [["overwrite", "present"], ["delete", "present"]]);
+  const m3Restore = await restoreNow(m3[0].id);
+  assert.equal(m3Restore.row_version, 4);
+  assert.equal(m3Restore.replaced_archive_id, null, "it replaced a delete marker");
+  assert.equal((await pullAll(A)).find((i) => i.entity_sync_id === "m3")?.payload_json, good("m3"));
+
+  // Concurrency: a device change after the listing → 409 with the new state; listing again works.
+  const m3Listed = (await list()).find((i) => i.id === String(m3[1].id));
+  await exchange(A, [item("media_attachments", "m3", 5, 4, junkOf("m3"), "upsert")]);
+  const raced = await api.call("POST", restoreUrl(m3[1].id), token, expect(m3Listed.current), privileged);
+  assert.equal(raced.status, 409);
+  assert.equal(raced.json.error, "entity_changed_since_listing");
+  assert.equal(raced.json.current.row_version, 5);
+  assert.equal((await restoreNow(m3[0].id)).row_version, 6, "after listing again");
 
   // ── Equipment photo deleted with a LIVE prior row, paired with its "Photo or file" entry ────
   const photoPath = "asset_photos/101/4b1d.jpg";
@@ -379,14 +445,13 @@ try {
   );
   const photoDel = await exchange(B, [item("asset_photos", "photo-1", 2, 1, JSON.stringify({ entity_sync_id: "photo-1" }), "delete")]);
   assert.equal(photoDel.acknowledged_items.length, 1);
-  const photoEntry = (await api.call("GET", listUrl, token)).json.items.find((i) => i.entity_sync_id === "photo-1");
+  const photoEntry = (await list()).find((i) => i.entity_sync_id === "photo-1");
   assert.equal(photoEntry.prior_state, "present");
-  assert.equal(photoEntry.restore_blocker, null);
   assert.deepEqual(photoEntry.companion, { entity_sync_id: "media-photo-1", archive_id: null, live: true, file_on_server: true });
   assert.equal(photoEntry.file_on_server, true);
   // The companion deleted too: the listing points at its archive entry.
   await exchange(B, [item("media_attachments", "media-photo-1", 2, 1, JSON.stringify({ entity_sync_id: "media-photo-1" }), "delete")]);
-  const paired = (await api.call("GET", listUrl, token)).json.items;
+  const paired = await list();
   const companionEntry = paired.find((i) => i.entity_sync_id === "media-photo-1");
   assert.deepEqual(paired.find((i) => i.entity_sync_id === "photo-1").companion, {
     entity_sync_id: "media-photo-1",
@@ -394,13 +459,27 @@ try {
     live: false,
     file_on_server: true,
   });
-  for (const id of [photoEntry.id, companionEntry.id]) {
-    const r = await api.call("POST", restoreUrl(id), token, undefined, privileged);
-    assert.equal(r.status, 200, r.text);
-  }
+  await restoreNow(photoEntry.id);
+  await restoreNow(companionEntry.id);
   const photoBack = await pullAll(A);
   assert.equal(photoBack.find((i) => i.entity_sync_id === "photo-1")?.payload_json, photoPayload);
   assert.equal(photoBack.find((i) => i.entity_sync_id === "media-photo-1")?.payload_json, companionPayload);
+
+  // Request and work order attachments pair with their companion the same way.
+  for (const [type, path] of [
+    ["di_attachments", "di_attachments/7/leak.jpg"],
+    ["work_order_attachments", "work_order_attachments/12/report.pdf"],
+  ]) {
+    const mediaPair = `media-${type}`;
+    await exchange(A, [
+      item("media_attachments", mediaPair, 1, null, JSON.stringify({ entity_sync_id: mediaPair, relative_path: path }), "upsert"),
+      item(type, `${type}-pair`, 1, null, JSON.stringify({ entity_sync_id: `${type}-pair`, relative_path: path }), "upsert"),
+    ]);
+    await exchange(B, [item(type, `${type}-pair`, 2, 1, JSON.stringify({ entity_sync_id: `${type}-pair` }), "delete")]);
+    const e = (await list()).find((i) => i.entity_sync_id === `${type}-pair`);
+    assert.deepEqual(e.companion, { entity_sync_id: mediaPair, archive_id: null, live: true, file_on_server: false }, type);
+    assert.equal(e.file_on_server, false, `${type}: no manifest, no server copy`);
+  }
 
   // ── v1 delete with a LOWER version than the row it removes: archived; restore goes above both ──
   const diPayload = JSON.stringify({ entity_sync_id: "di-att-1", file_name: "leak.pdf", relative_path: "di_attachments/7/leak.pdf" });
@@ -412,18 +491,33 @@ try {
   assert.equal(Number(v1Del.prior_row_version), 7);
   assert.equal(Number(v1Del.change_row_version), 1);
   assert.equal(v1Del.changed_by_machine_fingerprint, B.fp);
-  const v1Restore = await api.call("POST", restoreUrl(v1Del.id), token, undefined, privileged);
-  assert.equal(v1Restore.status, 200, v1Restore.text);
-  assert.equal(v1Restore.json.row_version, 8, "max(current 1, prior 7) + 1");
+  assert.equal((await restoreNow(v1Del.id)).row_version, 8, "max(current 1, prior 7) + 1");
   const diBack = (await pullAll(A)).find((i) => i.entity_sync_id === "di-att-1");
   assert.equal(diBack.row_version, 8);
   assert.equal(diBack.payload_json, diPayload);
 
+  // ── ABA: v1 writes (version, payload) back to an earlier state; nothing is lost ──────────────
+  const P1 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/a.pdf" });
+  const P2 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/b.pdf" });
+  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
+  await exchangeV1(B, [item("work_order_attachments", "aba", 2, null, P2, "upsert")]);
+  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
+  const aba = await api.su(
+    "SELECT id, prior_payload_raw, prior_row_version FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'aba' ORDER BY id",
+  );
+  assert.deepEqual(aba.map((e) => [e.prior_payload_raw, Number(e.prior_row_version)]), [[P1, 1], [P2, 2]], "both versions archived");
+  const abaP2 = await restoreNow(aba[1].id);
+  assert.equal(abaP2.row_version, 3, "above every version seen (2), not just current (1)");
+  assert.notEqual(abaP2.replaced_archive_id, null, "P1 (live) archived again by the restore");
+  const abaP1 = await restoreNow(aba[0].id);
+  assert.equal(abaP1.row_version, 4);
+  assert.equal((await pullAll(B)).find((i) => i.entity_sync_id === "aba")?.payload_json, P1);
+
   // ── A document link is archived too ───────────────────────────────────────────────────────
-  await exchange(A, [item("asset_document_links", "doclink-1", 1, null, JSON.stringify({ entity_sync_id: "doclink-1", title: "Manual" }), "upsert")]);
-  await exchange(B, [item("asset_document_links", "doclink-1", 2, 1, JSON.stringify({ entity_sync_id: "doclink-1" }), "delete")]);
-  const [docRow] = await api.su("SELECT prior_state, change_kind FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'doclink-1'");
-  assert.deepEqual(docRow, { prior_state: "present", change_kind: "delete" });
+  await exchange(A, [item("asset_document_links", "doclink-1", 1, null, JSON.stringify({ entity_sync_id: "doclink-1", document_ref: "DOC-1" }), "upsert")]);
+  await exchange(B, [item("asset_document_links", "doclink-1", 2, 1, JSON.stringify({ entity_sync_id: "doclink-1", document_ref: "DOC-9" }), "upsert")]);
+  const [docRow] = await api.su("SELECT prior_state, change_kind, locator_changed FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'doclink-1'");
+  assert.deepEqual(docRow, { prior_state: "present", change_kind: "overwrite", locator_changed: true }, "document_ref is the locator");
 
   // ── Deletes of append-only history are refused (v2 and v1); upserts are not ──────────────────
   const evidence = JSON.stringify({ entity_sync_id: "ev-1", note: "gauge reading photo" });
@@ -448,12 +542,10 @@ try {
   const [ghostRow] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'photo-never-seen'");
   assert.equal(ghostRow.prior_state, "unknown");
   assert.equal(ghostRow.prior_payload_raw, null);
-  const ghostRestore = await api.call("POST", restoreUrl(ghostRow.id), token, undefined, privileged);
+  const ghostListed = (await list()).find((i) => i.id === String(ghostRow.id));
+  assert.equal(ghostListed.restorable, false);
+  const ghostRestore = await api.call("POST", restoreUrl(ghostRow.id), token, expect(ghostListed.current), privileged);
   assert.equal(ghostRestore.json.error, "nothing_to_restore");
-  // Deleting it again: the prior state is a delete marker.
-  await exchange(A, [item("asset_photos", "photo-never-seen", 3, 2, JSON.stringify({ id: 9 }), "delete")]);
-  const [again] = await api.su("SELECT prior_state FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'photo-never-seen' ORDER BY id DESC LIMIT 1");
-  assert.equal(again.prior_state, "already_deleted");
   // A delete of an ordinary type is not archived.
   await exchange(A, [item("equipment", "eq-plain", 1, null, JSON.stringify({ code: "EQ" }))]);
   await exchange(A, [item("equipment", "eq-plain", 2, 1, JSON.stringify({ code: "EQ" }), "delete")]);
@@ -511,13 +603,13 @@ try {
   assert.equal((await api.su("SELECT count(*)::int AS n FROM sync_forensic_change_log WHERE tenant_id = $1", [tenant.id]))[0].n, 6);
   assert.ok((await api.su("SELECT count(*)::int AS n FROM sync_deleted_attachment_archive WHERE tenant_id = $1", [tenant.id]))[0].n >= 4);
 
-  // ── Tenant delete purges both tables ───────────────────────────────────────────────────────
+  // ── Tenant delete purges the archive, the restore log and the forensic log ───────────────────────────────────────────────────────
   const purge = await api.call("DELETE", `/api/v1/tenants/${tenant.id}`, token, { confirm_slug: "archive" }, {
     "X-Operator-Reason": "archive test cleanup",
     "X-Step-Up-Token": await owner.stepUp("tenant_delete"),
   });
   assert.equal(purge.status, 204, purge.text);
-  for (const table of ["sync_deleted_attachment_archive", "sync_forensic_change_log"]) {
+  for (const table of ["sync_deleted_attachment_archive", "sync_attachment_restore_log", "sync_forensic_change_log"]) {
     assert.equal((await api.su(`SELECT count(*)::int AS n FROM ${table} WHERE tenant_id = $1`, [tenant.id]))[0].n, 0, `${table} purged`);
   }
 

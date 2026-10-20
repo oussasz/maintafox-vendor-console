@@ -39,7 +39,8 @@ the previous images. An open resynchronisation request is then simply ignored. R
 # Deleted attachments and the forensic device log (CMMS Advisor decision 2026-10-20)
 
 > **NEW MIGRATION `017_sync_attachment_archive`** (new tables only: `sync_deleted_attachment_archive`,
-> `sync_forensic_change_log`, tenant row-level security like the other sync tables). New step-up kind
+> `sync_attachment_restore_log`, `sync_forensic_change_log`, tenant row-level security like the
+> other sync tables). New step-up kind
 > `sync_attachment_restore` in `shared/step-up-actions.v1.json` (console-only for now:
 > `rust_variant: null`). The sync registry gains a required `append_only` flag and the server now
 > refuses deletes of append-only history (`operation_not_allowed_for_type`, SYNC_PROTOCOL_V2.md §2,
@@ -61,19 +62,26 @@ put it back.
 **Archived types.** `media_attachments`, `asset_photos`, `di_attachments`, `work_order_attachments`,
 `library_documents`, `asset_document_links`, `inventory_document_links`.
 
-**Archive.** When an exchange (v1 or v2) accepts, for one of these types,
-- a `delete` or `archive` (always recorded: `prior_state` `present`, or `already_deleted` / `unknown`
-  when the server held a delete marker or nothing, which cannot be restored), or
-- an `upsert` / `update` / `create` that replaces a **live** row with a **different** payload
-  (`change_kind` `overwrite`: a valid update with a junk `object_key` or `relative_path` destroys an
-  attachment as surely as a delete; an identical re-send or a re-creation over a delete marker
-  destroys nothing and is not archived),
+**Rule: hide, never destroy.** Every replacement of a **live** row of one of these types is
+archived, so no version is ever lost:
+- an accepted device `delete` or `archive` (always recorded: `prior_state` `present`, or
+  `already_deleted` / `unknown` when the server held a delete marker or nothing; those two keep no
+  version and cannot be restored);
+- an accepted device `upsert` / `update` / `create` that replaces a live row with a **different**
+  payload (`change_kind` `overwrite`: a junk `object_key` or `relative_path` destroys an attachment
+  as surely as a delete; an identical re-send or a re-creation over a delete marker destroys nothing
+  and is not archived);
+- an operator restore that replaces a live row with a different payload (`change_kind` `restore`,
+  sender = the server `server:attachment-restore` and the operator id).
 
-the same transaction copies the state the server held just before it (payload exactly as stored,
-row version, operation, owner, origin device, object key / checksum / size / relative path from the
-payload and the media manifest) and the device that sent the change (licence id, fingerprint,
-operation, new row version, time) into `sync_deleted_attachment_archive`. What the device is told
-(accepted / refused / conflict) does not change.
+Each entry holds the state the server held just before the change (payload exactly as stored, row
+version, operation, owner, origin device, object key / checksum / size / relative path /
+document_ref from the payload and the media manifest), `locator_changed` (the change moved the file
+reference: `object_key`, `content_sha256`, `relative_path` or, for document links, `document_ref`;
+always true for a delete; false for a caption or title edit) and who sent the change (licence id +
+fingerprint, or the operator), operation, new row version and time. It is written in the same
+transaction as the change, before the state is overwritten, and never updated afterwards (UPDATE
+trigger, UPDATE revoked). What a device is told (accepted / refused / conflict) does not change.
 
 **Files.** The server keeps the deleted or replaced entry and the device that sent the change.
 Files uploaded to the server are never deleted (the API has no code that deletes tenant media
@@ -84,26 +92,36 @@ entry (same `relative_path`) and says whether the server has a copy of the file 
 A file that was never uploaded (e.g. from a PC that was offline when it was deleted) cannot be
 recovered.
 
-**Listing.** `GET /api/v1/tenants/:tenantId/sync/deleted-attachments[?status=all|open|restored]`
-(`sync.operate`, newest first, at most 500): entity type and id, delete or replace, when, the device
-that sent the change, checksum and size, whether the server has the file, the companion entry,
-restored (when, by whom, reason), and why it cannot be restored now if so. Never the payload or the
-file.
+**Listing.** `GET /api/v1/tenants/:tenantId/sync/deleted-attachments[?filter=relevant|all][&since=<RFC 3339>]`
+(`sync.operate`, newest first, at most 500). `relevant` (default): deletes and changes with
+`locator_changed`; `all`: also caption / title edits and restores that kept the file. Each entry:
+entity type and id, kind of change, when, who sent it, archived version, checksum and size, whether
+the server has the file, the companion entry, whether it can be restored, the entity's **current**
+state on the server (`row_version`, `payload_hash`, `deleted`) and every restore of the entry (when,
+by whom, reason). Never the payload or the file.
 
-**Restore.** `POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore`
-(`sync.operate`, `X-Operator-Reason`, step-up `sync_attachment_restore`, optional `Idempotency-Key`;
-audited `sync_attachment_restored`, category `sync_repair`, identifiers only). Under the tenant sync
-lock (taken before the audit-chain lock, like every sync writer) it checks that the current state is
-still the change the archive entry followed (same row version and payload hash), then appends a new
-change from origin `server:attachment-restore`: the prior payload byte for byte (same
-`payload_hash`), operation as before, `row_version` = max(current, prior) + 1 (a v1 delete may carry
-a lower version than the row it removed) with `base_row_version` = current. Every device, the one
-that sent the change included, receives it like a change from another device (v2 delta, snapshot,
-v1 log); a media attachment received again queues its file download on the desktop. A restore is
-not itself archived. Refusals: `404 archive_not_found | tenant_not_found`, `409 already_restored |
-nothing_to_restore | entity_changed_since_delete` (re-created, edited or deleted again since:
-restoring would overwrite that change). A device edit made from an older version after the restore
-gets the usual conflict.
+**Restore.** `POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore`, body
+`{ "expected_current_row_version": n | null, "expected_current_payload_hash": "hex" | null }` (the
+entity's current state as the listing showed it), `sync.operate`, `X-Operator-Reason`, step-up
+`sync_attachment_restore`, optional `Idempotency-Key`; audited `sync_attachment_restored`, category
+`sync_repair`, identifiers only (and the state it replaces).
+- Any entry that kept a version (`prior_state` `present`) can be restored, whatever happened since,
+  and as often as needed; each restore is recorded in `sync_attachment_restore_log` (who, when, why,
+  ledger record, version written, archive entry of what it replaced).
+- Under the tenant sync lock (taken before the audit-chain lock, like every sync writer) the server
+  compares the expected current state with the real one: if it changed since the listing, `409
+  entity_changed_since_listing` with the new `current` (the console reloads the list so the operator
+  sees what will be replaced and confirms again).
+- It archives the live row it replaces (if the payload differs), then appends a new change from
+  origin `server:attachment-restore`: the entry's prior payload byte for byte (same `payload_hash`),
+  operation as before, `row_version` above every version the server has seen for the entity (the
+  current one and every archived one; a v1 device may write versions backwards) with
+  `base_row_version` = current. Every device, the one that sent the change included, receives it
+  like a change from another device (v2 delta, snapshot, v1 log); a media attachment received again
+  queues its file download on the desktop.
+- Refusals: `400` invalid body, `404 archive_not_found | tenant_not_found`, `409 nothing_to_restore`
+  (the entry kept no version) or `409 entity_changed_since_listing`. A device edit made from an
+  older version after the restore gets the usual conflict.
 
 **Forensic device log.** Every accepted change of `site_settings` (including the three-person
 lock-removal rule), `site_setting_events` and `permit_types` adds one row to
@@ -115,7 +133,8 @@ and `UPDATE` is revoked from `mfx_app`). Growth is one small row per settings ch
 
 **Retention and privacy.** Retention never touches the archive or the forensic log. Archived prior
 payloads (which may hold captions, file names and other customer text) are kept with **no time
-limit**: they are removed only when the tenant is deleted (tenant delete purges both tables). The
+limit**: they are removed only when the tenant is deleted (tenant delete purges the archive, the
+restore log and the forensic log). The
 forensic log holds identifiers and a hash only. A data-subject or customer request to erase content
 before tenant deletion currently needs a manual, audited database operation.
 
@@ -134,8 +153,8 @@ before tenant deletion currently needs a manual, audited database operation.
 5. Check: a customer page, Sync tab, shows "Deleted or replaced photos and attachments".
 
 **Rollback.** Remove version 17 from `schema_migrations` before starting the previous images (they
-ignore the two tables, and each image carries its own copy of `shared/`, so the previous registry
+ignore the new tables, and each image carries its own copy of `shared/`, so the previous registry
 file without `append_only` comes back with them). Re-deploying
-later needs the two tables and their two trigger functions (`mfx_sync_attachment_archive_guard`,
-`mfx_sync_forensic_log_append_only`) dropped first, which loses the archive and the forensic log:
-export them first if they hold anything.
+later needs the three tables and their trigger functions (`mfx_sync_attachment_archive_immutable`,
+`mfx_sync_forensic_log_append_only`) dropped first, which loses the archive, the restore log and the
+forensic log: export them first if they hold anything.

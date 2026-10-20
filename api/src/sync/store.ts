@@ -353,6 +353,7 @@ export const SYNC_TENANT_TABLES = [
   "sync_media_manifest",
   // Migration 017: archived attachment deletes and the forensic device log (never compacted by
   // retention; removed only here, with their tenant).
+  "sync_attachment_restore_log",
   "sync_deleted_attachment_archive",
   "sync_forensic_change_log",
 ] as const;

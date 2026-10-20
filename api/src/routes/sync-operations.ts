@@ -16,7 +16,7 @@ import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
 import { resolveActorId, sendValidationError } from "../app/http.js";
 import { structuredLog } from "../app/runtime.js";
 import { collectSyncHealth } from "../ops/sync-health.js";
-import { checkRestorable, emitRestore, listArchivedDeletes } from "../sync/attachment-archive.js";
+import { checkRestorable, emitRestore, listArchivedChanges } from "../sync/attachment-archive.js";
 import { lockTenantSync } from "../sync/store.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
@@ -30,7 +30,20 @@ export const DEVICE_TIMELINE_MAX_EVENTS_PER_KIND = 200;
 export const DELETED_ATTACHMENTS_MAX_ROWS = 500;
 
 const DeletedAttachmentsQuery = z
-  .object({ status: z.enum(["all", "open", "restored"]).optional() })
+  .object({
+    /** relevant (default): deletes and changes that moved the file reference; all: every archived change. */
+    filter: z.enum(["relevant", "all"]).optional(),
+    /** Only changes at or after this time (RFC 3339). */
+    since: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
+
+/** The entity's current state as the operator saw it in the listing (null = no state). */
+const RestoreBody = z
+  .object({
+    expected_current_row_version: z.number().int().min(0).nullable(),
+    expected_current_payload_hash: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+  })
   .strict();
 
 const TimelineQuery = z
@@ -236,10 +249,11 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
   });
 
   /**
-   * Photos, attachments and document links deleted or replaced by synchronisation (archive,
-   * migration 017), newest first: entity, when, the device that sent the change, whether a copy of
-   * the file is on the server, the companion "Photo or file" entry, whether it was restored and whether it can be
-   * restored now. Never the payload or the file.
+   * Photos, attachments and document links deleted or replaced (archive, migration 017), newest
+   * first: entity, kind of change, when, who sent it (device, or operator for a restore), whether
+   * it moved the file reference, whether a copy of the file is on the server, the companion "Photo
+   * or file" entry, the entity's current state (sent back on restore) and the restores of the
+   * entry. Never the payload or the file.
    */
   app.get("/api/v1/tenants/:tenantId/sync/deleted-attachments", authMiddleware, async (req, res) => {
     const parsed = DeletedAttachmentsQuery.safeParse(req.query ?? {});
@@ -253,9 +267,10 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
       res.status(404).json({ error: "tenant_not_found" });
       return;
     }
-    const items = await listArchivedDeletes(db, {
+    const items = await listArchivedChanges(db, {
       tenantId,
-      status: parsed.data.status ?? "all",
+      filter: parsed.data.filter ?? "relevant",
+      since: parsed.data.since ? new Date(parsed.data.since) : null,
       limit: DELETED_ATTACHMENTS_MAX_ROWS,
     });
     // Operator reasons and device ids: not for shared caches.
@@ -264,11 +279,14 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
   });
 
   /**
-   * Restore: re-issues the archived row to every device as a new server-originated change (same
-   * payload, row_version = current + 1). Reason + step-up `sync_attachment_restore`, audited
-   * (sync_attachment_restored). Refusals: 404 tenant_not_found | archive_not_found;
-   * 409 already_restored | nothing_to_restore (no live row before the delete) |
-   * entity_changed_since_delete (re-created, updated or deleted again since the archived change).
+   * Restore: re-issues the entry's archived row to every device as a new server-originated change
+   * (same payload, row_version above every version seen), whatever happened since, and as often as
+   * asked; a live row it replaces is archived first (change_kind restore), so nothing is destroyed.
+   * Body: the entity's current row version and payload hash from the listing (null, null when the
+   * server has no state). Reason + step-up `sync_attachment_restore`, audited
+   * (sync_attachment_restored). Refusals: 400 invalid body; 404 tenant_not_found |
+   * archive_not_found; 409 nothing_to_restore (the entry archived no live row) |
+   * entity_changed_since_listing (with `current`: list again and confirm what will be replaced).
    */
   app.post("/api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore", authMiddleware, async (req, res) => {
     const { tenantId, archiveId } = req.params;
@@ -277,6 +295,15 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
       res.status(403).json({ error: "privileged_action_guard_failed", reason: "missing_reason_code" });
       return;
     }
+    const body = RestoreBody.safeParse(req.body ?? {});
+    if (!body.success) {
+      sendValidationError(res, body, "body");
+      return;
+    }
+    const expected = {
+      row_version: body.data.expected_current_row_version,
+      payload_hash: body.data.expected_current_payload_hash,
+    };
     await runIdempotent(req, res, async () => {
       // The tenant sync lock first (like every sync writer: exchanges append under it, so server_seq
       // values become visible in order and the state checked below cannot change before the
@@ -284,8 +311,8 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
       await lockTenantSync(db, tenantId);
       const tenant = await db.get<{ id: string }>("SELECT id FROM tenants WHERE id = ?", tenantId);
       if (!tenant) return { status: 404, body: { error: "tenant_not_found" } };
-      const check = await checkRestorable(db, tenantId, archiveId);
-      if (!check.ok) return { status: check.status, body: { error: check.error } };
+      const check = await checkRestorable(db, tenantId, archiveId, expected);
+      if (!check.ok) return { status: check.status, body: check.body };
       const { archive } = check;
       const guard = await requirePrivilegedAction(req, {
         action_code: "sync_attachment_restored",
@@ -303,14 +330,15 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
           changed_by_license_id: archive.changed_by_license_id,
           change_row_version: archive.change_row_version,
           payload_hash: archive.prior_payload_hash,
+          replaces: check.current,
           reason,
         },
       });
       if (!guard.ok) return { status: guard.status, body: guard.body };
       const emitted = await emitRestore(db, payloadCipher, {
         archive,
-        currentRowVersion: check.currentRowVersion,
-        restoredBy: resolveActorId(req),
+        current: check.current,
+        operator: resolveActorId(req),
         reason,
         auditRecordId: guard.auditRecordId,
       });
@@ -329,6 +357,7 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
           entity_sync_id: archive.entity_sync_id,
           row_version: emitted.rowVersion,
           server_seq: emitted.serverSeq,
+          replaced_archive_id: emitted.replacedArchiveId === null ? null : String(emitted.replacedArchiveId),
           audit_record_id: guard.auditRecordId,
         },
       };
