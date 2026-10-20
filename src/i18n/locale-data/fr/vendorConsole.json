@@ -613,6 +613,102 @@
     "loading": "Chargement de la télémétrie de synchronisation…",
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
+    "deletedAttachments": {
+      "title": "Photos et pièces jointes supprimées ou remplacées",
+      "body": "Le serveur garde l'élément supprimé ou remplacé et l'appareil qui a envoyé la modification. Les fichiers envoyés au serveur ne sont jamais supprimés. Pour une pièce jointe d'équipement, de demande ou d'ordre de travail, restaurez aussi son élément « Photo ou fichier » pour que les appareils téléchargent à nouveau le fichier. Un fichier qui n'a jamais été envoyé (par exemple depuis un PC hors ligne au moment de la suppression) ne peut pas être récupéré.",
+      "loading": "Chargement des pièces jointes supprimées ou remplacées…",
+      "empty": "Aucune photo ni pièce jointe n'a été supprimée ou remplacée par la synchronisation.",
+      "col": {
+        "deletedAt": "Modifié le",
+        "item": "Élément",
+        "device": "Appareil qui a envoyé la modification",
+        "state": "Version archivée",
+        "action": "Action",
+        "now": "Sur le serveur maintenant"
+      },
+      "type": {
+        "media_attachments": "Photo ou fichier",
+        "asset_photos": "Photo d'équipement",
+        "di_attachments": "Pièce jointe de demande",
+        "work_order_attachments": "Pièce jointe d'ordre de travail",
+        "library_documents": "Document de bibliothèque",
+        "asset_document_links": "Lien de document d'équipement",
+        "inventory_document_links": "Lien de document de stock"
+      },
+      "state": {
+        "deleted": "Supprimé",
+        "restored": "Restauré",
+        "replaced": "Remplacé",
+        "replacedByRestore": "Remplacé par une restauration"
+      },
+      "restoredBy": "Restauré le {{at}} par {{by}}",
+      "restore": "Restaurer",
+      "restoreTitle": "Restaurer cette version ?",
+      "restoreBody": "{{id}} : la version {{archived}}, conservée le {{at}}, remplace ce que le serveur a maintenant : {{current}}. Elle est envoyée à tous les appareils de ce client ; ce qu'elle remplace est conservé et peut aussi être restauré.",
+      "restoreConfirm": "Restaurer sur tous les appareils",
+      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation.",
+      "file": {
+        "onServer": "Copie du fichier sur le serveur",
+        "notOnServer": "Pas de copie du fichier sur le serveur",
+        "unknown": "Copie du fichier sur le serveur inconnue"
+      },
+      "companion": {
+        "live": "Élément Photo ou fichier : {{id}} (présent)",
+        "archived": "Élément Photo ou fichier : {{id}} (supprimé ou remplacé : restaurez-le aussi)"
+      },
+      "byOperator": "Restauration par {{operator}}",
+      "archivedVersion": "Version {{version}} conservée",
+      "prior": {
+        "already_deleted": "Déjà supprimé : rien de conservé",
+        "unknown": "Inconnu du serveur : rien de conservé",
+        "present": "Version conservée"
+      },
+      "current": {
+        "none": "Aucun élément sur le serveur",
+        "live": "Version {{version}} (présente)",
+        "deleted": "Version {{version}} (supprimée)"
+      },
+      "period": {
+        "label": "Période",
+        "all": "Tout",
+        "days_one": "Dernier {{count}} jour",
+        "days_other": "Derniers {{count}} jours"
+      },
+      "view": {
+        "label": "Afficher",
+        "kept": "Supprimés ou remplacés (versions conservées)",
+        "nothing_kept": "Suppressions sans version conservée (jamais reçu ou déjà supprimé)",
+        "all": "Tout"
+      },
+      "search": {
+        "label": "Identifiant de l'élément",
+        "submit": "Rechercher"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} suppression sans version conservée ({{type}}, un élément que le serveur n'a jamais eu ou avait déjà supprimé), depuis l'appareil {{device}}",
+        "summary_other": "{{count}} suppressions sans version conservée ({{type}}, des éléments que le serveur n'a jamais eus ou avait déjà supprimés), depuis l'appareil {{device}}",
+        "show": "Les afficher"
+      },
+      "loadMore": "Afficher plus",
+      "device": {
+        "label": "Modifié par l'appareil",
+        "all": "Tous les appareils"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "Tous les types"
+      },
+      "before": {
+        "label": "Jusqu'au (date)"
+      },
+      "crossDevice": {
+        "label": "Seulement les versions écrites par un autre appareil",
+        "help": "Masque les modifications qu'un appareil a faites sur des éléments qu'il avait lui-même écrits, pour qu'un appareil ne puisse pas noyer un vrai élément sous ses propres suppressions. Décochez pour tout voir."
+      },
+      "keptSummary_one": "{{count}} modification avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "keptSummary_other": "{{count}} modifications avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "priorOrigin": "version écrite par {{device}}"
+    },
     "retry": "Réessayer"
   },
   "rollouts": {
@@ -907,7 +1003,8 @@
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
       "own_mfa_change": "générer de nouveaux codes de secours",
-      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur"
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur",
+      "sync_attachment_restore": "restaurer une photo ou une pièce jointe supprimée par la synchronisation"
     }
   },
   "account": {

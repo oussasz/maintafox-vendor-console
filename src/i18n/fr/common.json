@@ -175,6 +175,8 @@
       "same_fingerprint": "La nouvelle empreinte de machine est identique à l'actuelle.",
       "target_fingerprint_in_use": "La nouvelle empreinte de machine est déjà activée.",
       "resync_already_requested": "Une resynchronisation attend déjà cet appareil.",
+      "archive_not_found": "Cette pièce jointe supprimée est introuvable.",
+      "nothing_to_restore": "Cet élément n'a conservé aucune version (le serveur n'avait rien, ou l'élément était déjà supprimé) : il n'y a rien à restaurer.",
       "confirmation_mismatch": "La confirmation saisie ne correspond pas.",
       "governance_unchanged": "Cette cohorte est déjà dans cet état.",
       "permission_denied": "Votre rôle ne permet pas cette action.",
@@ -192,7 +194,9 @@
       "bundle_not_found": "Lot de diagnostic introuvable.",
       "validation_error": "Certains champs ne sont pas valides.",
       "invalid_body": "Certains champs ne sont pas valides.",
-      "internal_error": "Le serveur n'a pas pu traiter la requête (HTTP {{status}})."
+      "internal_error": "Le serveur n'a pas pu traiter la requête (HTTP {{status}}).",
+      "entity_changed_since_listing": "Cet élément a changé sur le serveur depuis le chargement de la liste. La liste est à jour : vérifiez ce que la restauration va remplacer, puis réessayez.",
+      "invalid_cursor": "La position dans la liste n'est plus valable. Rechargez la liste."
     }
   },
   "permissions": {

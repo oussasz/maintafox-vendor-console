@@ -175,6 +175,8 @@
       "same_fingerprint": "The new machine fingerprint is the same as the current one.",
       "target_fingerprint_in_use": "The new machine fingerprint is already activated.",
       "resync_already_requested": "A resynchronisation is already waiting for this device.",
+      "archive_not_found": "This deleted attachment was not found.",
+      "nothing_to_restore": "This entry kept no version (the server held nothing, or the item was already deleted): there is nothing to restore.",
       "confirmation_mismatch": "The typed confirmation does not match.",
       "governance_unchanged": "This cohort is already in that state.",
       "permission_denied": "Your role does not allow this action.",
@@ -192,7 +194,9 @@
       "bundle_not_found": "Diagnostic bundle not found.",
       "validation_error": "Some fields are not valid.",
       "invalid_body": "Some fields are not valid.",
-      "internal_error": "The server failed to process the request (HTTP {{status}})."
+      "internal_error": "The server failed to process the request (HTTP {{status}}).",
+      "entity_changed_since_listing": "This item changed on the server since the list was loaded. The list is up to date now: check what the restore will replace, then try again.",
+      "invalid_cursor": "The list position is no longer valid. Reload the list."
     }
   },
   "permissions": {
