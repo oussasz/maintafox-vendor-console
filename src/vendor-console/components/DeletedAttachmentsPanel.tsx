@@ -11,10 +11,12 @@ import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OperatorActionDialog } from "./OperatorActionDialog";
 
 /**
- * Photos and attachments deleted by synchronisation for one customer (the server archived the row
- * when it accepted the delete). The sync server knows the device that sent the delete, not the
- * person. Restore puts the row back on every device (reason + step-up `sync_attachment_restore`,
- * audited); the file itself was never deleted from storage.
+ * Photos, attachments and document links deleted or replaced by synchronisation for one customer
+ * (the server archived the prior row when it accepted the change). The sync server knows the
+ * device that sent the change, not the person. Restore puts the prior row back on every device
+ * (reason + step-up `sync_attachment_restore`, audited). Files uploaded to the server are never
+ * deleted; for an equipment / request / work order attachment the file comes back through its
+ * "Photo or file" companion entry, shown next to it.
  */
 export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
   const { t } = useTranslation("vendorConsole");
@@ -92,12 +94,28 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
             ) : (
               items.map((item) => (
                 <tr key={item.id} className="border-b border-surface-border align-top last:border-0">
-                  <td className="px-3 py-2 text-xs">{new Date(item.deleted_at).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-xs">{new Date(item.changed_at).toLocaleString()}</td>
                   <td className="px-3 py-2 text-xs">
                     <div>{t(`sync.deletedAttachments.type.${item.entity_type}`)}</div>
                     <div className="break-all font-mono text-text-muted">{item.entity_sync_id}</div>
+                    <div className="text-text-muted">
+                      {item.file_on_server === null
+                        ? t("sync.deletedAttachments.file.unknown")
+                        : item.file_on_server
+                          ? t("sync.deletedAttachments.file.onServer")
+                          : t("sync.deletedAttachments.file.notOnServer")}
+                    </div>
+                    {item.companion ? (
+                      <div className="text-text-muted" data-testid={`companion-${item.id}`}>
+                        {item.companion.live
+                          ? t("sync.deletedAttachments.companion.live", { id: item.companion.entity_sync_id })
+                          : item.companion.archive_id
+                            ? t("sync.deletedAttachments.companion.archived", { id: item.companion.entity_sync_id })
+                            : null}
+                      </div>
+                    ) : null}
                   </td>
-                  <td className="break-all px-3 py-2 font-mono text-xs">{item.deleted_by.machine_fingerprint}</td>
+                  <td className="break-all px-3 py-2 font-mono text-xs">{item.changed_by.machine_fingerprint}</td>
                   <td className="px-3 py-2 text-xs">
                     {item.restored ? (
                       <div className="space-y-1">
@@ -113,7 +131,9 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
                     ) : item.restore_blocker ? (
                       <Badge variant="outline">{t(`sync.deletedAttachments.blocker.${item.restore_blocker}`)}</Badge>
                     ) : (
-                      <Badge variant="destructive">{t("sync.deletedAttachments.state.deleted")}</Badge>
+                      <Badge variant="destructive">
+                        {item.change_kind === "overwrite" ? t("sync.deletedAttachments.state.replaced") : t("sync.deletedAttachments.state.deleted")}
+                      </Badge>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">
@@ -135,7 +155,7 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
         title={t("sync.deletedAttachments.restoreTitle")}
         description={t("sync.deletedAttachments.restoreBody", {
           id: restoring?.entity_sync_id ?? "",
-          device: restoring?.deleted_by.machine_fingerprint ?? "",
+          device: restoring?.changed_by.machine_fingerprint ?? "",
         })}
         confirmLabel={t("sync.deletedAttachments.restoreConfirm")}
         onConfirm={restore}

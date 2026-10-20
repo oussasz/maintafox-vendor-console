@@ -178,7 +178,7 @@
       "archive_not_found": "Cette pièce jointe supprimée est introuvable.",
       "already_restored": "Cette pièce jointe a déjà été restaurée.",
       "nothing_to_restore": "Le serveur n'avait jamais reçu cette pièce jointe avant sa suppression : il n'y a rien à restaurer.",
-      "entity_changed_since_delete": "Cette pièce jointe a été recréée ou modifiée depuis sa suppression : la restaurer écraserait ce changement.",
+      "entity_changed_since_delete": "Cette pièce jointe a été recréée ou modifiée depuis cette modification : la restaurer écraserait ce changement.",
       "confirmation_mismatch": "La confirmation saisie ne correspond pas.",
       "governance_unchanged": "Cette cohorte est déjà dans cet état.",
       "permission_denied": "Votre rôle ne permet pas cette action.",

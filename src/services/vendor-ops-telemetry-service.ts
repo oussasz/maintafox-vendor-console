@@ -90,13 +90,20 @@ const DeletedAttachmentSchema = z.object({
   id: z.string(),
   entity_type: z.string(),
   entity_sync_id: z.string(),
-  deleted_at: z.string(),
-  deleted_by: z.object({ license_id: z.string(), machine_fingerprint: z.string() }),
-  delete_row_version: z.number(),
+  change_kind: z.enum(["delete", "overwrite"]),
+  changed_at: z.string(),
+  changed_by: z.object({ license_id: z.string(), machine_fingerprint: z.string() }),
+  change_row_version: z.number(),
   prior_state: z.enum(["present", "already_deleted", "unknown"]),
   prior_row_version: z.number().nullable(),
   content_sha256: z.string().nullable(),
   byte_size: z.number().nullable(),
+  /** A copy of the file is on the server (media manifest); null when unknown. */
+  file_on_server: z.boolean().nullable(),
+  /** For an equipment / request / work order attachment: its "Photo or file" (media_attachments) entry. */
+  companion: z
+    .object({ entity_sync_id: z.string(), archive_id: z.string().nullable(), live: z.boolean(), file_on_server: z.boolean() })
+    .nullable(),
   restored: z
     .object({
       at: z.string(),
@@ -111,7 +118,7 @@ const DeletedAttachmentSchema = z.object({
 export type DeletedAttachment = z.infer<typeof DeletedAttachmentSchema>;
 const DeletedAttachmentsSchema = z.object({ tenant_id: z.string(), items: z.array(DeletedAttachmentSchema) });
 
-/** Photos and attachments deleted by synchronisation for one customer (archive; no file content). */
+/** Photos, attachments and document links deleted or replaced by synchronisation (archive; no file content). */
 export async function listDeletedAttachments(tenantId: string): Promise<DeletedAttachment[]> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments`);
   return (await parseOrThrow(res, DeletedAttachmentsSchema)).items;

@@ -178,7 +178,7 @@
       "archive_not_found": "This deleted attachment was not found.",
       "already_restored": "This attachment was already restored.",
       "nothing_to_restore": "The server never held this attachment before it was deleted: there is nothing to restore.",
-      "entity_changed_since_delete": "This attachment was re-created or changed since it was deleted: restoring it would overwrite that change.",
+      "entity_changed_since_delete": "This attachment was re-created or changed since this change: restoring it would overwrite that.",
       "confirmation_mismatch": "The typed confirmation does not match.",
       "governance_unchanged": "This cohort is already in that state.",
       "permission_denied": "Your role does not allow this action.",

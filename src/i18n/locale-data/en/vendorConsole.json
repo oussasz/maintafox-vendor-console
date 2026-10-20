@@ -610,14 +610,14 @@
       }
     },
     "deletedAttachments": {
-      "title": "Deleted photos and attachments",
-      "body": "Photos and attachments removed by a device through synchronisation. The server keeps the deleted entry and the device that sent the delete (it cannot know which person used that device). The file itself is never removed from storage. Restoring puts the entry back on every device.",
-      "loading": "Loading deleted attachments…",
-      "empty": "No photo or attachment has been deleted by synchronisation.",
+      "title": "Deleted or replaced photos and attachments",
+      "body": "The server keeps the deleted or replaced entry and the device that sent the change. Files uploaded to the server are never deleted. For an equipment, request or work order attachment, also restore its 'Photo or file' entry so devices download the file again. A file that was never uploaded (e.g. from a PC that was offline when it was deleted) cannot be recovered.",
+      "loading": "Loading deleted or replaced attachments…",
+      "empty": "No photo or attachment has been deleted or replaced by synchronisation.",
       "col": {
-        "deletedAt": "Deleted",
+        "deletedAt": "Changed",
         "item": "Item",
-        "device": "Deleting device",
+        "device": "Device that sent the change",
         "state": "State",
         "action": "Action"
       },
@@ -625,11 +625,15 @@
         "media_attachments": "Photo or file",
         "asset_photos": "Equipment photo",
         "di_attachments": "Request attachment",
-        "work_order_attachments": "Work order attachment"
+        "work_order_attachments": "Work order attachment",
+        "library_documents": "Library document",
+        "asset_document_links": "Equipment document link",
+        "inventory_document_links": "Inventory document link"
       },
       "state": {
         "deleted": "Deleted",
-        "restored": "Restored"
+        "restored": "Restored",
+        "replaced": "Replaced"
       },
       "restoredBy": "Restored {{at}} by {{by}}",
       "blocker": {
@@ -638,10 +642,19 @@
         "entity_changed_since_delete": "Changed since"
       },
       "restore": "Restore",
-      "restoreTitle": "Restore this deleted attachment?",
-      "restoreBody": "{{id}} (deleted by {{device}}) is sent again to every device of this customer, exactly as it was before the delete. Use it when the delete was a mistake.",
+      "restoreTitle": "Restore this attachment?",
+      "restoreBody": "{{id}} (changed by {{device}}) is sent again to every device of this customer, exactly as it was before the change. Use it when the delete or replacement was a mistake.",
       "restoreConfirm": "Restore on every device",
-      "restored": "Restored: {{id}} is sent to every device at their next sync."
+      "restored": "Restored: {{id}} is sent to every device at their next sync.",
+      "file": {
+        "onServer": "File copy on the server",
+        "notOnServer": "No file copy on the server",
+        "unknown": "Server file copy unknown"
+      },
+      "companion": {
+        "live": "Photo or file entry: {{id}} (present)",
+        "archived": "Photo or file entry: {{id}} (deleted or replaced: restore it too)"
+      }
     },
     "retry": "Retry",
     "refreshing": "Refreshing…",

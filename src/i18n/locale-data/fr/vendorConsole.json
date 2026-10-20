@@ -614,14 +614,14 @@
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
     "deletedAttachments": {
-      "title": "Photos et pièces jointes supprimées",
-      "body": "Photos et pièces jointes retirées par un appareil via la synchronisation. Le serveur garde l'élément supprimé et l'appareil qui a envoyé la suppression (il ne peut pas savoir quelle personne utilisait cet appareil). Le fichier lui-même n'est jamais retiré du stockage. Restaurer remet l'élément sur tous les appareils.",
-      "loading": "Chargement des pièces jointes supprimées…",
-      "empty": "Aucune photo ni pièce jointe n'a été supprimée par la synchronisation.",
+      "title": "Photos et pièces jointes supprimées ou remplacées",
+      "body": "Le serveur garde l'élément supprimé ou remplacé et l'appareil qui a envoyé la modification. Les fichiers envoyés au serveur ne sont jamais supprimés. Pour une pièce jointe d'équipement, de demande ou d'ordre de travail, restaurez aussi son élément « Photo ou fichier » pour que les appareils téléchargent à nouveau le fichier. Un fichier qui n'a jamais été envoyé (par exemple depuis un PC hors ligne au moment de la suppression) ne peut pas être récupéré.",
+      "loading": "Chargement des pièces jointes supprimées ou remplacées…",
+      "empty": "Aucune photo ni pièce jointe n'a été supprimée ou remplacée par la synchronisation.",
       "col": {
-        "deletedAt": "Supprimé le",
+        "deletedAt": "Modifié le",
         "item": "Élément",
-        "device": "Appareil qui a supprimé",
+        "device": "Appareil qui a envoyé la modification",
         "state": "État",
         "action": "Action"
       },
@@ -629,11 +629,15 @@
         "media_attachments": "Photo ou fichier",
         "asset_photos": "Photo d'équipement",
         "di_attachments": "Pièce jointe de demande",
-        "work_order_attachments": "Pièce jointe d'ordre de travail"
+        "work_order_attachments": "Pièce jointe d'ordre de travail",
+        "library_documents": "Document de bibliothèque",
+        "asset_document_links": "Lien de document d'équipement",
+        "inventory_document_links": "Lien de document de stock"
       },
       "state": {
         "deleted": "Supprimé",
-        "restored": "Restauré"
+        "restored": "Restauré",
+        "replaced": "Remplacé"
       },
       "restoredBy": "Restauré le {{at}} par {{by}}",
       "blocker": {
@@ -642,10 +646,19 @@
         "entity_changed_since_delete": "Modifié depuis"
       },
       "restore": "Restaurer",
-      "restoreTitle": "Restaurer cette pièce jointe supprimée ?",
-      "restoreBody": "{{id}} (supprimé par {{device}}) est renvoyé à tous les appareils de ce client, exactement comme avant la suppression. À utiliser quand la suppression était une erreur.",
+      "restoreTitle": "Restaurer cette pièce jointe ?",
+      "restoreBody": "{{id}} (modifié par {{device}}) est renvoyé à tous les appareils de ce client, exactement comme avant la modification. À utiliser quand la suppression ou le remplacement était une erreur.",
       "restoreConfirm": "Restaurer sur tous les appareils",
-      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation."
+      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation.",
+      "file": {
+        "onServer": "Copie du fichier sur le serveur",
+        "notOnServer": "Pas de copie du fichier sur le serveur",
+        "unknown": "Copie du fichier sur le serveur inconnue"
+      },
+      "companion": {
+        "live": "Élément Photo ou fichier : {{id}} (présent)",
+        "archived": "Élément Photo ou fichier : {{id}} (supprimé ou remplacé : restaurez-le aussi)"
+      }
     },
     "retry": "Réessayer"
   },

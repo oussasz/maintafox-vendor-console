@@ -30,13 +30,16 @@ function entry(over: Partial<DeletedAttachment> = {}): DeletedAttachment {
     id: "7",
     entity_type: "media_attachments",
     entity_sync_id: "media-1",
-    deleted_at: "2026-10-20T08:00:00Z",
-    deleted_by: { license_id: "lic_1", machine_fingerprint: "fp-tablet-2" },
-    delete_row_version: 2,
+    change_kind: "delete",
+    changed_at: "2026-10-20T08:00:00Z",
+    changed_by: { license_id: "lic_1", machine_fingerprint: "fp-tablet-2" },
+    change_row_version: 2,
     prior_state: "present",
     prior_row_version: 1,
     content_sha256: "a".repeat(64),
     byte_size: 1234,
+    file_on_server: true,
+    companion: null,
     restored: null,
     restore_blocker: null,
     ...over,
@@ -115,6 +118,29 @@ describe("DeletedAttachmentsPanel", () => {
     await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
     await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
     expect(await within(await screen.findByRole("dialog")).findByRole("alert")).toHaveTextContent("entity changed");
+  });
+
+  it("shows a replaced entry, the server file copy and the companion Photo or file entry", async () => {
+    vi.mocked(listDeletedAttachments).mockResolvedValue([
+      entry({
+        id: "11",
+        entity_type: "asset_photos",
+        entity_sync_id: "photo-1",
+        change_kind: "overwrite",
+        file_on_server: true,
+        companion: { entity_sync_id: "media-photo-1", archive_id: "12", live: false, file_on_server: true },
+      }),
+      entry({ id: "12", entity_sync_id: "media-photo-1", file_on_server: false }),
+    ]);
+    renderWithConsole(<DeletedAttachmentsPanel tenantId="tenant_1" />);
+    const table = await screen.findByTestId("deleted-attachments");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3));
+    const [replaced, media] = within(table).getAllByRole("row").slice(1);
+    expect(replaced).toHaveTextContent("sync.deletedAttachments.state.replaced");
+    expect(replaced).toHaveTextContent("sync.deletedAttachments.file.onServer");
+    expect(within(replaced!).getByTestId("companion-11")).toHaveTextContent("sync.deletedAttachments.companion.archived");
+    expect(media).toHaveTextContent("sync.deletedAttachments.state.deleted");
+    expect(media).toHaveTextContent("sync.deletedAttachments.file.notOnServer");
   });
 
   it("says when nothing was deleted", async () => {
