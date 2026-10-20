@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { authFetch } from "@/lib/api-client";
-import { apiRequestError } from "@/lib/api-error";
+import { apiRequestError, ApiRequestError } from "@/lib/api-error";
 
 import {
   PlatformOverviewV1Schema,
@@ -98,6 +98,8 @@ const DeletedAttachmentSchema = z.object({
   /** The change moved the file reference (always true for a delete). */
   locator_changed: z.boolean(),
   changed_at: z.string(),
+  /** The device (or server) that wrote the archived version. */
+  prior_origin: z.string().nullable(),
   changed_by: z.object({ license_id: z.string().nullable(), machine_fingerprint: z.string(), operator: z.string().nullable() }),
   change_row_version: z.number(),
   prior_state: z.enum(["present", "already_deleted", "unknown"]),
@@ -126,12 +128,23 @@ const NothingKeptGroupSchema = z.object({
   last_at: z.string(),
 });
 export type NothingKeptGroup = z.infer<typeof NothingKeptGroupSchema>;
+const KeptGroupSchema = z.object({
+  machine_fingerprint: z.string(),
+  license_id: z.string().nullable(),
+  count: z.number(),
+  /** Entries about a version another device (or the server) wrote. */
+  cross_device_count: z.number(),
+  last_at: z.string(),
+});
+export type KeptGroup = z.infer<typeof KeptGroupSchema>;
 const DeletedAttachmentsPageSchema = z.object({
   tenant_id: z.string(),
   items: z.array(DeletedAttachmentSchema),
   next_cursor: z.string().nullable(),
   /** Deletes of items the server never held (or had already deleted), counted per device and type. */
   nothing_kept_summary: z.array(NothingKeptGroupSchema),
+  /** Entries that kept a version, per sending device. */
+  kept_summary: z.array(KeptGroupSchema),
 });
 export type DeletedAttachmentsPage = z.infer<typeof DeletedAttachmentsPageSchema>;
 
@@ -143,8 +156,23 @@ export type DeletedAttachmentsQuery = {
   cursor?: string;
   entity_type?: string;
   entity_sync_id?: string;
+  /** Only changes sent by this device. */
+  machine_fingerprint?: string;
+  /** "1": only changes of a version another device (or the server) wrote. */
+  cross_device?: "0" | "1";
   limit?: number;
 };
+
+/** A restore refused because the entity changed since the listing; `current` is its state now. */
+export class RestoreConflictError extends ApiRequestError {
+  constructor(
+    base: ApiRequestError,
+    readonly current: AttachmentState | null,
+  ) {
+    super(base.status, base.code, base.serverMessage, base.params);
+    this.name = "RestoreConflictError";
+  }
+}
 
 /** One page of photos, attachments and document links deleted or replaced for one customer (no file content). */
 export async function listDeletedAttachments(tenantId: string, options: DeletedAttachmentsQuery = {}): Promise<DeletedAttachmentsPage> {
@@ -184,5 +212,16 @@ export async function restoreDeletedAttachment(
       }),
     },
   );
-  if (!res.ok) throw await apiRequestError(res);
+  if (!res.ok) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: unknown; current?: unknown } | null;
+    const base = await apiRequestError(res);
+    if (base.code === "entity_changed_since_listing") {
+      const parsed = AttachmentStateSchema.nullable().safeParse(body?.current ?? null);
+      throw new RestoreConflictError(base, parsed.success ? parsed.data : null);
+    }
+    throw base;
+  }
 }

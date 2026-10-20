@@ -673,7 +673,7 @@
       "view": {
         "label": "Show",
         "kept": "Deleted or replaced (versions kept)",
-        "nothing_kept": "Deletes of items the server never held",
+        "nothing_kept": "Deletes that kept nothing (never held or already deleted)",
         "all": "Everything"
       },
       "search": {
@@ -681,11 +681,29 @@
         "submit": "Search"
       },
       "nothingKept": {
-        "summary_one": "{{count}} delete of an item the server never held ({{type}}), from device {{device}}",
-        "summary_other": "{{count}} deletes of items the server never held ({{type}}), from device {{device}}",
+        "summary_one": "{{count}} delete that kept nothing ({{type}}, an item the server never held or had already deleted), from device {{device}}",
+        "summary_other": "{{count}} deletes that kept nothing ({{type}}, items the server never held or had already deleted), from device {{device}}",
         "show": "List them"
       },
-      "loadMore": "Load more"
+      "loadMore": "Load more",
+      "device": {
+        "label": "Changed by device",
+        "all": "All devices"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "All types"
+      },
+      "before": {
+        "label": "Up to (date)"
+      },
+      "crossDevice": {
+        "label": "Only versions written by another device",
+        "help": "Hides changes a device made to rows it wrote itself, so a device cannot bury a real entry under its own deletes. Untick to see everything that kept a version."
+      },
+      "keptSummary_one": "{{count}} change that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "keptSummary_other": "{{count}} changes that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "priorOrigin": "version written by {{device}}"
     },
     "retry": "Retry",
     "refreshing": "Refreshing…",

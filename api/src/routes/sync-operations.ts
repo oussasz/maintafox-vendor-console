@@ -41,6 +41,10 @@ const DeletedAttachmentsQuery = z
     /** Exact item filter. */
     entity_type: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/).optional(),
     entity_sync_id: z.string().min(1).max(256).optional(),
+    /** Only changes sent by this device. */
+    machine_fingerprint: z.string().min(1).max(256).optional(),
+    /** 1: only changes of a version another device (or the server) wrote. */
+    cross_device: z.enum(["0", "1"]).optional(),
     limit: z.coerce.number().int().min(1).max(ARCHIVE_PAGE_MAX).optional(),
   })
   .strict();
@@ -290,6 +294,8 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
       cursor: q.cursor ?? null,
       entityType: q.entity_type ?? null,
       entitySyncId: q.entity_sync_id ?? null,
+      machineFingerprint: q.machine_fingerprint ?? null,
+      crossDevice: q.cross_device === "1",
       limit: q.limit ?? DELETED_ATTACHMENTS_PAGE_SIZE,
     });
     // Operator reasons and device ids: not for shared caches.

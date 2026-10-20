@@ -95,21 +95,27 @@ recovered.
 **Listing.** `GET /api/v1/tenants/:tenantId/sync/deleted-attachments` (`sync.operate`), query:
 `view=kept|nothing_kept|all` (default `kept`), `since` and `before` (RFC 3339, used together or
 alone: `since` <= changed_at < `before`), `entity_type` + `entity_sync_id` (exact item filter, each
-optional), `limit` (1..200, default 100) and `cursor` (the `next_cursor` of the previous page; 400
-`invalid_cursor` otherwise). Order: newest first by (changed_at, id), stable across pages.
+optional), `machine_fingerprint` (only changes sent by that device), `cross_device=1` (only changes
+of a version another device or the server wrote), `limit` (1..200, default 100) and `cursor` (the
+`next_cursor` of the previous page; anything else is 400 `invalid_cursor`). Order: newest first by
+(changed_at, id), stable across pages.
 - `kept` lists every entry that kept a version (`prior_state` `present`): every delete and every
   replacement of a live row, whatever field changed. `locator_changed` is shown for information
   only.
-- Entries that kept nothing (deletes of items the server never held or had already deleted) are
-  not listed by default: `nothing_kept_summary` counts them per sending device and type (e.g.
-  "1,240 deletes of items the server never held, from device X"), within the same time and item
-  filters; `view=nothing_kept` lists them. A flood of such deletes therefore never hides a real
-  entry (tested with 600).
-- Each entry: entity type and id, kind of change, when, who sent it, archived version, checksum and
-  size (`byte_size` / `file_size_bytes` / `size_bytes` per table), whether the server has the file,
-  the companion entry, whether it can be restored, the entity's **current** state on the server
-  (`row_version`, `payload_hash`, `deleted`) and every restore of the entry. Never the payload or
-  the file.
+- `cross_device=1` (the console's default in the kept view, "Only versions written by another
+  device") hides changes a device made to rows it wrote itself (`prior_origin` = the sending
+  device), so a device cannot bury a real entry under its own create-then-delete pairs (tested with
+  1,500 pairs: the real entry stays on page 1).
+- `kept_summary`: entries that kept a version per sending device, with how many are about another
+  device's version (`cross_device_count`). `nothing_kept_summary`: deletes that kept nothing (items
+  the server never held or had already deleted) per sending device and type; `view=nothing_kept`
+  lists them. Both use the same time and item filters, not the device filter. The console builds
+  its device picker from them.
+- Each entry: entity type and id, kind of change, when, who sent it, the device that wrote the
+  archived version (`prior_origin`), archived version, checksum and size (`byte_size` /
+  `file_size_bytes` / `size_bytes` per table), whether the server has the file, the companion
+  entry, whether it can be restored, the entity's **current** state on the server (`row_version`,
+  `payload_hash`, `deleted`) and every restore of the entry. Never the payload or the file.
 
 **Restore.** `POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore`, body
 `{ "expected_current_row_version": n | null, "expected_current_payload_hash": "hex" | null,
@@ -122,16 +128,17 @@ it; all three are compared), `sync.operate`, `X-Operator-Reason`, step-up
   ledger record, version written, archive entry of what it replaced).
 - Under the tenant sync lock (taken before the audit-chain lock, like every sync writer) the server
   compares the expected current state with the real one: if it changed since the listing, `409
-  entity_changed_since_listing` with the new `current` (the console reloads the list so the operator
-  sees what will be replaced; the open dialog is refreshed with the reloaded state, and confirming
-  again sends it).
+  entity_changed_since_listing` with the new `current` (the console shows the new state so the operator
+  sees what will be replaced: the open dialog and the listed entries of that item take the state
+  from the refusal, the loaded pages stay, and confirming again sends that state).
 - It archives the live row it replaces (if the payload differs), then appends a new change from
   origin `server:attachment-restore`: the entry's prior payload byte for byte (same `payload_hash`),
   operation as before, `row_version` above every version the server has seen for the entity (the
   current one, every archived one, the durable per-entity high-water mark in
-  `sync_attachment_version_high_water`, raised on every accepted change of an archived type and kept
-  when the ingress log is compacted, and the ingress log for history older than that table; a v1
-  device may write versions backwards, also with identical re-sends that are not archived) with
+  `sync_attachment_version_high_water`, raised on every accepted change of an archived type, kept
+  when the ingress log is compacted, and backfilled by migration 017 from the ingress log and the
+  current state; a v1 device may write versions backwards, also with identical re-sends that are
+  not archived) with
   `base_row_version` = current. Every device, the one that sent the change included, receives it
   like a change from another device (v2 delta, snapshot, v1 log); a media attachment received again
   queues its file download on the desktop.
@@ -159,11 +166,18 @@ before tenant deletion currently needs a manual, audited database operation.
 > **Migration 017 was edited in place during review** (it is not merged). An environment that
 > applied an earlier version of `017_sync_attachment_archive.sql` (a test or staging database)
 > refuses to start the API with "checksum mismatch". Production never applied it. Fix on such a
-> database: drop the 017 tables and functions (`sync_attachment_restore_log`,
-> `sync_deleted_attachment_archive`, `sync_attachment_version_high_water`,
-> `sync_forensic_change_log`, `mfx_sync_attachment_archive_immutable`,
-> `mfx_sync_attachment_archive_guard` if present, `mfx_sync_forensic_log_append_only`) and remove
-> version 17 from `schema_migrations`, then start the API (it applies the final 017).
+> database, connected as the migration owner (the `DATABASE_URL` user, not `mfx_app`), after
+> exporting the four tables if their data matters (`pg_dump -t` each table):
+>
+> ```sql
+> DROP TABLE IF EXISTS sync_attachment_restore_log, sync_deleted_attachment_archive,
+>   sync_attachment_version_high_water, sync_forensic_change_log CASCADE;
+> DROP FUNCTION IF EXISTS mfx_sync_attachment_archive_immutable(), mfx_sync_attachment_archive_guard(),
+>   mfx_sync_forensic_log_append_only();
+> DELETE FROM schema_migrations WHERE version = 17;
+> ```
+>
+> then start the API: it applies the final 017 (and backfills the version high-water marks).
 >
 > **Grants.** The archive, the restore log and the forensic log refuse UPDATE (trigger, and UPDATE
 > revoked from `mfx_app`). DELETE stays granted to `mfx_app` on them only because tenant delete

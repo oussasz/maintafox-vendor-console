@@ -632,6 +632,88 @@ try {
   assert.deepEqual(fOnly.map((i) => i.entity_sync_id), ["f"]);
   assert.equal((await list("?view=nothing_kept&entity_sync_id=ghost-3-7")).length, 1);
 
+  // ── SF-3: crafted cursors are refused with 400, never a 500 ───────────────────────────────────
+  const b64 = (o) => Buffer.from(JSON.stringify(o), "utf8").toString("base64url");
+  for (const bad of [
+    b64({ t: "Thu, 01 Jan 1970 00:00:00 GMT", id: 1 }),
+    b64({ us: "12abc", id: 1 }),
+    b64({ us: "1".repeat(17), id: 1 }),
+    b64({ us: "1000", id: 0 }),
+    b64({ us: "1000", id: 1, extra: true }),
+    b64([1, 2]),
+    "%%%",
+  ]) {
+    const r = await api.call("GET", `${listUrl}?cursor=${encodeURIComponent(bad)}`, token);
+    assert.equal(r.status, 400, `cursor ${bad}: ${r.text}`);
+    assert.equal(r.json.error, "invalid_cursor");
+  }
+
+  // ── SF-1 probe 4: a device buries a real entry under entries about rows it wrote itself ──────
+  await exchange(A, [item("media_attachments", "VICTIM", 1, null, JSON.stringify({ entity_sync_id: "VICTIM", object_key: "k-victim" }), "upsert")]);
+  await exchange(B, [item("media_attachments", "VICTIM", 2, 1, JSON.stringify({ entity_sync_id: "VICTIM" }), "delete")]);
+  for (let b = 0; b < 3; b += 1) {
+    const batch = [];
+    for (let i = 0; i < 500; i += 1) {
+      const id = `own-${b}-${i}`;
+      batch.push(item("media_attachments", id, 1, null, JSON.stringify({ entity_sync_id: id, object_key: `k-${id}` }), "upsert"));
+      batch.push(item("media_attachments", id, 2, 1, JSON.stringify({ entity_sync_id: id }), "delete"));
+    }
+    assert.equal((await exchange(B, batch)).acknowledged_items.length, 1000);
+  }
+  const buried = await api.call("GET", listUrl, token);
+  assert.ok(!buried.json.items.some((i) => i.entity_sync_id === "VICTIM"), "without the filter the victim is buried (page 1 is the flood)");
+  const crossPage = await api.call("GET", `${listUrl}?cross_device=1`, token);
+  assert.equal(crossPage.status, 200, crossPage.text);
+  const victimEntry = crossPage.json.items.find((i) => i.entity_sync_id === "VICTIM");
+  assert.ok(victimEntry, "with cross_device=1 the victim is on page 1");
+  assert.equal(victimEntry.prior_origin, A.fp);
+  assert.equal(victimEntry.changed_by.machine_fingerprint, B.fp);
+  assert.ok(crossPage.json.items.every((i) => i.prior_origin !== i.changed_by.machine_fingerprint), "only versions another device wrote");
+  assert.ok(!crossPage.json.items.some((i) => i.entity_sync_id.startsWith("own-")));
+  // Device filter: only changes sent by that device.
+  const byA = await api.call("GET", `${listUrl}?machine_fingerprint=${encodeURIComponent(A.fp)}&view=all&limit=200`, token);
+  assert.ok(byA.json.items.length > 0 && byA.json.items.every((i) => i.changed_by.machine_fingerprint === A.fp));
+  const byBOwn = await list(`?machine_fingerprint=${encodeURIComponent(B.fp)}&entity_sync_id=own-1-7`);
+  assert.equal(byBOwn.length, 1);
+  // kept_summary: kept entries per sending device, and how many are about another device's version.
+  const truth = await api.su(
+    `SELECT changed_by_machine_fingerprint AS fp, count(*)::int AS n,
+            count(*) FILTER (WHERE prior_origin_machine_fingerprint IS DISTINCT FROM changed_by_machine_fingerprint)::int AS cross
+     FROM sync_deleted_attachment_archive WHERE tenant_id = $1 AND prior_state = 'present' GROUP BY 1`,
+    [tenant.id],
+  );
+  const keptB = buried.json.kept_summary.find((g) => g.machine_fingerprint === B.fp);
+  const truthB = truth.find((t) => t.fp === B.fp);
+  assert.ok(keptB.count >= 1500);
+  assert.deepEqual([keptB.count, keptB.cross_device_count, keptB.license_id], [truthB.n, truthB.cross, licence.id]);
+  assert.equal(truthB.n - truthB.cross >= 1500, true, "the flood is all about B's own rows");
+  for (const t of truth) {
+    const g = buried.json.kept_summary.find((x) => x.machine_fingerprint === t.fp);
+    assert.deepEqual([g.count, g.cross_device_count], [t.n, t.cross], `kept_summary for ${t.fp}`);
+  }
+
+  // ── SF-2: the migration backfill covers history from before the high-water table ─────────────
+  // Simulates an entity whose v50 is only in the ingress log (written before migration 017), then
+  // runs the backfill statement of migration 017 itself.
+  const migration = readFileSync(join(here, "..", "migrations", "017_sync_attachment_archive.sql"), "utf8");
+  const backfillSql = migration.slice(migration.indexOf("-- backfill:begin"), migration.indexOf("-- backfill:end"));
+  assert.ok(backfillSql.includes("INSERT INTO sync_attachment_version_high_water"));
+  await exchange(A, [item("media_attachments", "old", 1, null, JSON.stringify({ entity_sync_id: "old", object_key: "k-old" }), "upsert")]);
+  await api.su(
+    `INSERT INTO sync_mirror_ingress (tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
+       payload_json, payload_hash, machine_fingerprint, received_at_rfc3339, protocol_version)
+     VALUES ($1, 'pre-017-old', 'media_attachments', 'old', 'upsert', 50, '{}', $2, 'fp-retired', '2026-01-01T00:00:00Z', 'v1')`,
+    [tenant.id, sha256Hex("{}")],
+  );
+  await api.su("DELETE FROM sync_attachment_version_high_water WHERE tenant_id = $1 AND entity_sync_id = 'old'", [tenant.id]);
+  await api.su(backfillSql);
+  const [hw] = await api.su("SELECT max_row_version FROM sync_attachment_version_high_water WHERE tenant_id = $1 AND entity_sync_id = 'old'", [tenant.id]);
+  assert.equal(Number(hw.max_row_version), 50, "backfilled from the ingress log");
+  await api.su(backfillSql); // idempotent
+  await exchange(B, [item("media_attachments", "old", 2, 1, JSON.stringify({ entity_sync_id: "old" }), "delete")]);
+  const oldEntry = (await list("?entity_sync_id=old"))[0];
+  assert.equal((await restoreNow(oldEntry.id)).row_version, 51, "the restore goes above the backfilled history");
+
   // ── A delete of something the server never held: archived as unknown, not restorable ───────
   const ghost = await exchange(B, [item("asset_photos", "photo-never-seen", 2, 1, JSON.stringify({ id: 9 }), "delete")]);
   assert.equal(ghost.acknowledged_items.length, 1, "acceptance unchanged");

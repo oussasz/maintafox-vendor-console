@@ -272,12 +272,14 @@ export type ArchiveRow = {
   changed_by_machine_fingerprint: string;
   changed_by_operator: string | null;
   changed_at: Date;
+  prior_origin_machine_fingerprint: string | null;
 };
 
 const ARCHIVE_COLUMNS = `a.id, a.tenant_id, a.entity_type, a.entity_sync_id, a.change_kind, a.prior_state, a.prior_operation,
   a.prior_row_version, a.prior_payload_raw, a.prior_payload_hash, a.prior_owner_user_sync_id, a.object_refs,
   a.locator_changed, a.change_operation, a.change_row_version, a.change_ingress_id, a.change_payload_hash,
-  a.changed_by_license_id, a.changed_by_machine_fingerprint, a.changed_by_operator, a.changed_at`;
+  a.changed_by_license_id, a.changed_by_machine_fingerprint, a.changed_by_operator, a.changed_at,
+  a.prior_origin_machine_fingerprint`;
 
 /** The entity's current state on the server (what a restore would replace). */
 export type CurrentState = { row_version: number; payload_hash: string; deleted: boolean } | null;
@@ -313,30 +315,38 @@ export type ListFilter = {
   /** Exact item filter. */
   entityType: string | null;
   entitySyncId: string | null;
+  /** Only changes sent by this device (fingerprint, or server:attachment-restore). */
+  machineFingerprint: string | null;
+  /**
+   * Only changes of a version that another device (or the server) wrote: a device cannot bury a
+   * real entry under entries about rows it wrote and then deleted itself.
+   */
+  crossDevice: boolean;
   limit: number;
 };
 
 /** Page size bounds of the console listing. */
 export const ARCHIVE_PAGE_MAX = 200;
 
-type Cursor = { t: string; id: number };
+/** Position after the last entry of a page: changed_at in epoch microseconds (digits) and id. */
+type Cursor = { us: string; id: number };
 
 function encodeCursor(c: Cursor): string {
   return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
-/** Null when the cursor is not one this API issued (the route answers 400). */
+/** Null when the cursor is not one this API issued (the route answers 400 invalid_cursor). */
 export function decodeCursor(raw: string): Cursor | null {
   try {
     const c = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as unknown;
-    if (c && typeof c === "object" && typeof (c as Cursor).t === "string" && Number.isSafeInteger((c as Cursor).id)) {
-      if (Number.isNaN(Date.parse((c as Cursor).t))) return null;
-      return c as Cursor;
-    }
+    if (c === null || typeof c !== "object" || Array.isArray(c)) return null;
+    const { us, id } = c as Record<string, unknown>;
+    if (Object.keys(c).length !== 2 || typeof us !== "string" || !/^\d{1,16}$/.test(us)) return null;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) return null;
+    return { us, id };
   } catch {
-    // fall through
+    return null;
   }
-  return null;
 }
 
 /**
@@ -348,7 +358,7 @@ export function decodeCursor(raw: string): Cursor | null {
  */
 export async function listArchivedChanges(db: Database, input: ListFilter) {
   const cursor = input.cursor ? decodeCursor(input.cursor) : null;
-  // Filters shared by the page and the nothing-kept summary ($1..$5).
+  // Filters shared by the page and the summaries ($1..$5).
   const common = `a.tenant_id = $1
        AND ($2::timestamptz IS NULL OR a.changed_at >= $2::timestamptz)
        AND ($3::timestamptz IS NULL OR a.changed_at < $3::timestamptz)
@@ -357,32 +367,38 @@ export async function listArchivedChanges(db: Database, input: ListFilter) {
   const commonParams = [input.tenantId, input.since, input.before, input.entityType, input.entitySyncId] as const;
   const viewFilter =
     input.view === "kept" ? "AND a.prior_state = 'present'" : input.view === "nothing_kept" ? "AND a.prior_state <> 'present'" : "";
+  const deviceFilter = `AND ($9::text IS NULL OR a.changed_by_machine_fingerprint = $9::text)
+       AND (NOT $10::boolean OR a.prior_origin_machine_fingerprint IS DISTINCT FROM a.changed_by_machine_fingerprint)`;
   const fetched = await db.all<
     ArchiveRow & {
-      cursor_t: string;
+      cursor_us: string;
       cur_row_version: number | null;
       cur_payload_hash: string | null;
       cur_deleted: boolean | null;
       cur_operation: string | null;
     }
   >(
-    `SELECT ${ARCHIVE_COLUMNS}, a.changed_at::text AS cursor_t, s.row_version AS cur_row_version,
+    `SELECT ${ARCHIVE_COLUMNS}, (extract(epoch FROM a.changed_at) * 1000000)::bigint::text AS cursor_us,
+            s.row_version AS cur_row_version,
             s.payload_hash AS cur_payload_hash, s.deleted AS cur_deleted, s.operation AS cur_operation
      FROM sync_deleted_attachment_archive a
      LEFT JOIN sync_entity_state s
        ON s.tenant_id = a.tenant_id AND s.entity_type = a.entity_type AND s.entity_sync_id = a.entity_sync_id
-     WHERE ${common} ${viewFilter}
-       AND ($6::timestamptz IS NULL OR (a.changed_at, a.id) < ($6::timestamptz, $7::bigint))
+     WHERE ${common} ${viewFilter} ${deviceFilter}
+       AND ($6::bigint IS NULL
+            OR (a.changed_at, a.id) < ('epoch'::timestamptz + $6::bigint * interval '1 microsecond', $7::bigint))
      ORDER BY a.changed_at DESC, a.id DESC
      LIMIT $8`,
     ...commonParams,
-    cursor?.t ?? null,
+    cursor?.us ?? null,
     cursor?.id ?? null,
     input.limit + 1,
+    input.machineFingerprint,
+    input.crossDevice,
   );
   const rows = fetched.slice(0, input.limit);
   const last = rows[rows.length - 1];
-  const nextCursor = fetched.length > input.limit && last ? encodeCursor({ t: last.cursor_t, id: Number(last.id) }) : null;
+  const nextCursor = fetched.length > input.limit && last ? encodeCursor({ us: last.cursor_us, id: Number(last.id) }) : null;
   // Entries that kept nothing (deletes of items the server never held or had already deleted):
   // counts per sending device and type, so a flood of them never hides the real entries.
   const nothingKept = (
@@ -487,6 +503,28 @@ export async function listArchivedChanges(db: Database, input: ListFilter) {
   );
   for (const c of companions.values()) c.file_on_server = onServer.has(c.entity_sync_id);
 
+  // Entries that kept a version, per sending device (with how many are about a version another
+  // device wrote): builds the console's device picker and shows a device flooding its own rows.
+  const keptSummary = (
+    await db.all<{ changed_by_machine_fingerprint: string; changed_by_license_id: string | null; n: number; cross: number; last_at: Date }>(
+      `SELECT a.changed_by_machine_fingerprint, a.changed_by_license_id, count(*)::int AS n,
+              count(*) FILTER (WHERE a.prior_origin_machine_fingerprint IS DISTINCT FROM a.changed_by_machine_fingerprint)::int AS cross,
+              max(a.changed_at) AS last_at
+       FROM sync_deleted_attachment_archive a
+       WHERE ${common} AND a.prior_state = 'present'
+       GROUP BY a.changed_by_machine_fingerprint, a.changed_by_license_id
+       ORDER BY n DESC, a.changed_by_machine_fingerprint
+       LIMIT 100`,
+      ...commonParams,
+    )
+  ).map((r) => ({
+    machine_fingerprint: r.changed_by_machine_fingerprint,
+    license_id: r.changed_by_license_id,
+    count: r.n,
+    cross_device_count: r.cross,
+    last_at: new Date(r.last_at).toISOString(),
+  }));
+
   const items = rows.map((r) => {
     const manifest = (r.object_refs["media_manifest"] ?? null) as { content_sha256?: string; byte_size?: number } | null;
     const fromPayload = refsOf(r) as (ReturnType<typeof refsOf> & { file_size_bytes?: number; size_bytes?: number }) | null;
@@ -504,6 +542,8 @@ export async function listArchivedChanges(db: Database, input: ListFilter) {
       change_kind: r.change_kind,
       locator_changed: r.locator_changed,
       changed_at: new Date(r.changed_at).toISOString(),
+      /** The device (or server) that wrote the archived version. */
+      prior_origin: r.prior_origin_machine_fingerprint,
       changed_by: {
         license_id: r.changed_by_license_id,
         machine_fingerprint: r.changed_by_machine_fingerprint,
@@ -527,7 +567,7 @@ export async function listArchivedChanges(db: Database, input: ListFilter) {
       restores: restores.get(Number(r.id)) ?? [],
     };
   });
-  return { items, next_cursor: nextCursor, nothing_kept_summary: nothingKept };
+  return { items, next_cursor: nextCursor, nothing_kept_summary: nothingKept, kept_summary: keptSummary };
 }
 
 export type RestoreExpectation = { row_version: number | null; payload_hash: string | null; deleted: boolean | null };
@@ -603,16 +643,14 @@ export async function emitRestore(
   const currentVersion = input.current?.row_version ?? 0;
   // Above every version the server has seen for this entity (a v1 device can write versions back
   // down, ABA, also with identical re-sends that are not archived): the current one, every archived
-  // one, the durable high-water mark (kept when the ingress log is compacted) and the log itself
-  // (covers history from before the high-water table existed).
-  const seen = await db.get<{ archived: number | null; high_water: number | null; logged: number | null }>(
+  // one and the durable high-water mark (kept when the ingress log is compacted; migration 017
+  // backfilled it from the log and the current state, so older history is covered too).
+  const seen = await db.get<{ archived: number | null; high_water: number | null }>(
     `SELECT
        (SELECT MAX(GREATEST(COALESCE(prior_row_version, 0), change_row_version)) FROM sync_deleted_attachment_archive
          WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3) AS archived,
        (SELECT max_row_version FROM sync_attachment_version_high_water
-         WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3) AS high_water,
-       (SELECT MAX(row_version) FROM sync_mirror_ingress
-         WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3) AS logged`,
+         WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3) AS high_water`,
     a.tenant_id,
     a.entity_type,
     a.entity_sync_id,
@@ -623,7 +661,6 @@ export async function emitRestore(
       Number(a.prior_row_version ?? 0),
       Number(seen?.archived ?? 0),
       Number(seen?.high_water ?? 0),
-      Number(seen?.logged ?? 0),
     ) + 1;
   const ingress: IngressInsert = {
     tenantId: a.tenant_id,

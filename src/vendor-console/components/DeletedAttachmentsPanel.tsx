@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Badge, Button, Input, Label } from "@/components/ui";
@@ -7,9 +7,11 @@ import { StepUpKinds } from "@/lib/step-up-kinds";
 import {
   listDeletedAttachments,
   restoreDeletedAttachment,
+  RestoreConflictError,
   type AttachmentState,
   type DeletedAttachment,
   type DeletedAttachmentsQuery,
+  type KeptGroup,
   type NothingKeptGroup,
 } from "@/services/vendor-ops-telemetry-service";
 
@@ -22,17 +24,38 @@ const selectClass = "h-11 rounded-lg border border-input bg-surface-1 pl-3 pr-9 
 const PERIOD_DAYS = [0, 7, 30, 90] as const;
 /** Entries per page ("Load more" fetches the next one). */
 const PAGE_SIZE = 100;
+/** The archived types (api/src/sync/attachment-archive.ts), for the type filter. */
+const ARCHIVED_TYPES = [
+  "media_attachments",
+  "asset_photos",
+  "di_attachments",
+  "work_order_attachments",
+  "library_documents",
+  "asset_document_links",
+  "inventory_document_links",
+] as const;
 type View = NonNullable<DeletedAttachmentsQuery["view"]>;
+
+/** Start of the day after `yyyy-mm-dd` (local time): the exclusive upper bound of "up to that date". */
+function dayAfter(date: string): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
+  const d = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return undefined;
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
 
 /**
  * Photos, attachments and document links deleted or replaced for one customer. Every replacement
  * of a live version is archived (device deletes and overwrites, and restores that replace a live
  * row), so any archived version can be brought back, any time, as often as needed. The sync server
- * knows the device that sent a change, not the person. Restore (reason + step-up
- * `sync_attachment_restore`, audited) sends the entity's current version from this listing; the
- * server refuses if it changed since, and the list is reloaded so the operator sees what will be
- * replaced. Files uploaded to the server are never deleted; for an equipment / request / work order
- * attachment the file comes back through its "Photo or file" companion entry, shown next to it.
+ * knows the device that sent a change, not the person. By default the kept view shows only changes
+ * of a version another device wrote, so a device cannot bury a real entry under entries about rows
+ * it wrote and deleted itself. Restore (reason + step-up `sync_attachment_restore`, audited) sends
+ * the entity's current version from this listing; when the server refuses because it changed, the
+ * open dialog takes the state from the refusal (the loaded pages stay as they are). Files uploaded
+ * to the server are never deleted; for an equipment / request / work order attachment the file
+ * comes back through its "Photo or file" companion entry, shown next to it.
  */
 export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
   const { t } = useTranslation("vendorConsole");
@@ -40,54 +63,76 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
   const [items, setItems] = useState<DeletedAttachment[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [summary, setSummary] = useState<NothingKeptGroup[]>([]);
+  const [keptSummary, setKeptSummary] = useState<KeptGroup[]>([]);
   const [view, setView] = useState<View>("kept");
+  const [crossDevice, setCrossDevice] = useState(true);
+  const [device, setDevice] = useState("");
+  const [entityType, setEntityType] = useState("");
   const [periodDays, setPeriodDays] = useState<number>(0);
+  const [beforeDate, setBeforeDate] = useState("");
   const [search, setSearch] = useState("");
   const [itemId, setItemId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<DeletedAttachment | null>(null);
+  /** Bumped whenever the filters (re)load page 1: a Load more answer for older filters is dropped. */
+  const generation = useRef(0);
 
   const query = useCallback(
     (cursor?: string): DeletedAttachmentsQuery => ({
       view,
       since: periodDays > 0 ? new Date(Date.now() - periodDays * 86_400_000).toISOString() : undefined,
+      before: beforeDate ? dayAfter(beforeDate) : undefined,
+      entity_type: entityType || undefined,
       entity_sync_id: itemId || undefined,
+      machine_fingerprint: device || undefined,
+      cross_device: view === "kept" && crossDevice ? "1" : undefined,
       limit: PAGE_SIZE,
       cursor,
     }),
-    [view, periodDays, itemId],
+    [view, periodDays, beforeDate, entityType, itemId, device, crossDevice],
   );
 
-  /** First page again; returns the entries (or null when the request failed). */
-  const load = useCallback(async (): Promise<DeletedAttachment[] | null> => {
+  /** First page again. */
+  const load = useCallback(async () => {
+    generation.current += 1;
+    const mine = generation.current;
     setError(null);
     try {
       const page = await listDeletedAttachments(tenantId, query());
+      if (mine !== generation.current) return;
       setItems(page.items);
       setNextCursor(page.next_cursor);
       setSummary(page.nothing_kept_summary);
-      return page.items;
+      setKeptSummary(page.kept_summary);
     } catch (err) {
-      setError(errorText(err));
-      return null;
+      if (mine === generation.current) setError(errorText(err));
     }
   }, [tenantId, query]);
 
   const loadMore = async () => {
     if (!nextCursor) return;
+    const mine = generation.current;
     try {
       const page = await listDeletedAttachments(tenantId, query(nextCursor));
+      if (mine !== generation.current) return; // the filters changed meanwhile
       setItems((current) => [...(current ?? []), ...page.items]);
       setNextCursor(page.next_cursor);
     } catch (err) {
-      setError(errorText(err));
+      if (mine === generation.current) setError(errorText(err));
     }
   };
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Every loaded entry of the same item gets the state the server reported. */
+  const patchCurrent = (target: DeletedAttachment, current: AttachmentState | null) => {
+    const same = (i: DeletedAttachment) => i.entity_type === target.entity_type && i.entity_sync_id === target.entity_sync_id;
+    setItems((list) => list?.map((i) => (same(i) ? { ...i, current } : i)) ?? list);
+    setRestoring((open) => (open && same(open) ? { ...open, current } : open));
+  };
 
   const restore = async (reason: string) => {
     if (!restoring) return;
@@ -97,11 +142,9 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
         step_up_token: await requireStepUp(StepUpKinds.syncAttachmentRestore),
       });
     } catch (err) {
-      // A refusal (e.g. the entity changed since this listing): reload, and point the open dialog at
-      // the reloaded entry so confirming again sends the state the operator now sees.
-      const fresh = await load();
-      const again = fresh?.find((i) => i.id === restoring.id);
-      if (again) setRestoring(again);
+      // The entity changed since the listing: show its state now (from the refusal) in the dialog
+      // and the list, so confirming again replaces what the operator sees.
+      if (err instanceof RestoreConflictError) patchCurrent(restoring, err.current);
       throw err;
     }
     setSuccess(t("sync.deletedAttachments.restored", { id: restoring.entity_sync_id }));
@@ -121,6 +164,8 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
       : item.change_kind === "restore"
         ? t("sync.deletedAttachments.state.replacedByRestore")
         : t("sync.deletedAttachments.state.replaced");
+
+  const devices = [...new Set([...keptSummary.map((g) => g.machine_fingerprint), ...summary.map((g) => g.machine_fingerprint)])].sort();
 
   return (
     <section className="space-y-3" aria-labelledby="sync-deleted-attachments">
@@ -143,6 +188,28 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
           </select>
         </div>
         <div className="grid gap-1">
+          <Label htmlFor="deleted-attachments-device">{t("sync.deletedAttachments.device.label")}</Label>
+          <select id="deleted-attachments-device" className={selectClass} value={device} onChange={(e) => setDevice(e.target.value)}>
+            <option value="">{t("sync.deletedAttachments.device.all")}</option>
+            {devices.map((fp) => (
+              <option key={fp} value={fp}>
+                {fp}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="deleted-attachments-type">{t("sync.deletedAttachments.typeFilter.label")}</Label>
+          <select id="deleted-attachments-type" className={selectClass} value={entityType} onChange={(e) => setEntityType(e.target.value)}>
+            <option value="">{t("sync.deletedAttachments.typeFilter.all")}</option>
+            {ARCHIVED_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {t(`sync.deletedAttachments.type.${type}`)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid gap-1">
           <Label htmlFor="deleted-attachments-period">{t("sync.deletedAttachments.period.label")}</Label>
           <select
             id="deleted-attachments-period"
@@ -156,6 +223,10 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
               </option>
             ))}
           </select>
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="deleted-attachments-before">{t("sync.deletedAttachments.before.label")}</Label>
+          <Input id="deleted-attachments-before" type="date" value={beforeDate} onChange={(e) => setBeforeDate(e.target.value)} />
         </div>
         <form
           className="flex items-end gap-2"
@@ -173,6 +244,24 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
           </Button>
         </form>
       </div>
+      {view === "kept" ? (
+        <div className="space-y-1">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={crossDevice} onChange={(e) => setCrossDevice(e.target.checked)} />
+            {t("sync.deletedAttachments.crossDevice.label")}
+          </label>
+          <p className="text-xs text-text-secondary">{t("sync.deletedAttachments.crossDevice.help")}</p>
+        </div>
+      ) : null}
+      {keptSummary.length > 0 && view === "kept" ? (
+        <ul className="space-y-1 text-xs text-text-secondary" data-testid="kept-summary">
+          {keptSummary.map((g) => (
+            <li key={g.machine_fingerprint}>
+              {t("sync.deletedAttachments.keptSummary", { count: g.count, cross: g.cross_device_count, device: g.machine_fingerprint })}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {summary.length > 0 && view === "kept" ? (
         <ul className="space-y-1 text-xs text-text-secondary" data-testid="nothing-kept-summary">
           {summary.map((g) => (
@@ -256,6 +345,9 @@ export function DeletedAttachmentsPanel({ tenantId }: { tenantId: string }) {
                     {item.changed_by.operator
                       ? t("sync.deletedAttachments.byOperator", { operator: item.changed_by.operator })
                       : item.changed_by.machine_fingerprint}
+                    {item.prior_origin ? (
+                      <div className="font-sans text-text-muted">{t("sync.deletedAttachments.priorOrigin", { device: item.prior_origin })}</div>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 text-xs">
                     <div className="space-y-1">

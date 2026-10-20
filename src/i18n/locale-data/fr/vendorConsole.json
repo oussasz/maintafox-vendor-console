@@ -677,7 +677,7 @@
       "view": {
         "label": "Afficher",
         "kept": "Supprimés ou remplacés (versions conservées)",
-        "nothing_kept": "Suppressions d'éléments que le serveur n'a jamais eus",
+        "nothing_kept": "Suppressions sans version conservée (jamais reçu ou déjà supprimé)",
         "all": "Tout"
       },
       "search": {
@@ -685,11 +685,29 @@
         "submit": "Rechercher"
       },
       "nothingKept": {
-        "summary_one": "{{count}} suppression d'un élément que le serveur n'a jamais eu ({{type}}), depuis l'appareil {{device}}",
-        "summary_other": "{{count}} suppressions d'éléments que le serveur n'a jamais eus ({{type}}), depuis l'appareil {{device}}",
+        "summary_one": "{{count}} suppression sans version conservée ({{type}}, un élément que le serveur n'a jamais eu ou avait déjà supprimé), depuis l'appareil {{device}}",
+        "summary_other": "{{count}} suppressions sans version conservée ({{type}}, des éléments que le serveur n'a jamais eus ou avait déjà supprimés), depuis l'appareil {{device}}",
         "show": "Les afficher"
       },
-      "loadMore": "Afficher plus"
+      "loadMore": "Afficher plus",
+      "device": {
+        "label": "Modifié par l'appareil",
+        "all": "Tous les appareils"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "Tous les types"
+      },
+      "before": {
+        "label": "Jusqu'au (date)"
+      },
+      "crossDevice": {
+        "label": "Seulement les versions écrites par un autre appareil",
+        "help": "Masque les modifications qu'un appareil a faites sur des éléments qu'il avait lui-même écrits, pour qu'un appareil ne puisse pas noyer un vrai élément sous ses propres suppressions. Décochez pour tout voir."
+      },
+      "keptSummary_one": "{{count}} modification avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "keptSummary_other": "{{count}} modifications avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "priorOrigin": "version écrite par {{device}}"
     },
     "retry": "Réessayer"
   },

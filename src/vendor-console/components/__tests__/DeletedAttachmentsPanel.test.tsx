@@ -10,7 +10,8 @@ vi.mock("@/services/license-control-service", () => ({
   PRIVILEGED_REASON_MIN_LENGTH: 4,
 }));
 
-vi.mock("@/services/vendor-ops-telemetry-service", () => ({
+vi.mock("@/services/vendor-ops-telemetry-service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/vendor-ops-telemetry-service")>()),
   listDeletedAttachments: vi.fn(),
   restoreDeletedAttachment: vi.fn(),
 }));
@@ -20,10 +21,12 @@ vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
   requestStepUp: vi.fn(async (actionKind: string) => ({ token: `stepup-${actionKind}`, actionKind, expiresAtMs: Date.now() + 300_000 })),
 }));
 
+import { ApiRequestError } from "@/lib/api-error";
 import { requestStepUp } from "@/services/vendor-auth-service";
 import {
   listDeletedAttachments,
   restoreDeletedAttachment,
+  RestoreConflictError,
   type DeletedAttachment,
   type DeletedAttachmentsPage,
 } from "@/services/vendor-ops-telemetry-service";
@@ -40,6 +43,7 @@ function entry(over: Partial<DeletedAttachment> = {}): DeletedAttachment {
     change_kind: "delete",
     locator_changed: true,
     changed_at: "2026-10-20T08:00:00Z",
+    prior_origin: "fp-desktop-1",
     changed_by: { license_id: "lic_1", machine_fingerprint: "fp-tablet-2", operator: null },
     change_row_version: 2,
     prior_state: "present",
@@ -57,7 +61,7 @@ function entry(over: Partial<DeletedAttachment> = {}): DeletedAttachment {
 }
 
 function page(items: DeletedAttachment[], extra: Partial<DeletedAttachmentsPage> = {}): DeletedAttachmentsPage {
-  return { tenant_id: "tenant_1", items, next_cursor: null, nothing_kept_summary: [], ...extra };
+  return { tenant_id: "tenant_1", items, next_cursor: null, nothing_kept_summary: [], kept_summary: [], ...extra };
 }
 
 async function restoreFirstRow() {
@@ -106,10 +110,15 @@ describe("DeletedAttachmentsPanel", () => {
     expect(listDeletedAttachments).toHaveBeenCalledWith("tenant_1", {
       view: "kept",
       since: undefined,
+      before: undefined,
+      entity_type: undefined,
       entity_sync_id: undefined,
+      machine_fingerprint: undefined,
+      cross_device: "1",
       limit: 100,
       cursor: undefined,
     });
+    expect(rows[0]).toHaveTextContent("sync.deletedAttachments.priorOrigin");
   });
 
   it("the view, the period and the item search reload the list", async () => {
@@ -151,21 +160,83 @@ describe("DeletedAttachmentsPanel", () => {
     expect(screen.queryByRole("button", { name: "sync.deletedAttachments.loadMore" })).toBeNull();
   });
 
-  it("after a refusal, confirming again sends the state of the reloaded list", async () => {
+  it("cross-device is on by default in the kept view; device, type and date filters reach the query", async () => {
+    vi.mocked(listDeletedAttachments).mockResolvedValue(
+      page([], {
+        kept_summary: [{ machine_fingerprint: "fp-b", license_id: "lic_1", count: 1501, cross_device_count: 1, last_at: "2026-10-20T10:00:00Z" }],
+        nothing_kept_summary: [{ machine_fingerprint: "fp-c", license_id: "lic_1", entity_type: "asset_photos", count: 3, last_at: "2026-10-20T10:00:00Z" }],
+      }),
+    );
+    renderWithConsole(<DeletedAttachmentsPanel tenantId="tenant_1" />);
+    expect(await screen.findByTestId("kept-summary")).toHaveTextContent("sync.deletedAttachments.keptSummary");
+    const lastQuery = () => vi.mocked(listDeletedAttachments).mock.calls.at(-1)![1]!;
+    const toggle = screen.getByLabelText("sync.deletedAttachments.crossDevice.label");
+    expect(toggle).toBeChecked();
+    expect(lastQuery().cross_device).toBe("1");
+    await userEvent.click(toggle);
+    await waitFor(() => expect(lastQuery().cross_device).toBeUndefined());
+    // The device picker lists the devices of both summaries.
+    const picker = screen.getByLabelText("sync.deletedAttachments.device.label");
+    expect(within(picker).getAllByRole("option").map((o) => o.getAttribute("value"))).toEqual(["", "fp-b", "fp-c"]);
+    await userEvent.selectOptions(picker, "fp-b");
+    await waitFor(() => expect(lastQuery().machine_fingerprint).toBe("fp-b"));
+    await userEvent.selectOptions(screen.getByLabelText("sync.deletedAttachments.typeFilter.label"), "asset_photos");
+    await waitFor(() => expect(lastQuery().entity_type).toBe("asset_photos"));
+    await userEvent.type(screen.getByLabelText("sync.deletedAttachments.before.label"), "2026-10-19");
+    await waitFor(() => expect(lastQuery().before).toBe(new Date("2026-10-20T00:00:00").toISOString()));
+    // Not offered outside the kept view.
+    await userEvent.selectOptions(screen.getByLabelText("sync.deletedAttachments.view.label"), "nothing_kept");
+    await waitFor(() => expect(lastQuery().view).toBe("nothing_kept"));
+    expect(lastQuery().cross_device).toBeUndefined();
+    expect(screen.queryByLabelText("sync.deletedAttachments.crossDevice.label")).toBeNull();
+  });
+
+  it("after a 409 the dialog takes the state from the refusal; loaded pages stay (entry from page 2)", async () => {
     const newer = { row_version: 5, payload_hash: "c".repeat(64), deleted: false };
     vi.mocked(listDeletedAttachments)
-      .mockResolvedValueOnce(page([entry()]))
-      .mockResolvedValueOnce(page([entry({ current: newer })]))
-      .mockResolvedValue(page([entry({ current: newer })]));
-    vi.mocked(restoreDeletedAttachment).mockRejectedValueOnce(new Error("changed since the listing")).mockResolvedValueOnce();
+      .mockResolvedValueOnce(page([entry()], { next_cursor: "cur-1" }))
+      .mockResolvedValueOnce(page([entry({ id: "8", entity_sync_id: "media-2" })]))
+      .mockResolvedValue(page([entry()]));
+    vi.mocked(restoreDeletedAttachment)
+      .mockRejectedValueOnce(new RestoreConflictError(new ApiRequestError(409, "entity_changed_since_listing", "changed since the listing"), newer))
+      .mockResolvedValueOnce();
     renderWithConsole(<DeletedAttachmentsPanel tenantId="tenant_1" />);
-    await restoreFirstRow();
+    await userEvent.click(await screen.findByRole("button", { name: "sync.deletedAttachments.loadMore" }));
+    const table = await screen.findByTestId("deleted-attachments");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3));
+    const second = within(table).getAllByRole("row")[2]!;
+    await userEvent.click(within(second).getByRole("button", { name: "sync.deletedAttachments.restore" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("changed since the listing");
+    await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "deleted by mistake");
     await userEvent.click(within(dialog).getByRole("button", { name: "sync.deletedAttachments.restoreConfirm" }));
+    await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+    await waitFor(() => expect(restoreDeletedAttachment).toHaveBeenCalledTimes(1));
+    const refused = await screen.findByRole("dialog");
+    expect(await within(refused).findByRole("alert")).toBeInTheDocument();
+    expect(listDeletedAttachments).toHaveBeenCalledTimes(2); // no reload: page 2 is still there
+    expect(within(table).getAllByRole("row", { hidden: true })).toHaveLength(3); // behind the modal
+    expect(within(table).getByTestId("current-8")).toHaveTextContent("sync.deletedAttachments.current.live");
+    await userEvent.click(within(refused).getByRole("button", { name: "sync.deletedAttachments.restoreConfirm" }));
     await waitFor(() => expect(restoreDeletedAttachment).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(restoreDeletedAttachment).mock.calls[0]![2]).toEqual(CURRENT);
-    expect(vi.mocked(restoreDeletedAttachment).mock.calls[1]![2]).toEqual(newer);
+    expect(vi.mocked(restoreDeletedAttachment).mock.calls[0]!.slice(1, 3)).toEqual(["8", CURRENT]);
+    expect(vi.mocked(restoreDeletedAttachment).mock.calls[1]!.slice(1, 3)).toEqual(["8", newer]);
+  });
+
+  it("a Load more answer for filters that changed meanwhile is dropped", async () => {
+    let releaseOld!: (p: DeletedAttachmentsPage) => void;
+    vi.mocked(listDeletedAttachments)
+      .mockResolvedValueOnce(page([entry()], { next_cursor: "cur-1" }))
+      .mockImplementationOnce(() => new Promise((resolve) => (releaseOld = resolve)))
+      .mockResolvedValue(page([entry({ id: "20", entity_sync_id: "never-held" })]));
+    renderWithConsole(<DeletedAttachmentsPanel tenantId="tenant_1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "sync.deletedAttachments.loadMore" }));
+    await userEvent.selectOptions(screen.getByLabelText("sync.deletedAttachments.view.label"), "nothing_kept");
+    expect(await screen.findByText("never-held")).toBeInTheDocument();
+    releaseOld(page([entry({ id: "99", entity_sync_id: "stale-page-2" })]));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText("stale-page-2")).toBeNull();
+    expect(within(screen.getByTestId("deleted-attachments")).getAllByRole("row")).toHaveLength(2);
   });
 
   it("restore sends the listed current state, a reason and a sync_attachment_restore code, then reloads", async () => {
@@ -190,13 +261,13 @@ describe("DeletedAttachmentsPanel", () => {
     expect(screen.getByRole("button", { name: "sync.deletedAttachments.restore" })).toBeInTheDocument();
   });
 
-  it("a refused restore stays in the dialog with the reason and reloads the list", async () => {
+  it("a refused restore stays in the dialog with the reason", async () => {
     vi.mocked(listDeletedAttachments).mockResolvedValue(page([entry()]));
     vi.mocked(restoreDeletedAttachment).mockRejectedValue(new Error("changed since the listing"));
     renderWithConsole(<DeletedAttachmentsPanel tenantId="tenant_1" />);
     await restoreFirstRow();
     expect(await within(await screen.findByRole("dialog")).findByRole("alert")).toHaveTextContent("changed since the listing");
-    expect(listDeletedAttachments).toHaveBeenCalledTimes(2);
+    expect(listDeletedAttachments).toHaveBeenCalledTimes(1);
   });
 
   it("shows the server file copy and the companion Photo or file entry", async () => {

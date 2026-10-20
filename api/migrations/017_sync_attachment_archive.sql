@@ -92,9 +92,28 @@ CREATE TABLE sync_attachment_version_high_water (
   PRIMARY KEY (tenant_id, entity_type, entity_sync_id)
 );
 
--- Console listing: entries that kept a version, newest first, per tenant and per item.
+-- backfill:begin
+-- History from before this table: the highest version in the ingress log and the current state of
+-- every entity of an archived type (the list in api/src/sync/attachment-archive.ts). Idempotent.
+INSERT INTO sync_attachment_version_high_water (tenant_id, entity_type, entity_sync_id, max_row_version)
+SELECT tenant_id, entity_type, entity_sync_id, MAX(row_version)
+FROM (
+  SELECT tenant_id, entity_type, entity_sync_id, row_version FROM sync_mirror_ingress
+  UNION ALL
+  SELECT tenant_id, entity_type, entity_sync_id, row_version FROM sync_entity_state
+) h
+WHERE entity_type IN ('media_attachments', 'asset_photos', 'di_attachments', 'work_order_attachments',
+                      'library_documents', 'asset_document_links', 'inventory_document_links')
+GROUP BY tenant_id, entity_type, entity_sync_id
+ON CONFLICT (tenant_id, entity_type, entity_sync_id)
+  DO UPDATE SET max_row_version = GREATEST(sync_attachment_version_high_water.max_row_version, EXCLUDED.max_row_version);
+-- backfill:end
+
+-- Console listing: entries that kept a version, newest first, per tenant and per item; per device.
 CREATE INDEX sync_deleted_attachment_archive_kept
   ON sync_deleted_attachment_archive (tenant_id, changed_at DESC, id DESC) WHERE prior_state = 'present';
+CREATE INDEX sync_deleted_attachment_archive_device
+  ON sync_deleted_attachment_archive (tenant_id, changed_by_machine_fingerprint, changed_at DESC, id DESC);
 
 -- Evidence: archive entries and restore records are never updated (deleted only with the tenant).
 CREATE FUNCTION mfx_sync_attachment_archive_immutable() RETURNS trigger
