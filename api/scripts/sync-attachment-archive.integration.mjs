@@ -220,6 +220,7 @@ try {
     assert.equal(r.status, 200, r.text);
     return r.json.items;
   };
+  const listAll = () => list("?view=all&limit=200");
   const listed = await api.call("GET", listUrl, token);
   assert.equal(listed.status, 200, listed.text);
   assert.equal(listed.json.items.length, 1);
@@ -234,7 +235,9 @@ try {
   assert.equal(entry.file_on_server, true, "the manifest says the server has the file");
   assert.equal(entry.content_sha256, contentSha);
   assert.ok(!listed.text.includes("Seal leak"), "no payload in the listing");
-  assert.equal((await api.call("GET", `${listUrl}?filter=bogus`, token)).status, 400);
+  assert.equal((await api.call("GET", `${listUrl}?view=bogus`, token)).status, 400);
+  assert.equal((await api.call("GET", `${listUrl}?limit=201`, token)).status, 400, "page size at most 200");
+  assert.equal((await api.call("GET", `${listUrl}?cursor=not-a-cursor`, token)).status, 400);
   assert.equal((await api.call("GET", `${listUrl}?status=all`, token)).status, 400, "unknown query keys are refused");
   assert.equal((await list(`?since=${encodeURIComponent(new Date(Date.now() + 3600_000).toISOString())}`)).length, 0, "time filter");
   assert.equal((await list(`?since=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`)).length, 1);
@@ -246,6 +249,7 @@ try {
   const expect = (current) => ({
     expected_current_row_version: current?.row_version ?? null,
     expected_current_payload_hash: current?.payload_hash ?? null,
+    expected_current_deleted: current?.deleted ?? null,
   });
   const noReason = await api.call("POST", restoreUrl(entry.id), token, expect(entry.current), {
     "X-Step-Up-Token": await owner.stepUp("sync_attachment_restore"),
@@ -290,7 +294,7 @@ try {
 
   /** Restores an entry against the current state the listing shows now. */
   const restoreNow = async (archiveId) => {
-    const it = (await list("?filter=all")).find((i) => i.id === String(archiveId));
+    const it = (await listAll()).find((i) => i.id === String(archiveId));
     assert.ok(it, `archive entry ${archiveId} listed`);
     const r = await api.call("POST", restoreUrl(archiveId), token, expect(it.current), privileged);
     assert.equal(r.status, 200, r.text);
@@ -373,8 +377,9 @@ try {
     [tenant.id, mediaId],
   );
   assert.equal(caption.locator_changed, false, "a caption edit does not move the file");
-  assert.ok(!(await list()).some((i) => i.id === String(caption.id)), "hidden by default");
-  assert.ok((await list("?filter=all")).some((i) => i.id === String(caption.id)), "shown with filter=all");
+  const captionListed = (await list()).find((i) => i.id === String(caption.id));
+  assert.ok(captionListed, "every replacement of a live row is listed by default, whatever field changed");
+  assert.equal(captionListed.locator_changed, false, "locator_changed is informative only");
 
   // ── Probe m1: delete, then delete again. The good version stays restorable ──────────────────
   const good = (id) => JSON.stringify({ entity_sync_id: id, object_key: `test/media/${tenant.id}/equipment/eq-9/${"a".repeat(64)}`, content_sha256: "a".repeat(64) });
@@ -386,7 +391,8 @@ try {
   await exchange(B, [item("media_attachments", "m1", 3, 2, JSON.stringify({ entity_sync_id: "m1", x: 1 }), "delete")]);
   const m1 = await entriesOf("m1");
   assert.deepEqual(m1.map((e) => e.prior_state), ["present", "already_deleted"]);
-  const m1Second = (await list()).find((i) => i.id === String(m1[1].id));
+  assert.ok(!(await list()).some((i) => i.id === String(m1[1].id)), "an entry that kept nothing is not in the default view");
+  const m1Second = (await listAll()).find((i) => i.id === String(m1[1].id));
   const nothing = await api.call("POST", restoreUrl(m1[1].id), token, expect(m1Second.current), privileged);
   assert.equal(nothing.json.error, "nothing_to_restore");
   assert.equal((await restoreNow(m1[0].id)).row_version, 4);
@@ -536,13 +542,103 @@ try {
   const evLog = await api.su("SELECT count(*)::int AS n FROM sync_mirror_ingress WHERE entity_sync_id = 'ev-1'");
   assert.equal(evLog[0].n, 1, "refused deletes are not logged");
 
+  // ── Byte size per type (asset_photos file_size_bytes, others size_bytes) ─────────────────────
+  await exchange(A, [item("asset_photos", "size-1", 1, null, JSON.stringify({ relative_path: "asset_photos/1/s.jpg", file_size_bytes: 4321 }), "upsert")]);
+  await exchange(B, [item("asset_photos", "size-1", 2, 1, JSON.stringify({ entity_sync_id: "size-1" }), "delete")]);
+  await exchange(A, [item("library_documents", "size-2", 1, null, JSON.stringify({ relative_path: "library/m.pdf", size_bytes: 9876 }), "upsert")]);
+  await exchange(B, [item("library_documents", "size-2", 2, 1, JSON.stringify({ entity_sync_id: "size-2" }), "delete")]);
+  const sized = await list();
+  assert.equal(sized.find((i) => i.entity_sync_id === "size-1").byte_size, 4321);
+  assert.equal(sized.find((i) => i.entity_sync_id === "size-2").byte_size, 9876);
+
+  // ── Probe C: identical v2 re-sends raise the version to 10, then v1 writes it back down ───────
+  const cPayload = (tag) => JSON.stringify({ entity_sync_id: "c", object_key: `test/media/${tenant.id}/c/${tag}` });
+  await exchange(A, [item("media_attachments", "c", 1, null, cPayload("g0"), "upsert")]);
+  await exchange(A, [item("media_attachments", "c", 2, 1, cPayload("g1"), "upsert")]);
+  for (let v = 3; v <= 10; v += 1) await exchange(A, [item("media_attachments", "c", v, v - 1, cPayload("g1"), "upsert")]);
+  assert.equal((await pullAll(B)).find((i) => i.entity_sync_id === "c")?.row_version, 10, "a device holds v10");
+  await exchangeV1(A, [item("media_attachments", "c", 1, null, cPayload("g1"), "upsert")]);
+  await exchangeV1(A, [item("media_attachments", "c", 2, null, cPayload("junk"), "upsert")]);
+  // Compacting the log must not lose the high-water mark: drop this entity's log rows outright.
+  await api.su("DELETE FROM sync_mirror_ingress WHERE tenant_id = $1 AND entity_sync_id = 'c'", [tenant.id]);
+  const cG0 = (await api.su(
+    "SELECT id FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'c' AND prior_row_version = 1 AND change_row_version = 2 ORDER BY id LIMIT 1",
+  ))[0];
+  const cRestore = await restoreNow(cG0.id);
+  assert.ok(cRestore.row_version >= 11, `restore written above what devices hold (got ${cRestore.row_version})`);
+  const cBack = (await pullAll(B)).find((i) => i.entity_sync_id === "c");
+  assert.equal(cBack.row_version, cRestore.row_version);
+  assert.equal(cBack.payload_json, cPayload("g0"));
+
+  // ── N-1: a v1 delete with the same version and payload flips only `deleted`: stale listing ─────
+  const eGood = JSON.stringify({ entity_sync_id: "e", object_key: `test/media/${tenant.id}/e/good` });
+  const eJunk = JSON.stringify({ entity_sync_id: "e", object_key: `test/media/${tenant.id}/e/junk` });
+  await exchange(A, [item("media_attachments", "e", 1, null, eGood, "upsert")]);
+  await exchange(A, [item("media_attachments", "e", 2, 1, eJunk, "upsert")]);
+  const eEntry = (await list("?entity_type=media_attachments&entity_sync_id=e"))[0];
+  assert.deepEqual(eEntry.current, { row_version: 2, payload_hash: sha256Hex(eJunk), deleted: false });
+  await exchangeV1(B, [item("media_attachments", "e", 2, null, eJunk, "delete")]);
+  const eStale = await api.call("POST", restoreUrl(eEntry.id), token, expect(eEntry.current), privileged);
+  assert.equal(eStale.status, 409, "same version and hash, but now deleted");
+  assert.equal(eStale.json.error, "entity_changed_since_listing");
+  assert.equal(eStale.json.current.deleted, true);
+
+  // ── B-2 probe F: a flood of deletes of unknown ids never hides a real entry ──────────────────
+  await exchange(A, [item("media_attachments", "f", 1, null, JSON.stringify({ entity_sync_id: "f", object_key: "k-f" }), "upsert")]);
+  await exchange(B, [item("media_attachments", "f", 2, 1, JSON.stringify({ entity_sync_id: "f" }), "delete")]);
+  const beforeFlood = new Date().toISOString();
+  for (let b = 0; b < 6; b += 1) {
+    const batch = [];
+    for (let i = 0; i < 100; i += 1) {
+      batch.push(item("media_attachments", `ghost-${b}-${i}`, 1, null, JSON.stringify({ entity_sync_id: `ghost-${b}-${i}` }), "delete"));
+    }
+    assert.equal((await exchange(B, batch)).acknowledged_items.length, 100);
+  }
+  const defaultPage = await api.call("GET", listUrl, token);
+  assert.ok(defaultPage.json.items.some((i) => i.entity_sync_id === "f"), "the real delete is in the default view");
+  assert.ok(defaultPage.json.items.every((i) => i.prior_state === "present"), "default view: only entries that kept a version");
+  const flood = defaultPage.json.nothing_kept_summary.find((g) => g.machine_fingerprint === B.fp && g.entity_type === "media_attachments");
+  assert.ok(flood && flood.count >= 600, `counted per device and type: ${JSON.stringify(defaultPage.json.nothing_kept_summary)}`);
+  assert.equal(flood.license_id, licence.id);
+  const sinceHour = encodeURIComponent(new Date(Date.now() - 3600_000).toISOString());
+  assert.ok((await list(`?since=${sinceHour}`)).some((i) => i.entity_sync_id === "f"), "and with since=1h");
+  // since + before together: only the flood window, which has no kept entry.
+  const inFlood = await api.call("GET", `${listUrl}?view=nothing_kept&since=${encodeURIComponent(beforeFlood)}&before=${encodeURIComponent(new Date(Date.now() + 1000).toISOString())}&limit=200`, token);
+  assert.equal(inFlood.json.items.length, 200);
+  assert.ok(inFlood.json.items.every((i) => i.entity_sync_id.startsWith("ghost-")));
+  assert.equal((await list(`?before=${encodeURIComponent(beforeFlood)}&view=nothing_kept&entity_sync_id=ghost-0-0`)).length, 0, "before excludes later changes");
+  // Cursor paging through the flood: stable order, no duplicates, nothing missed.
+  const seenIds = new Set();
+  let cursor = null;
+  let pages = 0;
+  do {
+    const r = await api.call(
+      "GET",
+      `${listUrl}?view=nothing_kept&since=${encodeURIComponent(beforeFlood)}&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      token,
+    );
+    assert.equal(r.status, 200, r.text);
+    for (const it of r.json.items) {
+      assert.ok(!seenIds.has(it.id), "no entry twice across pages");
+      seenIds.add(it.id);
+    }
+    cursor = r.json.next_cursor;
+    pages += 1;
+  } while (cursor && pages < 10);
+  assert.equal(seenIds.size, 600);
+  assert.equal(pages, 3);
+  // Item filter: exact type + id.
+  const fOnly = await list("?entity_type=media_attachments&entity_sync_id=f");
+  assert.deepEqual(fOnly.map((i) => i.entity_sync_id), ["f"]);
+  assert.equal((await list("?view=nothing_kept&entity_sync_id=ghost-3-7")).length, 1);
+
   // ── A delete of something the server never held: archived as unknown, not restorable ───────
   const ghost = await exchange(B, [item("asset_photos", "photo-never-seen", 2, 1, JSON.stringify({ id: 9 }), "delete")]);
   assert.equal(ghost.acknowledged_items.length, 1, "acceptance unchanged");
   const [ghostRow] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'photo-never-seen'");
   assert.equal(ghostRow.prior_state, "unknown");
   assert.equal(ghostRow.prior_payload_raw, null);
-  const ghostListed = (await list()).find((i) => i.id === String(ghostRow.id));
+  const ghostListed = (await list("?view=nothing_kept")).find((i) => i.id === String(ghostRow.id));
   assert.equal(ghostListed.restorable, false);
   const ghostRestore = await api.call("POST", restoreUrl(ghostRow.id), token, expect(ghostListed.current), privileged);
   assert.equal(ghostRestore.json.error, "nothing_to_restore");

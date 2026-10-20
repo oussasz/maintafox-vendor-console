@@ -80,6 +80,22 @@ CREATE TABLE sync_attachment_restore_log (
 );
 CREATE INDEX sync_attachment_restore_log_archive ON sync_attachment_restore_log (tenant_id, archive_id, id);
 
+-- Highest row_version the server ever accepted per entity of an archived type (also written by
+-- restores). A restore writes above it, so devices never see a restored row at a version below
+-- one they hold, even when a v1 device wrote versions backwards with identical re-sends (those are
+-- not archived) and the ingress log holding them was compacted.
+CREATE TABLE sync_attachment_version_high_water (
+  tenant_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_sync_id TEXT NOT NULL,
+  max_row_version BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, entity_type, entity_sync_id)
+);
+
+-- Console listing: entries that kept a version, newest first, per tenant and per item.
+CREATE INDEX sync_deleted_attachment_archive_kept
+  ON sync_deleted_attachment_archive (tenant_id, changed_at DESC, id DESC) WHERE prior_state = 'present';
+
 -- Evidence: archive entries and restore records are never updated (deleted only with the tenant).
 CREATE FUNCTION mfx_sync_attachment_archive_immutable() RETURNS trigger
   LANGUAGE plpgsql
@@ -94,6 +110,7 @@ CREATE TRIGGER sync_deleted_attachment_archive_immutable
 CREATE TRIGGER sync_attachment_restore_log_immutable
   BEFORE UPDATE ON sync_attachment_restore_log
   FOR EACH ROW EXECUTE FUNCTION mfx_sync_attachment_archive_immutable();
+-- DELETE stays granted to mfx_app on both tables only for tenant delete (purgeTenantSyncData).
 REVOKE UPDATE ON sync_deleted_attachment_archive, sync_attachment_restore_log FROM mfx_app;
 
 -- 2. Forensic device log: one row per accepted change of the three-person lock-removal setting
@@ -141,6 +158,10 @@ CREATE POLICY tenant_isolation ON sync_deleted_attachment_archive
   WITH CHECK (mfx_scope_operator() OR tenant_id = mfx_scope_tenant());
 ALTER TABLE sync_attachment_restore_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON sync_attachment_restore_log
+  USING (mfx_scope_operator() OR tenant_id = mfx_scope_tenant())
+  WITH CHECK (mfx_scope_operator() OR tenant_id = mfx_scope_tenant());
+ALTER TABLE sync_attachment_version_high_water ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON sync_attachment_version_high_water
   USING (mfx_scope_operator() OR tenant_id = mfx_scope_tenant())
   WITH CHECK (mfx_scope_operator() OR tenant_id = mfx_scope_tenant());
 ALTER TABLE sync_forensic_change_log ENABLE ROW LEVEL SECURITY;

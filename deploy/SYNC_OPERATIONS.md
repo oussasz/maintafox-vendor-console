@@ -39,7 +39,7 @@ the previous images. An open resynchronisation request is then simply ignored. R
 # Deleted attachments and the forensic device log (CMMS Advisor decision 2026-10-20)
 
 > **NEW MIGRATION `017_sync_attachment_archive`** (new tables only: `sync_deleted_attachment_archive`,
-> `sync_attachment_restore_log`, `sync_forensic_change_log`, tenant row-level security like the
+> `sync_attachment_restore_log`, `sync_attachment_version_high_water`, `sync_forensic_change_log`, tenant row-level security like the
 > other sync tables). New step-up kind
 > `sync_attachment_restore` in `shared/step-up-actions.v1.json` (console-only for now:
 > `rust_variant: null`). The sync registry gains a required `append_only` flag and the server now
@@ -92,17 +92,29 @@ entry (same `relative_path`) and says whether the server has a copy of the file 
 A file that was never uploaded (e.g. from a PC that was offline when it was deleted) cannot be
 recovered.
 
-**Listing.** `GET /api/v1/tenants/:tenantId/sync/deleted-attachments[?filter=relevant|all][&since=<RFC 3339>]`
-(`sync.operate`, newest first, at most 500). `relevant` (default): deletes and changes with
-`locator_changed`; `all`: also caption / title edits and restores that kept the file. Each entry:
-entity type and id, kind of change, when, who sent it, archived version, checksum and size, whether
-the server has the file, the companion entry, whether it can be restored, the entity's **current**
-state on the server (`row_version`, `payload_hash`, `deleted`) and every restore of the entry (when,
-by whom, reason). Never the payload or the file.
+**Listing.** `GET /api/v1/tenants/:tenantId/sync/deleted-attachments` (`sync.operate`), query:
+`view=kept|nothing_kept|all` (default `kept`), `since` and `before` (RFC 3339, used together or
+alone: `since` <= changed_at < `before`), `entity_type` + `entity_sync_id` (exact item filter, each
+optional), `limit` (1..200, default 100) and `cursor` (the `next_cursor` of the previous page; 400
+`invalid_cursor` otherwise). Order: newest first by (changed_at, id), stable across pages.
+- `kept` lists every entry that kept a version (`prior_state` `present`): every delete and every
+  replacement of a live row, whatever field changed. `locator_changed` is shown for information
+  only.
+- Entries that kept nothing (deletes of items the server never held or had already deleted) are
+  not listed by default: `nothing_kept_summary` counts them per sending device and type (e.g.
+  "1,240 deletes of items the server never held, from device X"), within the same time and item
+  filters; `view=nothing_kept` lists them. A flood of such deletes therefore never hides a real
+  entry (tested with 600).
+- Each entry: entity type and id, kind of change, when, who sent it, archived version, checksum and
+  size (`byte_size` / `file_size_bytes` / `size_bytes` per table), whether the server has the file,
+  the companion entry, whether it can be restored, the entity's **current** state on the server
+  (`row_version`, `payload_hash`, `deleted`) and every restore of the entry. Never the payload or
+  the file.
 
 **Restore.** `POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore`, body
-`{ "expected_current_row_version": n | null, "expected_current_payload_hash": "hex" | null }` (the
-entity's current state as the listing showed it), `sync.operate`, `X-Operator-Reason`, step-up
+`{ "expected_current_row_version": n | null, "expected_current_payload_hash": "hex" | null,
+"expected_current_deleted": true | false | null }` (the entity's current state as the listing showed
+it; all three are compared), `sync.operate`, `X-Operator-Reason`, step-up
 `sync_attachment_restore`, optional `Idempotency-Key`; audited `sync_attachment_restored`, category
 `sync_repair`, identifiers only (and the state it replaces).
 - Any entry that kept a version (`prior_state` `present`) can be restored, whatever happened since,
@@ -111,11 +123,15 @@ entity's current state as the listing showed it), `sync.operate`, `X-Operator-Re
 - Under the tenant sync lock (taken before the audit-chain lock, like every sync writer) the server
   compares the expected current state with the real one: if it changed since the listing, `409
   entity_changed_since_listing` with the new `current` (the console reloads the list so the operator
-  sees what will be replaced and confirms again).
+  sees what will be replaced; the open dialog is refreshed with the reloaded state, and confirming
+  again sends it).
 - It archives the live row it replaces (if the payload differs), then appends a new change from
   origin `server:attachment-restore`: the entry's prior payload byte for byte (same `payload_hash`),
   operation as before, `row_version` above every version the server has seen for the entity (the
-  current one and every archived one; a v1 device may write versions backwards) with
+  current one, every archived one, the durable per-entity high-water mark in
+  `sync_attachment_version_high_water`, raised on every accepted change of an archived type and kept
+  when the ingress log is compacted, and the ingress log for history older than that table; a v1
+  device may write versions backwards, also with identical re-sends that are not archived) with
   `base_row_version` = current. Every device, the one that sent the change included, receives it
   like a change from another device (v2 delta, snapshot, v1 log); a media attachment received again
   queues its file download on the desktop.
@@ -134,11 +150,25 @@ and `UPDATE` is revoked from `mfx_app`). Growth is one small row per settings ch
 **Retention and privacy.** Retention never touches the archive or the forensic log. Archived prior
 payloads (which may hold captions, file names and other customer text) are kept with **no time
 limit**: they are removed only when the tenant is deleted (tenant delete purges the archive, the
-restore log and the forensic log). The
+restore log, the high-water marks and the forensic log). The
 forensic log holds identifiers and a hash only. A data-subject or customer request to erase content
 before tenant deletion currently needs a manual, audited database operation.
 
 ## Deploy checklist (017)
+
+> **Migration 017 was edited in place during review** (it is not merged). An environment that
+> applied an earlier version of `017_sync_attachment_archive.sql` (a test or staging database)
+> refuses to start the API with "checksum mismatch". Production never applied it. Fix on such a
+> database: drop the 017 tables and functions (`sync_attachment_restore_log`,
+> `sync_deleted_attachment_archive`, `sync_attachment_version_high_water`,
+> `sync_forensic_change_log`, `mfx_sync_attachment_archive_immutable`,
+> `mfx_sync_attachment_archive_guard` if present, `mfx_sync_forensic_log_append_only`) and remove
+> version 17 from `schema_migrations`, then start the API (it applies the final 017).
+>
+> **Grants.** The archive, the restore log and the forensic log refuse UPDATE (trigger, and UPDATE
+> revoked from `mfx_app`). DELETE stays granted to `mfx_app` on them only because tenant delete
+> (`purgeTenantSyncData`) must remove a tenant's rows; no other code deletes from them.
+
 
 1. **Migration** `017_sync_attachment_archive.sql` runs at API start (additive).
 2. **Environment:** nothing new.
@@ -155,6 +185,6 @@ before tenant deletion currently needs a manual, audited database operation.
 **Rollback.** Remove version 17 from `schema_migrations` before starting the previous images (they
 ignore the new tables, and each image carries its own copy of `shared/`, so the previous registry
 file without `append_only` comes back with them). Re-deploying
-later needs the three tables and their trigger functions (`mfx_sync_attachment_archive_immutable`,
+later needs the four tables and their trigger functions (`mfx_sync_attachment_archive_immutable`,
 `mfx_sync_forensic_log_append_only`) dropped first, which loses the archive, the restore log and the
 forensic log: export them first if they hold anything.

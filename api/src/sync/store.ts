@@ -355,6 +355,7 @@ export const SYNC_TENANT_TABLES = [
   // retention; removed only here, with their tenant).
   "sync_attachment_restore_log",
   "sync_deleted_attachment_archive",
+  "sync_attachment_version_high_water",
   "sync_forensic_change_log",
 ] as const;
 
