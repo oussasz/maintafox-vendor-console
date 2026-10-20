@@ -27,7 +27,7 @@ import {
   type SyncOperation,
   type SyncRejectedItem,
 } from "./types.js";
-import { shouldRedactPayloadLog, toRejected, validateOutboxItem } from "./validate.js";
+import { shouldRedactPayloadLog, toRejected, validateOperationForType, validateOutboxItem } from "./validate.js";
 
 export function newBatchId(): string {
   return `batch_${randomBytes(8).toString("hex")}`;
@@ -86,7 +86,9 @@ export async function runSyncExchangeV1(
     const rejected_items: SyncRejectedItem[] = [];
 
     for (const item of body.outbox_batch) {
-      const validation = validateOutboxItem(item);
+      // Format rules, then the operation rule (a delete of an append-only registry type is refused).
+      const formatCheck = validateOutboxItem(item);
+      const validation = formatCheck.ok ? validateOperationForType(item, deps.registry) : formatCheck;
       if (!validation.ok) {
         rejected_items.push(toRejected(item, validation.rejection_code, validation.rejection_message));
         await logRejection(db, {
