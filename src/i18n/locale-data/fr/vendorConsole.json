@@ -622,8 +622,9 @@
         "deletedAt": "Modifié le",
         "item": "Élément",
         "device": "Appareil qui a envoyé la modification",
-        "state": "État",
-        "action": "Action"
+        "state": "Version archivée",
+        "action": "Action",
+        "now": "Sur le serveur maintenant"
       },
       "type": {
         "media_attachments": "Photo ou fichier",
@@ -637,17 +638,13 @@
       "state": {
         "deleted": "Supprimé",
         "restored": "Restauré",
-        "replaced": "Remplacé"
+        "replaced": "Remplacé",
+        "replacedByRestore": "Remplacé par une restauration"
       },
       "restoredBy": "Restauré le {{at}} par {{by}}",
-      "blocker": {
-        "already_restored": "Déjà restauré",
-        "nothing_to_restore": "Rien à restaurer",
-        "entity_changed_since_delete": "Modifié depuis"
-      },
       "restore": "Restaurer",
-      "restoreTitle": "Restaurer cette pièce jointe ?",
-      "restoreBody": "{{id}} (modifié par {{device}}) est renvoyé à tous les appareils de ce client, exactement comme avant la modification. À utiliser quand la suppression ou le remplacement était une erreur.",
+      "restoreTitle": "Restaurer cette version ?",
+      "restoreBody": "{{id}} : la version {{archived}}, conservée le {{at}}, remplace ce que le serveur a maintenant : {{current}}. Elle est envoyée à tous les appareils de ce client ; ce qu'elle remplace est conservé et peut aussi être restauré.",
       "restoreConfirm": "Restaurer sur tous les appareils",
       "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation.",
       "file": {
@@ -658,6 +655,29 @@
       "companion": {
         "live": "Élément Photo ou fichier : {{id}} (présent)",
         "archived": "Élément Photo ou fichier : {{id}} (supprimé ou remplacé : restaurez-le aussi)"
+      },
+      "byOperator": "Restauration par {{operator}}",
+      "archivedVersion": "Version {{version}} conservée",
+      "prior": {
+        "already_deleted": "Déjà supprimé : rien de conservé",
+        "unknown": "Inconnu du serveur : rien de conservé",
+        "present": "Version conservée"
+      },
+      "current": {
+        "none": "Aucun élément sur le serveur",
+        "live": "Version {{version}} (présente)",
+        "deleted": "Version {{version}} (supprimée)"
+      },
+      "filter": {
+        "label": "Afficher",
+        "relevant": "Suppressions et changements de fichier",
+        "all": "Tous les changements (aussi légendes et titres)"
+      },
+      "period": {
+        "label": "Période",
+        "all": "Tout",
+        "days_one": "Dernier {{count}} jour",
+        "days_other": "Derniers {{count}} jours"
       }
     },
     "retry": "Réessayer"

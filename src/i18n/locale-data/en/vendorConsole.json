@@ -618,8 +618,9 @@
         "deletedAt": "Changed",
         "item": "Item",
         "device": "Device that sent the change",
-        "state": "State",
-        "action": "Action"
+        "state": "Archived version",
+        "action": "Action",
+        "now": "On the server now"
       },
       "type": {
         "media_attachments": "Photo or file",
@@ -633,17 +634,13 @@
       "state": {
         "deleted": "Deleted",
         "restored": "Restored",
-        "replaced": "Replaced"
+        "replaced": "Replaced",
+        "replacedByRestore": "Replaced by a restore"
       },
       "restoredBy": "Restored {{at}} by {{by}}",
-      "blocker": {
-        "already_restored": "Already restored",
-        "nothing_to_restore": "Nothing to restore",
-        "entity_changed_since_delete": "Changed since"
-      },
       "restore": "Restore",
-      "restoreTitle": "Restore this attachment?",
-      "restoreBody": "{{id}} (changed by {{device}}) is sent again to every device of this customer, exactly as it was before the change. Use it when the delete or replacement was a mistake.",
+      "restoreTitle": "Restore this version?",
+      "restoreBody": "{{id}}: version {{archived}}, kept {{at}}, replaces what the server has now: {{current}}. It is sent to every device of this customer; what it replaces is kept and can be restored too.",
       "restoreConfirm": "Restore on every device",
       "restored": "Restored: {{id}} is sent to every device at their next sync.",
       "file": {
@@ -654,6 +651,29 @@
       "companion": {
         "live": "Photo or file entry: {{id}} (present)",
         "archived": "Photo or file entry: {{id}} (deleted or replaced: restore it too)"
+      },
+      "byOperator": "Restore by {{operator}}",
+      "archivedVersion": "Version {{version}} kept",
+      "prior": {
+        "already_deleted": "Was already deleted: nothing kept",
+        "unknown": "Unknown to the server: nothing kept",
+        "present": "Version kept"
+      },
+      "current": {
+        "none": "No entry on the server",
+        "live": "Version {{version}} (present)",
+        "deleted": "Version {{version}} (deleted)"
+      },
+      "filter": {
+        "label": "Show",
+        "relevant": "Deletes and file changes",
+        "all": "All changes (also captions and titles)"
+      },
+      "period": {
+        "label": "Period",
+        "all": "All time",
+        "days_one": "Last {{count}} day",
+        "days_other": "Last {{count}} days"
       }
     },
     "retry": "Retry",
