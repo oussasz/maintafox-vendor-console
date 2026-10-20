@@ -906,6 +906,14 @@
     {
       "entity_type": "personnel_schedule_exceptions",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "admin_recovery_acknowledgements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "admin_recovery_notices",
+      "scope": "tenant"
     }
   ]
 }
