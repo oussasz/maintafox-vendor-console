@@ -127,6 +127,7 @@ jobs:
             src-tauri/src/vps/vendor_admin_console.rs
             shared/ipc-types.ts
             shared/sync/server-entity-allowlist.v2.json
+            shared/sync/entity-registry.json
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
