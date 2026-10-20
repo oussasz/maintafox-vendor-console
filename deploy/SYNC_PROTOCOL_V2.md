@@ -35,9 +35,11 @@ change it.
   file in the same change that makes the desktop stage it. The desktop keeps a copy and should
   check it in CI against this file.
 
-Seeded from the desktop `SYNC_ENTITY_*` constants (63 types). Only `user_dismissals` is
-`user`-scoped today; notification read state, dashboard layouts and saved filters are added as
-`user` entries when Phase 2.4 creates them.
+Seeded from the desktop `SYNC_ENTITY_*` constants (63 types) and appended since, generated from
+the desktop registry with its `scripts/sync-allowlist-append.mjs` (228 types in October 2026).
+Eight are `user`-scoped: `user_dismissals`, `notifications`, `notification_acknowledgements`,
+`notification_preferences`, `report_schedules`, `saved_activity_filters`,
+`user_dashboard_layouts` and `user_analytics_dashboard_layouts`; every other type is `tenant`.
 
 ## 3. Exchange request (v2)
 
