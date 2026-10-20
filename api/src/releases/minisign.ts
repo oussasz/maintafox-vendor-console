@@ -78,6 +78,28 @@ export function verifyUpdaterSignature(
   return { ok: true };
 }
 
+/**
+ * The `file:` field of the signature's trusted comment ("timestamp:<n>\tfile:<name>", written by
+ * `tauri signer sign`; the global signature covers it, so it cannot be edited without the key).
+ * Null when the signature is malformed or has no file field. Only meaningful after
+ * verifyUpdaterSignature succeeded.
+ */
+export function signedFileName(signatureBase64: string): string | null {
+  let lines: string[];
+  try {
+    lines = decodeLines(signatureBase64, "signature");
+  } catch {
+    return null;
+  }
+  const trusted = lines[2];
+  if (!trusted?.startsWith("trusted comment: ")) return null;
+  const field = trusted
+    .slice("trusted comment: ".length)
+    .split("\t")
+    .find((part) => part.startsWith("file:"));
+  return field === undefined ? null : field.slice("file:".length);
+}
+
 export function blake2b512(bytes: Buffer): Buffer {
   return createHash("blake2b512").update(bytes).digest();
 }

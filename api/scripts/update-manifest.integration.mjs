@@ -10,6 +10,9 @@
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
+
+import pg from "pg";
 
 import { startControlApi } from "./lib/control-api.mjs";
 import { TAURI_VECTOR, testUpdaterKey } from "./lib/test-updater-signature.mjs";
@@ -114,7 +117,8 @@ try {
     assert.equal(c.status, 200, c.text);
     assert.equal(c.json.state, "registered");
     assert.equal(c.json.channel, null, "a registered release is a draft");
-    installers[version] = { bytes, releaseId: d.json.release_id };
+    assert.equal(d.json.uploads[0].expires_in_seconds, 900, "upload URLs live 15 minutes");
+    installers[version] = { bytes, releaseId: d.json.release_id, uploadUrl: d.json.uploads[0].url };
     return d.json.release_id;
   }
 
@@ -136,6 +140,51 @@ try {
   assert.equal(refused.status, 422);
   assert.equal(refused.json.error, "updater_signature_invalid");
   assert.equal(refused.json.reason, "key_mismatch");
+  // Signed with the right key but for another file (review S3): the trusted comment's file name
+  // must be the declared installer's.
+  const renamed = Buffer.from("installer signed under another name");
+  const otherName = await declare("0.9.0", renamed, { signature: updater.sign(renamed, "Maintafox_9.9.9_x64-setup.exe") });
+  await put(otherName.json.uploads[0].url, renamed);
+  const misnamed = await complete(otherName.json.release_id);
+  assert.equal(misnamed.status, 422, misnamed.text);
+  assert.deepEqual([misnamed.json.error, misnamed.json.signed_file_name], ["updater_signature_file_mismatch", "Maintafox_9.9.9_x64-setup.exe"]);
+
+  // Race (review S1): a re-declaration lands between the verification and the registration. The
+  // test holds the version lock the API takes for its final step, changes the declaration the way
+  // a re-run of the workflow does, then lets the API go on: nothing may be registered.
+  {
+    const bytes = Buffer.concat([Buffer.from("MZ race 0.9.5 "), randomBytes(512)]);
+    const d = await declare("0.9.5", bytes);
+    assert.equal(d.status, 201, d.text);
+    await put(d.json.uploads[0].url, bytes);
+    const locker = new pg.Client({ connectionString: api.env.DATABASE_URL });
+    await locker.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["release-version:0.9.5"]);
+      const completing = complete(d.json.release_id);
+      let waiting = false;
+      for (let i = 0; i < 400 && !waiting; i += 1) {
+        const { rows } = await locker.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted");
+        waiting = rows[0].n > 0;
+        if (!waiting) await sleep(25);
+      }
+      assert.ok(waiting, "complete verified the upload and waits for the version lock");
+      const other = Buffer.from("re-declared installer");
+      await locker.query(
+        "UPDATE app_release_artifacts SET byte_size = $1, sha256 = $2, updater_signature = $3 WHERE release_id = $4",
+        [other.length, sha256(other), updater.sign(other, "Maintafox_0.9.5_x64-setup.exe"), d.json.release_id],
+      );
+      await locker.query("COMMIT");
+      const raced = await completing;
+      assert.equal(raced.status, 409, raced.text);
+      assert.equal(raced.json.error, "release_changed_during_verification");
+    } finally {
+      await locker.end();
+    }
+    const [row] = await api.su("SELECT r.state, a.verified_at, a.object_key FROM app_releases r JOIN app_release_artifacts a USING (release_id) WHERE r.release_id = $1", [d.json.release_id]);
+    assert.deepEqual([row.state, row.verified_at, row.object_key], ["uploading", null, null], "nothing registered from the stale verification");
+  }
 
   const r100 = await register("1.0.0");
   const r110 = await register("1.1.0");
@@ -187,6 +236,13 @@ try {
     null,
   );
   assert.deepEqual(sigCheck, { ok: true }, "the manifest signature verifies the downloaded file");
+  // Review S2: devices download the server-only verified copy; a PUT to the (still valid) upload
+  // URL after registration changes nothing they get.
+  assert.match(new URL(offer.json.url).pathname, /\/ci\/release-artifacts\/1\.0\.0\//, "served from the server-only prefix");
+  await put(installers["1.0.0"].uploadUrl, Buffer.from("EVIL replaced after verification"));
+  const again = await check(devices.internal, "0.4.0-dev");
+  const redownloaded = Buffer.from(await (await fetch(again.json.url)).arrayBuffer());
+  assert.equal(sha256(redownloaded), sha256(installers["1.0.0"].bytes), "an overwrite of the upload key is never served");
   assert.equal((await check(devices.pilot, "0.4.0-dev")).status, 204, "pilot does not see an internal release");
   assert.equal((await check(devices.stable, "0.4.0-dev")).status, 204);
   assert.equal((await check(devices.internal, "1.0.0")).status, 204, "up to date");

@@ -5,10 +5,12 @@ How a desktop build reaches customers' machines, and what the server does at eac
 ```
 GitHub release workflow (desktop repo, .github/workflows/release.yml)
   build NSIS installer + updater signature (.sig) -> Authenticode signing (when a certificate exists)
-  POST /api/v1/release-uploads            (publisher key)  -> presigned PUT URLs
-  PUT installer to object storage
-  POST /api/v1/release-uploads/:id/complete                -> server re-reads the file: size, SHA-256,
-                                                              updater signature (RELEASE_UPDATER_PUBLIC_KEY)
+  POST /api/v1/release-uploads            (publisher key)  -> presigned PUT URLs (15 minutes)
+  PUT installer to object storage                          (upload key: never served)
+  POST /api/v1/release-uploads/:id/complete                -> server COPIES each upload to a server-only
+                                                              key and verifies the copy: size, SHA-256,
+                                                              updater signature (RELEASE_UPDATER_PUBLIC_KEY),
+                                                              signed file name = declared file name
   => release is a DRAFT in the console (offered to nobody)
 Console > Updates > Releases (operator, step-up)
   Publish to Internal -> Pilot -> Stable with a rollout %   (rings only widen)
@@ -100,7 +102,26 @@ workflow keys (`mfxrp_...`, GitHub secret `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`) a
 credentials for CI: they let the workflow talk to this API. They sign nothing and have nothing to do
 with the updater key.
 
-Object storage: releases use the existing media bucket under `<DEPLOYMENT_ENV>/releases/<version>/...`.
+## What `complete` guarantees
+
+- **Devices only download what was verified.** The release workflow uploads to
+  `<DEPLOYMENT_ENV>/releases/...` (its presigned PUT is valid 15 minutes). `complete` makes a
+  server-side copy (S3 CopyObject) under `<DEPLOYMENT_ENV>/release-artifacts/.../<random>/<file>`,
+  a prefix no publisher is ever given a PUT for, and verifies that copy. The catalog stores the
+  copy's key and the manifest presigns downloads for it only, so re-uploading to the upload URL
+  after registration changes nothing devices get. CopyObject is a single request (fine up to 5 GB;
+  installers are capped at 1 GB) and is supported by MinIO and Garage, the stores this API runs on.
+  Upload objects are not deleted (small; clean `<env>/releases/` by hand if needed).
+- **The signature is bound to the declared installer.** Besides verifying with the updater key,
+  the signature's trusted comment (`file:<name>`, written by `tauri signer sign` and covered by the
+  signature) must equal the declared `file_name`; otherwise 422 `updater_signature_file_mismatch`.
+- **No race with a re-run.** Registration happens under the same per-version lock as a
+  declaration, and only if the state is still "uploading" and every artifact row still has exactly
+  the size, SHA-256, signature, file name and upload key that were verified; otherwise 409
+  `release_changed_during_verification` and nothing is registered (run the workflow again).
+
+Object storage: releases use the existing media bucket under `<DEPLOYMENT_ENV>/releases/<version>/...`
+(uploads) and `<DEPLOYMENT_ENV>/release-artifacts/<version>/...` (verified copies, downloads).
 Presigned URLs must be reachable from GitHub Actions (upload) and from customers' desktops
 (download), so they need the public object-storage endpoint (branch `claude/media-public-endpoint`,
 `S3_PUBLIC_ENDPOINT` + the `media.maintafox.systems` nginx route). **That route caps a request at
@@ -125,7 +146,8 @@ operator with `rollout.manage` and a step-up code.
 1. Backup first (as every deploy): `/opt/backups/<timestamp>/` with `.env` and a `pg_dump`.
 2. Deploy the API and console images from this branch (`docker compose up -d --build`).
    Migration `018_release_catalog.sql` runs at start (after `016_admin_recovery_codes` and
-   `017_sync_attachment_archive`): new tables `app_releases`, `app_release_artifacts`,
+   `017_sync_attachment_archive`): new tables `app_releases`, `app_release_artifacts` (upload key
+   and verified served key per installer),
    `release_publisher_keys` and the function `mfx_update_candidates`. It changes no existing table.
    It was numbered 016 before the merge with the base branch: a test database that applied the
    old `016_release_catalog` refuses to start (version 16 is now `016_admin_recovery_codes`);

@@ -38,13 +38,19 @@ CREATE TABLE app_release_artifacts (
   target TEXT NOT NULL CHECK (target ~ '^[a-z0-9_-]{1,32}$'),
   arch TEXT NOT NULL CHECK (arch ~ '^[a-z0-9_-]{1,32}$'),
   file_name TEXT NOT NULL,
-  object_key TEXT NOT NULL UNIQUE,
+  -- Where the release workflow uploads (presigned PUT, 15 minutes). Never served to devices: the
+  -- publisher could overwrite it while its PUT URL is valid.
+  upload_key TEXT NOT NULL UNIQUE,
+  -- Server-side copy made at registration under a prefix no publisher ever gets a PUT for, and
+  -- verified there (size, SHA-256, signature). The only object devices download. NULL until then.
+  object_key TEXT NULL UNIQUE,
   byte_size BIGINT NOT NULL CHECK (byte_size > 0),
   sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
   -- Content of the .sig file written by `tauri build` (minisign, verified against the updater
   -- public key before the release is registered).
   updater_signature TEXT NOT NULL,
   verified_at TIMESTAMPTZ NULL,
+  CHECK ((verified_at IS NULL) = (object_key IS NULL)),
   PRIMARY KEY (release_id, target, arch)
 );
 

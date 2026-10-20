@@ -3,8 +3,10 @@
  *
  * Release workflow (CI, publisher key `Authorization: Bearer mfxrp_...`):
  *   POST /api/v1/release-uploads                       declare version, notes, artifacts -> presigned PUTs
- *   POST /api/v1/release-uploads/:releaseId/complete   the server reads every object back: size,
- *        SHA-256 and the updater signature (RELEASE_UPDATER_PUBLIC_KEY) must match -> draft release
+ *   POST /api/v1/release-uploads/:releaseId/complete   the server copies every upload to a server-only
+ *        key and verifies the COPY: size, SHA-256, the updater signature (RELEASE_UPDATER_PUBLIC_KEY)
+ *        and the signed file name; then, under the version lock, registers exactly what it verified
+ *        -> draft release. Devices only ever download the verified copies.
  * Console (operators):
  *   GET   /api/v1/releases                             catalog with artifacts
  *   PATCH /api/v1/releases/:releaseId/notes            release notes (audited)
@@ -24,14 +26,14 @@ import { deviceRateLimiter, resolveActorId, sendValidationError } from "../app/h
 import { getMediaStore } from "../app/media.js";
 import { newId, sha256Hex, structuredLog } from "../app/runtime.js";
 import { openOperatorScope, runAsSystem } from "../app/scope.js";
-import { verifyUpdaterSignature } from "../releases/minisign.js";
+import { signedFileName, verifyUpdaterSignature } from "../releases/minisign.js";
 import { channelRank, RELEASE_VERSION_RE, UPDATE_CHANNELS, type UpdateChannel } from "../releases/update-manifest.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 /** Largest installer accepted (the NSIS installer is ~100 MB; this bounds the verification read). */
 const RELEASE_ARTIFACT_MAX_BYTES = 1024 * 1024 * 1024;
-/** Validity of the presigned PUT handed to the release workflow. */
-const RELEASE_UPLOAD_URL_TTL_SECONDS = 3600;
+/** Validity of the presigned PUT handed to the release workflow (uploads are never served). */
+const RELEASE_UPLOAD_URL_TTL_SECONDS = 900;
 const PUBLISHER_TOKEN_PREFIX = "mfxrp_";
 
 const ArtifactDeclaration = z
@@ -92,7 +94,8 @@ type ArtifactRow = {
   target: string;
   arch: string;
   file_name: string;
-  object_key: string;
+  upload_key: string;
+  object_key: string | null;
   byte_size: string | number;
   sha256: string;
   updater_signature: string;
@@ -133,6 +136,9 @@ function releaseView(r: ReleaseRow, artifacts: ArtifactRow[]) {
 }
 
 type PublisherRequest = express.Request & { releasePublisherKeyId?: string };
+
+/** The declaration changed between verification and registration (rolls the transaction back). */
+class ReleaseChangedError extends Error {}
 
 export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, authMiddleware, runIdempotent, requirePrivilegedAction, appendAuditRecord } = ctx;
@@ -214,7 +220,7 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
       for (const a of input.artifacts) {
         const objectKey = `${media.config.deploymentEnv}/releases/${input.version}/${releaseId}/${a.target}-${a.arch}/${a.file_name}`;
         await db.run(
-          `INSERT INTO app_release_artifacts (release_id, target, arch, file_name, object_key, byte_size, sha256, updater_signature)
+          `INSERT INTO app_release_artifacts (release_id, target, arch, file_name, upload_key, byte_size, sha256, updater_signature)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           releaseId,
           a.target,
@@ -272,10 +278,19 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
       res.json(releaseView(release, artifacts));
       return;
     }
+    // 1. Copy each upload to a server-only key (fresh per attempt, so concurrent attempts never
+    //    share one) and verify the COPY: whatever the publisher PUTs to its upload key afterwards
+    //    is never served.
+    const verified: { a: ArtifactRow; servedKey: string }[] = [];
     for (const a of artifacts) {
+      const servedKey = `${media.config.deploymentEnv}/release-artifacts/${release.version}/${release.release_id}/${a.target}-${a.arch}/${randomBytes(8).toString("hex")}/${a.file_name}`;
+      if (!(await media.copyObject(a.upload_key, servedKey))) {
+        res.status(409).json({ error: "artifact_not_uploaded", message: `${a.file_name} was not uploaded to its presigned URL.` });
+        return;
+      }
       let digest;
       try {
-        digest = await media.readObjectDigests(a.object_key, RELEASE_ARTIFACT_MAX_BYTES);
+        digest = await media.readObjectDigests(servedKey, RELEASE_ARTIFACT_MAX_BYTES);
       } catch (err) {
         if (err instanceof Error && err.message === "object_too_large") {
           res.status(422).json({ error: "artifact_verification_failed", message: `${a.file_name} is larger than declared.` });
@@ -304,10 +319,47 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
         });
         return;
       }
+      // The signature names the file it was made for (trusted comment, covered by the signature):
+      // it must be this declared installer, not another file signed with the same key.
+      const signedName = signedFileName(a.updater_signature);
+      if (signedName !== a.file_name) {
+        structuredLog("release_signature_refused", { release_id: release.release_id, file: a.file_name, reason: "file_name_mismatch", signed_file: signedName });
+        res.status(422).json({
+          error: "updater_signature_file_mismatch",
+          signed_file_name: signedName,
+          message: `${a.file_name}: the updater signature was made for ${signedName === null ? "an unnamed file" : `"${signedName}"`}, not for this installer.`,
+        });
+        return;
+      }
+      verified.push({ a, servedKey });
     }
+
+    // 2. Register exactly what was verified, under the same lock as a (re-)declaration: if the
+    //    declaration changed meanwhile, nothing is registered.
     const publisher = `release_publisher:${(req as PublisherRequest).releasePublisherKeyId}`;
-    await db.tx(async () => {
-      await db.run("UPDATE app_release_artifacts SET verified_at = now() WHERE release_id = ?", release.release_id);
+    const outcome = await db.tx(async () => {
+      await db.lockXact("release-version", release.version);
+      const current = await db.get<{ state: string }>("SELECT state FROM app_releases WHERE release_id = ?", release.release_id);
+      if (current?.state !== "uploading") return "changed" as const;
+      const count = await db.get<{ n: number }>("SELECT count(*)::int AS n FROM app_release_artifacts WHERE release_id = ?", release.release_id);
+      if (count?.n !== verified.length) return "changed" as const;
+      for (const { a, servedKey } of verified) {
+        const updated = await db.run(
+          `UPDATE app_release_artifacts SET object_key = ?, verified_at = now()
+            WHERE release_id = ? AND target = ? AND arch = ? AND file_name = ? AND upload_key = ?
+              AND byte_size = ? AND sha256 = ? AND updater_signature = ? AND verified_at IS NULL`,
+          servedKey,
+          release.release_id,
+          a.target,
+          a.arch,
+          a.file_name,
+          a.upload_key,
+          a.byte_size,
+          a.sha256,
+          a.updater_signature,
+        );
+        if (updated.changes !== 1) throw new ReleaseChangedError();
+      }
       await db.run("UPDATE app_releases SET state = 'registered', updated_at = now() WHERE release_id = ?", release.release_id);
       await appendAuditRecord({
         actor_id: publisher,
@@ -317,7 +369,19 @@ export function registerReleaseCatalogRoutes(app: express.Express, ctx: ApiConte
         entity_refs: { release_id: release.release_id },
         payload: { version: release.version, code_signed: release.code_signed, artifacts: artifacts.map((a) => `${a.target}/${a.arch}`) },
       });
+      return "registered" as const;
+    }).catch((err: unknown) => {
+      if (err instanceof ReleaseChangedError) return "changed" as const;
+      throw err;
     });
+    if (outcome === "changed") {
+      structuredLog("release_registration_conflict", { release_id: release.release_id, version: release.version });
+      res.status(409).json({
+        error: "release_changed_during_verification",
+        message: `Version ${release.version} was declared again (or completed by another run) while it was being verified. Run the release workflow again.`,
+      });
+      return;
+    }
     structuredLog("release_registered", { release_id: release.release_id, version: release.version });
     const fresh = (await db.get<ReleaseRow>("SELECT * FROM app_releases WHERE release_id = ?", release.release_id))!;
     const freshArtifacts = await db.all<ArtifactRow>("SELECT * FROM app_release_artifacts WHERE release_id = ?", release.release_id);

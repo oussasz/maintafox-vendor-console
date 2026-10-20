@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   CreateBucketCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -209,6 +210,27 @@ export class TenantMediaObjectStore {
       blake.update(chunk);
     }
     return { byteSize, sha256: sha.digest("hex"), blake2b512: blake.digest() };
+  }
+
+  /**
+   * Server-side copy inside the bucket (release artifacts: the verified, served copy of an upload).
+   * Single-request CopyObject: fine up to 5 GB (release artifacts are capped at 1 GB). Supported
+   * by MinIO and Garage. Returns false when the source does not exist.
+   */
+  async copyObject(sourceKey: string, destinationKey: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.config.bucket,
+          Key: destinationKey,
+          CopySource: `${this.config.bucket}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`,
+        }),
+      );
+      return true;
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchKey") return false;
+      throw err;
+    }
   }
 
   /** Streams one object's content into `writeTo` (used by the off-site media backup). */
