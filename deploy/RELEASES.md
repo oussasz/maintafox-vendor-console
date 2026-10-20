@@ -45,11 +45,26 @@ aliases such as `win64` or `x64`). `current_version` must be `MAJOR.MINOR.PATCH[
   to a ring reaches that ring and every inner ring (stable reaches pilot and internal too).
 - **Rollout %:** applies to the release's widest ring. Each device has a fixed bucket per release,
   so raising the percentage only adds devices.
-- **Pause** (Updates > Rollouts, per channel + cohort): nothing is offered. A desktop whose database
-  update failed can still ask for the version it came from (header `X-Maintafox-Rollback-To`).
+- **Pause** (Updates > Rollouts, per channel + cohort): nothing is offered, except an explicit
+  rollback (below).
+- **Rollback target.** A PC can only ever go back to ONE release: the newest release below the
+  version it runs that (1) its ring sees (same rule as upgrades; the rollout percentage does not
+  apply), (2) is not recalled (catalog or its cohort), and (3) passes the forced-update policy as
+  the PC's next version, i.e. policy refresh would not block it (under "emergency" nothing passes).
+  The desktop installs any version the server offers, so these checks are the only gate: a stable
+  PC can never be sent an internal-only build, and no PC is sent back below a minimum version.
+- **Explicit rollback** (a desktop whose database update failed asks for the version it came from,
+  header `X-Maintafox-Rollback-To`, also while paused): granted only when the header names exactly
+  the rollback target. Anything else is `409 rollback_target_not_allowed` with
+  `requested_version`, `allowed_version` (the target, or `null` when there is none) and a message;
+  the server never substitutes another version.
 - **Recall:** catalog recall (all customers) or cohort recall (Phase 4.2, one channel + cohort). A
-  recalled version is never offered. Devices running it are offered the newest other release they
-  may have, even an older one: that is the rollback to the previous signed installer.
+  recalled version is never offered. A PC running it is offered a newer release when one is
+  available to it, otherwise its rollback target (`mandatory_reason` `recalled_version`). When there
+  is no rollback target (everything below is on another ring, recalled, or under the floor), the
+  answer is 204: the PC stays where it is. **The operator must then publish a fixed release.** If
+  the floor also blocks the recalled version itself, policy refresh keeps that PC blocked until
+  the fixed release is installed; that is intended.
 - **Forced updates** (Updates > Forced updates, tenant or cohort policy): when the policy requires
   this PC to update, the offer is mandatory and ignores the rollout percentage. Pause and recall
   still win. "Requires" is decided by `api/src/app/force-update.ts` (`resolveForceUpdatePolicy`),

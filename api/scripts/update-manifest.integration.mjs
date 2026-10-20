@@ -319,7 +319,10 @@ try {
   assert.equal(rollbackOffer.json.maintafox.release_id, r100);
   assert.equal(rollbackOffer.json.maintafox.mandatory_reason, "rollback_requested");
   assert.equal(rollbackOffer.json.maintafox.min_version, null);
-  assert.equal((await check(devices.internal, "1.1.0", { "X-Maintafox-Rollback-To": "1.2.0" })).status, 204, "a rollback goes back, never forward");
+  const forward = await check(devices.internal, "1.1.0", { "X-Maintafox-Rollback-To": "1.2.0" });
+  assert.equal(forward.status, 409, "a rollback goes back, never forward");
+  assert.equal(forward.json.error, "rollback_target_not_allowed");
+  assert.equal(forward.json.allowed_version, "1.0.0");
   await api.call("POST", "/api/v1/rollouts/internal/main/resume", admin, { reason: "fixed" }, await privileged("rollout_publish"));
 
   // Catalog recall: never offered again; devices running it go back to the previous release.
@@ -378,6 +381,68 @@ try {
   const overview = (await api.call("GET", "/api/v1/ops/rollout-overview", admin)).json;
   assert.equal(overview.impact.release_id, r120);
   assert.equal(overview.impact.release_version, "1.2.0");
+
+  // ── Rollback gate (review B1): ring, recall and forced-update floor apply to rollbacks too ──
+  // The desktop installs whatever version the server offers, so the server is the only gate.
+  // Catalog now: 1.0.0 stable 100 %, 1.1.0 recalled, 1.2.0 internal (recalled for internal/main),
+  // + 1.3.0 internal only, + 1.4.0 stable then recalled.
+  const r130 = await register("1.3.0");
+  assert.equal((await publish(r130, { channel: "internal", rollout_percent: 100 })).status, 200);
+  const rollbackTo = (token, current, target) => check(token, current, { "X-Maintafox-Rollback-To": target });
+  const setTenantPolicy = async (body) => {
+    const res = await api.call("PUT", `/api/v1/tenants/${tenant.id}/update-policy`, admin, body, await privileged("rollout_publish"));
+    assert.equal(res.status, 200, res.text);
+  };
+  {
+    // Ring escape: a stable PC may not "roll back" to a build published to internal only.
+    const escape = await rollbackTo(devices.stable, "1.4.0", "1.3.0");
+    assert.equal(escape.status, 409, escape.text);
+    assert.deepEqual([escape.json.error, escape.json.requested_version, escape.json.allowed_version], ["rollback_target_not_allowed", "1.3.0", "1.0.0"]);
+    // The previous release the PC may run is allowed.
+    const allowed = await rollbackTo(devices.stable, "1.4.0", "1.0.0");
+    assert.equal(allowed.status, 200, allowed.text);
+    assert.deepEqual([allowed.json.version, allowed.json.maintafox.kind, allowed.json.maintafox.release_id], ["1.0.0", "rollback", r100]);
+    // Only the immediately previous eligible release: an older one is refused, never swapped.
+    const skip = await rollbackTo(devices.internal, "1.4.0", "1.0.0");
+    assert.equal(skip.status, 409, skip.text);
+    assert.equal(skip.json.allowed_version, "1.3.0", "1.2.0 (cohort recall) and 1.1.0 (recall) are skipped");
+    assert.equal((await rollbackTo(devices.internal, "1.4.0", "1.3.0")).json.version, "1.3.0");
+    // Below the floor: policy refresh would block 1.3.0, so the manifest refuses to go there.
+    await setTenantPolicy({ force_min_app_version: "1.3.1", force_update_mode: "required", force_update_reason: "Security fix" });
+    const belowFloor = await rollbackTo(devices.internal, "1.4.0", "1.3.0");
+    assert.equal(belowFloor.status, 409, belowFloor.text);
+    assert.equal(belowFloor.json.allowed_version, null);
+    assert.equal((await rollbackTo(devices.stable, "1.4.0", "1.0.0")).status, 409);
+    // Emergency: every version requires an update, so no rollback at all.
+    await setTenantPolicy({ force_update_mode: "emergency" });
+    assert.equal((await rollbackTo(devices.internal, "1.4.0", "1.3.0")).status, 409);
+    assert.equal((await rollbackTo(devices.stable, "1.4.0", "1.0.0")).status, 409);
+    await setTenantPolicy({ force_update_mode: "off" });
+
+    // Recalled-version fallback: same rules.
+    const r140 = await register("1.4.0");
+    assert.equal((await publish(r140, { channel: "stable", rollout_percent: 100 })).status, 200);
+    assert.equal((await api.call("POST", `/api/v1/releases/${r140}/recall`, admin, { reason: "broken build" }, await privileged("forced_rollback"))).status, 200);
+    const stableBack = await check(devices.stable, "1.4.0");
+    assert.equal(stableBack.status, 200, stableBack.text);
+    assert.deepEqual(
+      [stableBack.json.version, stableBack.json.maintafox.kind, stableBack.json.maintafox.mandatory_reason],
+      ["1.0.0", "rollback", "recalled_version"],
+      "a stable PC skips the internal-only 1.3.0",
+    );
+    assert.equal((await check(devices.internal, "1.4.0")).json.version, "1.3.0");
+    await setTenantPolicy({ force_min_app_version: "1.3.1", force_update_mode: "required", force_update_reason: "Security fix" });
+    // Everything below the recalled 1.4.0 is under the floor: nothing to go to (stay; policy refresh
+    // keeps judging 1.4.0 on its own; the operator must publish a fixed release).
+    assert.equal((await check(devices.internal, "1.4.0")).status, 204, "below-floor fallbacks are skipped");
+    assert.equal((await check(devices.stable, "1.4.0")).status, 204);
+    await setTenantPolicy({ force_min_app_version: "1.0.0", force_update_mode: "required" });
+    const aboveFloor = await check(devices.stable, "1.4.0");
+    assert.deepEqual([aboveFloor.status, aboveFloor.json?.version], [200, "1.0.0"], "a fallback that meets the floor is offered");
+    await setTenantPolicy({ force_update_mode: "emergency" });
+    assert.equal((await check(devices.stable, "1.4.0")).status, 204, "no fallback under emergency");
+    await setTenantPolicy({ force_update_mode: "off" });
+  }
 
   // ── Revoked publisher key ─────────────────────────────────────────────────────────────────
   const revoked = await api.call("POST", `/api/v1/release-publisher-keys/${created.json.key_id}/revoke`, admin, {}, await privileged("release_publisher_key"));

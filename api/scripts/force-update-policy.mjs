@@ -81,6 +81,7 @@ assert.equal(required("3.0.0", { tenantMode: "required", tenantMin: "3.0.0", min
           {
             tenantId: "t", machineFingerprint: "fp", currentVersion: v, channel: "stable",
             governance: { state: "active", recalled_version: null }, forcedUpdate: reason, rollbackTo: null,
+            rollbackAllowed: () => true,
           },
         );
         if (policy.force_update_required) {

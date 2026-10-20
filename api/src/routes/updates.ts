@@ -94,15 +94,17 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
       lic.update_channel,
       lic.rollout_cohort,
     );
-    const policy = resolveForceUpdatePolicy({
-      appVersion: currentVersion,
-      tenantMinVersion: lic.force_min_app_version,
-      tenantMode: lic.force_update_mode,
-      tenantReason: lic.force_update_reason,
-      cohortMinVersion: cohortPolicy?.force_min_app_version ?? null,
-      cohortMode: cohortPolicy?.force_update_mode ?? "off",
-      cohortReason: cohortPolicy?.force_update_reason ?? null,
-    });
+    const policyFor = (appVersion: string) =>
+      resolveForceUpdatePolicy({
+        appVersion,
+        tenantMinVersion: lic.force_min_app_version,
+        tenantMode: lic.force_update_mode,
+        tenantReason: lic.force_update_reason,
+        cohortMinVersion: cohortPolicy?.force_min_app_version ?? null,
+        cohortMode: cohortPolicy?.force_update_mode ?? "off",
+        cohortReason: cohortPolicy?.force_update_reason ?? null,
+      });
+    const policy = policyFor(currentVersion);
     const governance = await db.get<{ state: "active" | "paused" | "recalled"; recalled_version: string | null }>(
       "SELECT state, recalled_version FROM mfx_rollout_governance($1, $2)",
       lic.update_channel,
@@ -119,6 +121,8 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
       governance: governance ?? { state: "active", recalled_version: null },
       forcedUpdate: forcedUpdateReason(policy),
       rollbackTo: rollbackHeader,
+      // A rollback target must itself pass the floor (the same check policy refresh will run on it).
+      rollbackAllowed: (version) => !policyFor(version).force_update_required,
     });
     const logFields = {
       tenant_id: act.tenantId,
@@ -130,6 +134,23 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
       cohort: lic.rollout_cohort,
     };
     if (!decision.offer) {
+      if (decision.reason === "rollback_not_allowed") {
+        structuredLog("update_manifest_rollback_refused", {
+          ...logFields,
+          requested_version: rollbackHeader,
+          allowed_version: decision.allowedVersion,
+        });
+        res.status(409).json({
+          error: "rollback_target_not_allowed",
+          requested_version: rollbackHeader,
+          allowed_version: decision.allowedVersion,
+          message:
+            decision.allowedVersion === null
+              ? `No release can be rolled back to from ${currentVersion}: none below it is published to this device's ring, not recalled and allowed by the forced-update policy.`
+              : `Only ${decision.allowedVersion} (the previous release this device may run) can be rolled back to from ${currentVersion}.`,
+        });
+        return;
+      }
       structuredLog("update_manifest_none", { ...logFields, reason: decision.reason });
       res.status(204).end();
       return;
