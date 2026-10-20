@@ -16,6 +16,8 @@ import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
 import { resolveActorId, sendValidationError } from "../app/http.js";
 import { structuredLog } from "../app/runtime.js";
 import { collectSyncHealth } from "../ops/sync-health.js";
+import { checkRestorable, emitRestore, listArchivedDeletes } from "../sync/attachment-archive.js";
+import { lockTenantSync } from "../sync/store.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 /** Default and maximum span of the timeline. */
@@ -23,6 +25,13 @@ export const DEVICE_TIMELINE_DEFAULT_HOURS = 72;
 export const DEVICE_TIMELINE_MAX_HOURS = 24 * 30;
 /** Events of each kind returned at most (newest first). */
 export const DEVICE_TIMELINE_MAX_EVENTS_PER_KIND = 200;
+
+/** Archived attachment deletes returned at most (newest first). */
+export const DELETED_ATTACHMENTS_MAX_ROWS = 500;
+
+const DeletedAttachmentsQuery = z
+  .object({ status: z.enum(["all", "open", "restored"]).optional() })
+  .strict();
 
 const TimelineQuery = z
   .object({ hours: z.coerce.number().int().min(1).max(DEVICE_TIMELINE_MAX_HOURS).optional() })
@@ -37,7 +46,7 @@ type TimelineEvent = {
 const iso = (v: Date | string): string => new Date(v).toISOString();
 
 export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiContext): void {
-  const { db, authMiddleware, requirePrivilegedAction, runIdempotent } = ctx;
+  const { db, authMiddleware, requirePrivilegedAction, runIdempotent, payloadCipher } = ctx;
 
   async function loadActivation(tenantId: string, fp: string) {
     return db.get<{
@@ -223,6 +232,104 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
       );
       structuredLog("sync_device_resync_requested", { tenant_id: tenantId, machine_fingerprint: fp });
       return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /**
+   * Photos and attachments deleted by synchronisation (archive, migration 017), newest first:
+   * entity, when, the device that sent the delete, whether it was restored and whether it can be
+   * restored now. Never the payload or the file.
+   */
+  app.get("/api/v1/tenants/:tenantId/sync/deleted-attachments", authMiddleware, async (req, res) => {
+    const parsed = DeletedAttachmentsQuery.safeParse(req.query ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "query");
+      return;
+    }
+    const { tenantId } = req.params;
+    const tenant = await db.get<{ id: string }>("SELECT id FROM tenants WHERE id = ?", tenantId);
+    if (!tenant) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    const items = await listArchivedDeletes(db, {
+      tenantId,
+      status: parsed.data.status ?? "all",
+      limit: DELETED_ATTACHMENTS_MAX_ROWS,
+    });
+    // Operator reasons and device ids: not for shared caches.
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ tenant_id: tenantId, items });
+  });
+
+  /**
+   * Restore: re-issues the archived row to every device as a new server-originated change (same
+   * payload, row_version = current + 1). Reason + step-up `sync_attachment_restore`, audited
+   * (sync_attachment_restored). Refusals: 404 tenant_not_found | archive_not_found;
+   * 409 already_restored | nothing_to_restore (no live row before the delete) |
+   * entity_changed_since_delete (re-created, updated or deleted again since).
+   */
+  app.post("/api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore", authMiddleware, async (req, res) => {
+    const { tenantId, archiveId } = req.params;
+    const reason = req.header("X-Operator-Reason")?.trim() ?? "";
+    if (reason.length < PRIVILEGED_REASON_MIN_LENGTH) {
+      res.status(403).json({ error: "privileged_action_guard_failed", reason: "missing_reason_code" });
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      // The tenant sync lock first (like every sync writer: exchanges append under it, so server_seq
+      // values become visible in order and the state checked below cannot change before the
+      // restore is written), then the guard's audit-chain lock.
+      await lockTenantSync(db, tenantId);
+      const tenant = await db.get<{ id: string }>("SELECT id FROM tenants WHERE id = ?", tenantId);
+      if (!tenant) return { status: 404, body: { error: "tenant_not_found" } };
+      const check = await checkRestorable(db, tenantId, archiveId);
+      if (!check.ok) return { status: check.status, body: { error: check.error } };
+      const { archive } = check;
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "sync_attachment_restored",
+        action_category: "sync_repair",
+        step_up_kind: StepUpKinds.syncAttachmentRestore,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId, machine_id: archive.deleted_by_machine_fingerprint },
+        // Identifiers only, never the payload.
+        payload: {
+          archive_id: String(archive.id),
+          entity_type: archive.entity_type,
+          entity_sync_id: archive.entity_sync_id,
+          deleted_by_machine_fingerprint: archive.deleted_by_machine_fingerprint,
+          deleted_by_license_id: archive.deleted_by_license_id,
+          delete_row_version: archive.delete_row_version,
+          payload_hash: archive.prior_payload_hash,
+          reason,
+        },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const emitted = await emitRestore(db, payloadCipher, {
+        archive,
+        currentRowVersion: check.currentRowVersion,
+        restoredBy: resolveActorId(req),
+        reason,
+        auditRecordId: guard.auditRecordId,
+      });
+      structuredLog("sync_attachment_restored", {
+        tenant_id: tenantId,
+        archive_id: String(archive.id),
+        entity_type: archive.entity_type,
+        server_seq: emitted.serverSeq,
+      });
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          archive_id: String(archive.id),
+          entity_type: archive.entity_type,
+          entity_sync_id: archive.entity_sync_id,
+          row_version: emitted.rowVersion,
+          server_seq: emitted.serverSeq,
+          audit_record_id: guard.auditRecordId,
+        },
+      };
     });
   });
 }
