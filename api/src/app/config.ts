@@ -6,6 +6,7 @@ import "dotenv/config";
 
 import { loadEntitlementSigningKey } from "../entitlement-signer.js";
 import { loadEmailConfig, type EmailConfig } from "../notifications/email.js";
+import { parseUpdaterPublicKey, type UpdaterPublicKey } from "../releases/minisign.js";
 import { fatal, requireEnv } from "./runtime.js";
 
 const JWT_SECRET_RAW = process.env.JWT_SECRET;
@@ -69,6 +70,25 @@ export function isDeviceRoute(path: string): boolean {
   const p = path.toLowerCase();
   return p.startsWith("/api/v1/activation/") || p.startsWith("/api/v1/sync/");
 }
+
+/**
+ * Public key of the desktop updater (`plugins.updater.pubkey` of the desktop's tauri.conf.json,
+ * minisign base64). Release uploads are verified against it before a release is registered.
+ * Optional: unset means no release can be registered (logged at startup); invalid stops the API.
+ */
+function loadUpdaterPublicKey(raw: string | undefined): UpdaterPublicKey | null {
+  const value = raw?.trim();
+  if (!value) {
+    console.warn("RELEASE_UPDATER_PUBLIC_KEY is not set: the release workflow cannot register desktop releases.");
+    return null;
+  }
+  try {
+    return parseUpdaterPublicKey(value);
+  } catch (err) {
+    fatal(`RELEASE_UPDATER_PUBLIC_KEY is invalid: ${(err as Error).message}`);
+  }
+}
+export const RELEASE_UPDATER_PUBLIC_KEY = loadUpdaterPublicKey(process.env.RELEASE_UPDATER_PUBLIC_KEY);
 
 /** Only read when the users table is empty (first boot); see seedAdminIfEmpty. */
 export const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL?.trim();

@@ -15,6 +15,9 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 > 017 was edited in place during review: a test or staging database that applied an earlier 017
 > refuses to start (checksum mismatch); see the fix in `SYNC_OPERATIONS.md` "Deploy checklist (017)".
 
+> **NEW MIGRATION `018_release_catalog`** (desktop release catalog and update manifest, Phase 5;
+> new tables and one function only): see `RELEASES.md`. Rollback adds version 18 to the list below.
+
 ## Before
 
 - CI green on the commit being deployed (all jobs, including `e2e`; the `Secret scan` job also

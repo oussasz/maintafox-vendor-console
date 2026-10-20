@@ -24,6 +24,7 @@
     "test:ops-metrics": "pnpm run build && node scripts/ops-metrics.integration.mjs",
     "test:support": "pnpm run build && node scripts/support.integration.mjs",
     "test:support-bundles": "pnpm run build && node scripts/support-bundles.integration.mjs",
+    "test:update-manifest": "pnpm run build && node scripts/update-manifest.integration.mjs",
     "test:notification-email": "pnpm run build && node scripts/notification-email.integration.mjs",
     "test:vendor-auth": "pnpm run build && node scripts/vendor-auth.integration.mjs",
     "test:console-actions": "pnpm run build && node scripts/console-actions.integration.mjs",

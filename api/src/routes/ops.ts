@@ -264,9 +264,18 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
         )
       ).map((r) => [`${r.channel}::${r.cohort_label}`, r]),
     );
+    // The newest published, not recalled release of the catalog (routes/release-catalog.ts); null
+    // while nothing is published.
+    const latestRelease = await db.get<{ release_id: string; version: string; channel: string; rollout_percent: number }>(
+      `SELECT release_id, version, channel, rollout_percent FROM app_releases
+        WHERE channel IS NOT NULL AND recalled_at IS NULL
+        ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1`,
+    );
     const impact = {
-      // The release catalog (master plan Phase 5.3) replaces this identifier.
-      release_id: process.env.ROLLOUT_RELEASE_ID ?? `rel_desktop_${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`,
+      release_id: latestRelease?.release_id ?? null,
+      release_version: latestRelease?.version ?? null,
+      release_channel: latestRelease?.channel ?? null,
+      release_rollout_percent: latestRelease?.rollout_percent ?? null,
       affected_tenants: tenants.length,
       affected_machines: totalMachines,
       entitlement_channel_ok: mismatches.c === 0,
@@ -312,8 +321,8 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       groups.set(key, existing);
     }
 
-    // Only what the server measures. Download and signature-verification events are reported by
-    // the desktop updater, which does not exist yet (Phase 5): those buckets are not invented.
+    // Only what the server measures (heartbeats, policy changes); download and install outcomes are
+    // not reported by devices, so no bucket is invented for them.
     const since = new Date(Date.now() - 24 * 3600_000).toISOString();
     const heartbeats = await db.get<{ c: number; last: string | null }>(
       `SELECT COUNT(*) AS c, MAX(last_seen_at) AS last FROM machine_activations

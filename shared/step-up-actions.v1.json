@@ -15,6 +15,7 @@
     { "kind": "vendor_user_admin", "rust_variant": null, "description": "Create, change or disable a vendor operator, or reset their MFA." },
     { "kind": "tenant_delete", "rust_variant": null, "description": "Delete a tenant and purge its synchronised data (irreversible)." },
     { "kind": "own_mfa_change", "rust_variant": null, "description": "Regenerate your own recovery codes." },
+    { "kind": "release_publisher_key", "rust_variant": null, "description": "Create or revoke a release workflow (CI) publisher key." },
     { "kind": "admin_recovery_code", "rust_variant": null, "description": "Issue a signed one-time code that creates one new administrator account on a PC." },
     { "kind": "sync_attachment_restore", "rust_variant": null, "description": "Restore a photo or attachment deleted by synchronisation (re-issued to every device)." }
   ]

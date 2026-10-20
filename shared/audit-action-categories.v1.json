@@ -13,6 +13,7 @@
     { "category": "tenant", "in_desktop_contract": false, "description": "Customers created, suspended, resumed, deleted." },
     { "category": "operator", "in_desktop_contract": false, "description": "Console operators and their roles." },
     { "category": "billing", "in_desktop_contract": false, "description": "Payments and SlickPay reconciliation." },
-    { "category": "rollout", "in_desktop_contract": false, "description": "Rollout cohort governance (pause, resume, recall)." }
+    { "category": "rollout", "in_desktop_contract": false, "description": "Rollout cohort governance (pause, resume, recall)." },
+    { "category": "release", "in_desktop_contract": false, "description": "Desktop release catalog: uploads, publication, rollout percentage, recall, CI publisher keys." }
   ]
 }

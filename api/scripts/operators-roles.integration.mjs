@@ -97,6 +97,14 @@ try {
       assert.deepEqual([res.status, res.json], [403, { error: "permission_denied", required_permission: "rollout.manage" }], `${role} ${path}`);
     }
   }
+  // Release workflow (CI) credentials are owner-only: operations runs rollouts but cannot mint them.
+  for (const role of ["auditor", "support", "operations"]) {
+    for (const path of ["/api/v1/release-publisher-keys", "/api/v1/release-publisher-keys/rpk_x/revoke"]) {
+      const res = await api.call("POST", path, sessions[role].accessToken, { label: "GitHub Actions" });
+      assert.deepEqual([res.status, res.json], [403, { error: "permission_denied", required_permission: "operator.manage" }], `${role} ${path}`);
+    }
+    assert.equal(await status(role, "GET", "/api/v1/release-publisher-keys"), 200, `${role} may list publisher keys`);
+  }
   assert.equal(await status("operations", "POST", "/api/v1/tenants", { slug: "ops-made", display_name: "Ops made" }), 201);
   assert.equal(await status("operations", "GET", "/api/v1/operators"), 403);
   assert.equal(await status("operations", "POST", "/api/v1/operators", createBody("auditor")), 403);

@@ -158,7 +158,7 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:backup-keygen
 
   backup-offsite:
-    name: Object storage (off-site backup copy, diagnostic bundle upload)
+    name: Object storage (off-site backup copy, diagnostic bundle upload, release catalog + update manifest)
     runs-on: ubuntu-24.04
     env:
       OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:9090
@@ -185,6 +185,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:backup-offsite
       - run: pnpm --filter maintafox-control-api run test:support-bundles
+      - run: pnpm --filter maintafox-control-api run test:update-manifest
       # With TEST_S3_* set, also proves a photo deleted by sync and restored comes back byte-identical.
       - run: pnpm --filter maintafox-control-api run test:sync-attachment-archive
         env:
