@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { authFetch } from "@/lib/api-client";
-import { apiRequestError } from "@/lib/api-error";
+import { apiRequestError, ApiRequestError } from "@/lib/api-error";
 
 import {
   PlatformOverviewV1Schema,
@@ -84,4 +84,144 @@ export async function requestDeviceResync(
     headers: { "X-Operator-Reason": privileged.reason_code, "X-Step-Up-Token": privileged.step_up_token },
   });
   if (!res.ok) throw await apiRequestError(res);
+}
+
+const AttachmentStateSchema = z.object({ row_version: z.number(), payload_hash: z.string(), deleted: z.boolean() });
+export type AttachmentState = z.infer<typeof AttachmentStateSchema>;
+
+const DeletedAttachmentSchema = z.object({
+  id: z.string(),
+  entity_type: z.string(),
+  entity_sync_id: z.string(),
+  /** delete, overwrite by a device, or a restore that replaced a live row. */
+  change_kind: z.enum(["delete", "overwrite", "restore"]),
+  /** The change moved the file reference (always true for a delete). */
+  locator_changed: z.boolean(),
+  changed_at: z.string(),
+  /** The device (or server) that wrote the archived version. */
+  prior_origin: z.string().nullable(),
+  changed_by: z.object({ license_id: z.string().nullable(), machine_fingerprint: z.string(), operator: z.string().nullable() }),
+  change_row_version: z.number(),
+  prior_state: z.enum(["present", "already_deleted", "unknown"]),
+  prior_row_version: z.number().nullable(),
+  prior_payload_hash: z.string().nullable(),
+  content_sha256: z.string().nullable(),
+  byte_size: z.number().nullable(),
+  /** A copy of the file is on the server (media manifest); null when unknown. */
+  file_on_server: z.boolean().nullable(),
+  /** For an equipment / request / work order attachment: its "Photo or file" (media_attachments) entry. */
+  companion: z
+    .object({ entity_sync_id: z.string(), archive_id: z.string().nullable(), live: z.boolean(), file_on_server: z.boolean() })
+    .nullable(),
+  /** The entry archived a live version: it can be restored (any time, more than once). */
+  restorable: z.boolean(),
+  /** The entity on the server now: what a restore replaces (sent back with the restore). */
+  current: AttachmentStateSchema.nullable(),
+  restores: z.array(z.object({ at: z.string(), by: z.string(), reason: z.string(), audit_record_id: z.string(), row_version: z.number() })),
+});
+export type DeletedAttachment = z.infer<typeof DeletedAttachmentSchema>;
+const NothingKeptGroupSchema = z.object({
+  machine_fingerprint: z.string(),
+  license_id: z.string().nullable(),
+  entity_type: z.string(),
+  count: z.number(),
+  last_at: z.string(),
+});
+export type NothingKeptGroup = z.infer<typeof NothingKeptGroupSchema>;
+const KeptGroupSchema = z.object({
+  machine_fingerprint: z.string(),
+  license_id: z.string().nullable(),
+  count: z.number(),
+  /** Entries about a version another device (or the server) wrote. */
+  cross_device_count: z.number(),
+  last_at: z.string(),
+});
+export type KeptGroup = z.infer<typeof KeptGroupSchema>;
+const DeletedAttachmentsPageSchema = z.object({
+  tenant_id: z.string(),
+  items: z.array(DeletedAttachmentSchema),
+  next_cursor: z.string().nullable(),
+  /** Deletes of items the server never held (or had already deleted), counted per device and type. */
+  nothing_kept_summary: z.array(NothingKeptGroupSchema),
+  /** Entries that kept a version, per sending device. */
+  kept_summary: z.array(KeptGroupSchema),
+});
+export type DeletedAttachmentsPage = z.infer<typeof DeletedAttachmentsPageSchema>;
+
+export type DeletedAttachmentsQuery = {
+  /** kept (default): entries that kept a version; nothing_kept: deletes of items the server never held; all. */
+  view?: "kept" | "nothing_kept" | "all";
+  since?: string;
+  before?: string;
+  cursor?: string;
+  entity_type?: string;
+  entity_sync_id?: string;
+  /** Only changes sent by this device. */
+  machine_fingerprint?: string;
+  /** "1": only changes of a version another device (or the server) wrote. */
+  cross_device?: "0" | "1";
+  limit?: number;
+};
+
+/** A restore refused because the entity changed since the listing; `current` is its state now. */
+export class RestoreConflictError extends ApiRequestError {
+  constructor(
+    base: ApiRequestError,
+    readonly current: AttachmentState | null,
+  ) {
+    super(base.status, base.code, base.serverMessage, base.params);
+    this.name = "RestoreConflictError";
+  }
+}
+
+/** One page of photos, attachments and document links deleted or replaced for one customer (no file content). */
+export async function listDeletedAttachments(tenantId: string, options: DeletedAttachmentsQuery = {}): Promise<DeletedAttachmentsPage> {
+  const query = new URLSearchParams();
+  for (const [k, v] of Object.entries(options)) {
+    if (v !== undefined && v !== "") query.set(k, String(v));
+  }
+  const qs = query.toString();
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments${qs ? `?${qs}` : ""}`);
+  return parseOrThrow(res, DeletedAttachmentsPageSchema);
+}
+
+/**
+ * Restores one archived version on every device (step-up `sync_attachment_restore`, reason,
+ * audited). `expectedCurrent` is the entity's state from the listing: the server refuses with
+ * entity_changed_since_listing if it changed since.
+ */
+export async function restoreDeletedAttachment(
+  tenantId: string,
+  archiveId: string,
+  expectedCurrent: AttachmentState | null,
+  privileged: { reason_code: string; step_up_token: string },
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/sync/deleted-attachments/${encodeURIComponent(archiveId)}/restore`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Operator-Reason": privileged.reason_code,
+        "X-Step-Up-Token": privileged.step_up_token,
+      },
+      body: JSON.stringify({
+        expected_current_row_version: expectedCurrent?.row_version ?? null,
+        expected_current_payload_hash: expectedCurrent?.payload_hash ?? null,
+        expected_current_deleted: expectedCurrent?.deleted ?? null,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: unknown; current?: unknown } | null;
+    const base = await apiRequestError(res);
+    if (base.code === "entity_changed_since_listing") {
+      const parsed = AttachmentStateSchema.nullable().safeParse(body?.current ?? null);
+      throw new RestoreConflictError(base, parsed.success ? parsed.data : null);
+    }
+    throw base;
+  }
 }

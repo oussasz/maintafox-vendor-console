@@ -127,6 +127,7 @@ jobs:
             src-tauri/src/vps/vendor_admin_console.rs
             shared/ipc-types.ts
             shared/sync/server-entity-allowlist.v2.json
+            shared/sync/entity-registry.json
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -184,6 +185,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:backup-offsite
       - run: pnpm --filter maintafox-control-api run test:support-bundles
+      # With TEST_S3_* set, also proves a photo deleted by sync and restored comes back byte-identical.
+      - run: pnpm --filter maintafox-control-api run test:sync-attachment-archive
+        env:
+          # Fail instead of skipping the byte-identical file check if the S3 settings go missing.
+          REQUIRE_S3: "1"
 
   docker-images:
     name: Docker images build (API + backup + postgres + backup pull)

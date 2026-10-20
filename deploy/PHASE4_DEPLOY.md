@@ -8,6 +8,13 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 > **NEW MIGRATION `016_admin_recovery_codes`** (administrator recovery codes, new table only): see
 > `CONSOLE_ACTIONS.md` "Administrator recovery code". Rollback adds version 16 to the list below.
 
+> **NEW MIGRATION `017_sync_attachment_archive`** (archive of attachments deleted or replaced by
+> sync, forensic device log of safety-setting changes; new tables only; deletes of append-only
+> history are now refused with `operation_not_allowed_for_type`): see `SYNC_OPERATIONS.md` "Deleted
+> attachments and the forensic device log". Rollback adds version 17 to the list below.
+> 017 was edited in place during review: a test or staging database that applied an earlier 017
+> refuses to start (checksum mismatch); see the fix in `SYNC_OPERATIONS.md` "Deploy checklist (017)".
+
 ## Before
 
 - CI green on the commit being deployed (all jobs, including `e2e`; the `Secret scan` job also
@@ -18,7 +25,7 @@ One deploy carries all of Phase 4. Details and per-item rollback: `deploy/VENDOR
 ## Deploy
 
 1. **Migrations** run automatically at API start, in order: `011_vendor_auth`, `012_console_actions`,
-   `013_vendor_operators`, `014_billing_reconciliation`, `015_sync_resync_requests`, `016_admin_recovery_codes`. All additive
+   `013_vendor_operators`, `014_billing_reconciliation`, `015_sync_resync_requests`, `016_admin_recovery_codes`, `017_sync_attachment_archive`. All additive
    (new columns and tables; every existing operator becomes owner).
 2. **Settings:** none new. `docker-compose.yml` now also passes `BACKUP_LOCAL_RETENTION_DAYS` (already
    in `.env` for the backup service) to the API, for the System health page. TOTP secrets are sealed with a subkey of `SYNC_PAYLOAD_ENCRYPTION_KEY`

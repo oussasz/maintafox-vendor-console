@@ -27,6 +27,8 @@ const RegistryFile = z
           .object({
             entity_type: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/),
             scope: z.enum(["tenant", "user"]),
+            /** History rows: the server refuses their delete/archive (validate.ts). Required on every entry. */
+            append_only: z.boolean(),
           })
           .strict(),
       )
@@ -37,6 +39,8 @@ const RegistryFile = z
 export type SyncEntityRegistry = {
   readonly version: number;
   scopeOf(entityType: string): SyncEntityScope | undefined;
+  /** True for append-only (history) types; false for other and unknown types. */
+  isAppendOnly(entityType: string): boolean;
   /** Entity types delivered to every device of a tenant. */
   tenantScopedTypes(): string[];
   readonly size: number;
@@ -54,15 +58,18 @@ export function loadSyncEntityRegistry(path: string = SYNC_ENTITY_REGISTRY_PATH)
     throw new Error(`sync entity registry ${path} is invalid: ${parsed.error.message}`);
   }
   const scopes = new Map<string, SyncEntityScope>();
+  const appendOnly = new Set<string>();
   for (const entry of parsed.data.entity_types) {
     if (scopes.has(entry.entity_type)) {
       throw new Error(`sync entity registry lists '${entry.entity_type}' twice`);
     }
     scopes.set(entry.entity_type, entry.scope);
+    if (entry.append_only) appendOnly.add(entry.entity_type);
   }
   return {
     version: parsed.data.registry_version,
     scopeOf: (entityType) => scopes.get(entityType),
+    isAppendOnly: (entityType) => appendOnly.has(entityType),
     tenantScopedTypes: () => [...scopes].filter(([, scope]) => scope === "tenant").map(([type]) => type),
     size: scopes.size,
   };
