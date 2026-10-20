@@ -118,7 +118,11 @@ try {
       protocol_version: "v1",
       idempotency_key: `v1-${randomUUID()}`,
       device_class: "desktop",
-      outbox_batch: outbox.map(({ base_row_version: _b, ...rest }) => rest),
+      outbox_batch: outbox.map((i) => {
+        const v1Item = { ...i };
+        delete v1Item.base_row_version;
+        return v1Item;
+      }),
     });
     assert.equal(r.status, 200, r.text);
     return r.json;
