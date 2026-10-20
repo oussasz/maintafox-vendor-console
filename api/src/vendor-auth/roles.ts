@@ -91,6 +91,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/release": "entitlement.manage",
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/rebind": "entitlement.manage",
   "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/policy-refresh": "entitlement.manage",
+  "POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/admin-recovery-code": "entitlement.manage",
+  "GET /api/v1/tenants/:tenantId/admin-recovery-codes": "console.view",
   "GET /api/v1/tenants/:tenantId/offline-policy": "console.view",
   "PUT /api/v1/tenants/:tenantId/offline-policy": "entitlement.manage",
 
@@ -98,9 +100,11 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "GET /api/v1/tenants/:tenantId/update-policy": "console.view",
   "PUT /api/v1/tenants/:tenantId/update-policy": "rollout.manage",
   "POST /api/v1/tenants/:tenantId/update-policy/rollback": "rollout.manage",
+  "POST /api/v1/tenants/:tenantId/update-policy/clear-min-version": "rollout.manage",
   "GET /api/v1/cohorts/:channel/:cohort/update-policy": "console.view",
   "PUT /api/v1/cohorts/:channel/:cohort/update-policy": "rollout.manage",
   "POST /api/v1/cohorts/:channel/:cohort/update-policy/rollback": "rollout.manage",
+  "POST /api/v1/cohorts/:channel/:cohort/update-policy/clear-min-version": "rollout.manage",
   "POST /api/v1/rollouts/:channel/:cohort/pause": "rollout.manage",
   "POST /api/v1/rollouts/:channel/:cohort/resume": "rollout.manage",
   "POST /api/v1/rollouts/:channel/:cohort/recall": "rollout.manage",
@@ -121,6 +125,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "GET /api/v1/ops/metrics": "platform.observe",
   "GET /api/v1/ops/devices/:tenantId/:machineFingerprint/timeline": "sync.operate",
   "POST /api/v1/ops/devices/:tenantId/:machineFingerprint/resync": "sync.operate",
+  "GET /api/v1/tenants/:tenantId/sync/deleted-attachments": "sync.operate",
+  "POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore": "sync.operate",
 
   // Audit
   "GET /api/v1/audit/ledger": "audit.view",

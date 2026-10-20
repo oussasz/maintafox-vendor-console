@@ -90,6 +90,13 @@ try {
   assert.equal(await status("support", "GET", "/api/v1/ops/sync-overview"), 200);
   assert.equal(await status("support", "GET", "/api/v1/support/diagnostic-bundles"), 200);
   assert.equal(await status("support", "POST", "/api/v1/licenses", { tenant_id: "x", max_machines: 1 }), 403);
+  // Removing a forced-update floor needs rollout.manage (support and auditor do not have it).
+  for (const role of ["auditor", "support"]) {
+    for (const path of ["/api/v1/tenants/x/update-policy/clear-min-version", "/api/v1/cohorts/stable/stable-main/update-policy/clear-min-version"]) {
+      const res = await api.call("POST", path, sessions[role].accessToken, { expected_force_min_app_version: "2.0.0" });
+      assert.deepEqual([res.status, res.json], [403, { error: "permission_denied", required_permission: "rollout.manage" }], `${role} ${path}`);
+    }
+  }
   assert.equal(await status("operations", "POST", "/api/v1/tenants", { slug: "ops-made", display_name: "Ops made" }), 201);
   assert.equal(await status("operations", "GET", "/api/v1/operators"), 403);
   assert.equal(await status("operations", "POST", "/api/v1/operators", createBody("auditor")), 403);

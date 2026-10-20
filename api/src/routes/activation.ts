@@ -10,7 +10,8 @@ import { JWT_SECRET } from "../app/config.js";
 import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { observeActivationOutcome } from "../app/observability.js";
 import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
-import { newId, resolveForceUpdatePolicy, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { resolveForceUpdatePolicy } from "../app/force-update.js";
+import { newId, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { DEVICE_TOKEN_ROTATE_AFTER_SECONDS, signDeviceActivationToken } from "../auth-tokens.js";
 import { editionExists, loadCapabilitiesJsonForSign } from "../edition-catalog-store.js";
 import { parseEditionId } from "../edition-catalog.js";
@@ -22,6 +23,17 @@ const ActivationClaimBody = z.object({
   machine_label: z.string().max(128).optional(),
   app_version: z.string().max(32).optional(),
 }).strict();
+
+// Policy refresh body. Desktops older than this field send "{}"; app_version has the claim body's
+// type and limit (string, max 32). Not .strict(): an extra field from a newer desktop is ignored
+// instead of failing the refresh (a failed refresh would leave the PC on a stale entitlement).
+// A wrong type or an over-long app_version is a 400 like on claim. The value itself is NOT
+// validated here: resolveForceUpdatePolicy treats an empty or unparsable version exactly like a
+// missing one (blocked under "required"), so no string can loosen the policy, and a legitimate
+// desktop with an odd version string still gets its refresh (with the old, blocked answer).
+const PolicyRefreshBody = z.object({
+  app_version: z.string().max(32).optional(),
+});
 
 type ActivationLicenseRow = {
   id: string;
@@ -433,6 +445,17 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       res.status(401).json({ error: "missing_token" });
       return;
     }
+    const parsedBody = PolicyRefreshBody.safeParse(req.body ?? {});
+    if (!parsedBody.success) {
+      structuredLog("activation_policy_refresh_failed", {
+        reason: "invalid_body",
+        status: 400,
+        tenant_id: activation.tenantId,
+        machine_fingerprint: activation.machineFingerprint,
+      });
+      res.status(400).json({ error: "invalid_body", details: parsedBody.error.flatten() });
+      return;
+    }
     const licRow = await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
                 l.update_channel, t.rollout_cohort,
                 COALESCE(t.edition, 'core') AS edition,
@@ -458,7 +481,9 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       res.status(403).json({ error: "license_expired" });
       return;
     }
-    const resolvedPolicy = await resolveActivationPolicy(licRow, undefined);
+    // The PC's running version (absent on older desktops -> same answer as before: blocked under
+    // "required").
+    const resolvedPolicy = await resolveActivationPolicy(licRow, parsedBody.data.app_version);
     const syntheticInput = {
       license_key: licRow.license_key,
       machine_fingerprint: activation.machineFingerprint,

@@ -279,6 +279,7 @@
       "auditReason": "Motif d’audit (conservé dans le journal d’audit)",
       "tenantOverride": "Dérogation du tenant ({{slug}})",
       "minVersion": "Version minimale de l’application",
+      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0. Laisser vide conserve la version minimale actuelle ; « Retirer la version minimale » la supprime.",
       "mode": "Mode",
       "modes": {
         "inherit": "Hériter de la politique de la cohorte",
@@ -292,7 +293,22 @@
       "applyCohort": "Appliquer la politique de la cohorte",
       "rollbackTenant": "Revenir à la politique précédente du tenant",
       "rollbackCohort": "Revenir à la politique précédente de la cohorte",
-      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})"
+      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})",
+      "removeFloor": "Retirer la version minimale",
+      "floorRemoved": "Version minimale {{floor}} retirée. Un retour en arrière la rétablit.",
+      "removeFloorDialog": {
+        "title": "Retirer la version minimale ?",
+        "tenantTarget": "Retire la version minimale {{floor}} de la règle du client {{name}}. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "cohortTarget": "Retire la version minimale {{floor}} de la règle du groupe de déploiement {{cohort}} sur le canal {{channel}} : elle couvre tous les clients de ce groupe qui suivent la règle du groupe. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "effect": {
+          "emergency": "Le mode Urgence reste actif : tous les PC couverts par cette règle restent bloqués, quelle que soit leur version, jusqu’à ce que le mode change.",
+          "required": "En mode « Obligatoire », une règle sans version minimale demande à tous les PC de se mettre à jour : elle ne peut donc pas être retirée maintenant. Passez d’abord le mode sur Désactivé, puis retirez la version minimale.",
+          "off": "Le mode est Désactivé : rien ne change pour les PC maintenant.",
+          "inherit": "Ce client suit la règle de son groupe de déploiement : rien ne change pour les PC maintenant."
+        },
+        "rollbackNote": "La règle d’avant est conservée : un retour en arrière rétablit {{floor}}.",
+        "confirm": "Retirer la version minimale"
+      }
     },
     "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :",
     "status": {
@@ -452,6 +468,32 @@
         "title": "Demander à cet appareil de rafraîchir sa politique ?",
         "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
         "confirm": "Demander le rafraîchissement"
+      },
+      "recovery": {
+        "title": "Donner à ce PC un code de récupération administrateur ?",
+        "body": "Crée un nouveau compte administrateur sur {{fingerprint}} (valable 24 h, usage unique). À utiliser quand le site ne peut plus administrer ce PC, par exemple quand son seul administrateur a oublié son mot de passe. Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
+        "confirm": "Émettre le code",
+        "pointOnce": "Il crée un administrateur SUPPLÉMENTAIRE : il ne réinitialise ni ne débloque aucun compte existant. Le client désactive ensuite l'ancien compte.",
+        "pointNotice": "Chaque administrateur actif du PC voit un avis permanent indiquant qu'un code de récupération a été utilisé, jusqu'à ce qu'il en prenne connaissance.",
+        "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
+        "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
+        "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
+        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}}).",
+        "requestedByLabel": "Qui l'a demandé chez le client (nom et fonction)",
+        "identityCheckLabel": "Comment vous avez vérifié son identité auprès du contact enregistré du client",
+        "identityCheckChoose": "Choisir…",
+        "identityCheck": {
+          "callback_registered_phone": "Rappel au numéro de téléphone enregistré",
+          "email_from_registered_address": "E-mail venant de l'adresse enregistrée",
+          "in_person": "En personne",
+          "other": "Autre (précisez ci-dessous)"
+        },
+        "identityNoteRequired": "Comment l'identité a été vérifiée (obligatoire, 5 à 200 caractères)",
+        "identityNoteOptional": "Remarque sur la vérification d'identité (facultative)",
+        "historyTitle": "Codes émis pour ce PC",
+        "historyRow": "{{at}} : demandé par {{who}}, {{check}}",
+        "historyValid": "valable jusqu'au {{at}}",
+        "historyExpired": "expiré"
       }
     },
     "activationClaim": "Revendication d'activation (API réelle)",
@@ -571,6 +613,102 @@
     "loading": "Chargement de la télémétrie de synchronisation…",
     "refresh": "Actualiser",
     "refreshing": "Actualisation…",
+    "deletedAttachments": {
+      "title": "Photos et pièces jointes supprimées ou remplacées",
+      "body": "Le serveur garde l'élément supprimé ou remplacé et l'appareil qui a envoyé la modification. Les fichiers envoyés au serveur ne sont jamais supprimés. Pour une pièce jointe d'équipement, de demande ou d'ordre de travail, restaurez aussi son élément « Photo ou fichier » pour que les appareils téléchargent à nouveau le fichier. Un fichier qui n'a jamais été envoyé (par exemple depuis un PC hors ligne au moment de la suppression) ne peut pas être récupéré.",
+      "loading": "Chargement des pièces jointes supprimées ou remplacées…",
+      "empty": "Aucune photo ni pièce jointe n'a été supprimée ou remplacée par la synchronisation.",
+      "col": {
+        "deletedAt": "Modifié le",
+        "item": "Élément",
+        "device": "Appareil qui a envoyé la modification",
+        "state": "Version archivée",
+        "action": "Action",
+        "now": "Sur le serveur maintenant"
+      },
+      "type": {
+        "media_attachments": "Photo ou fichier",
+        "asset_photos": "Photo d'équipement",
+        "di_attachments": "Pièce jointe de demande",
+        "work_order_attachments": "Pièce jointe d'ordre de travail",
+        "library_documents": "Document de bibliothèque",
+        "asset_document_links": "Lien de document d'équipement",
+        "inventory_document_links": "Lien de document de stock"
+      },
+      "state": {
+        "deleted": "Supprimé",
+        "restored": "Restauré",
+        "replaced": "Remplacé",
+        "replacedByRestore": "Remplacé par une restauration"
+      },
+      "restoredBy": "Restauré le {{at}} par {{by}}",
+      "restore": "Restaurer",
+      "restoreTitle": "Restaurer cette version ?",
+      "restoreBody": "{{id}} : la version {{archived}}, conservée le {{at}}, remplace ce que le serveur a maintenant : {{current}}. Elle est envoyée à tous les appareils de ce client ; ce qu'elle remplace est conservé et peut aussi être restauré.",
+      "restoreConfirm": "Restaurer sur tous les appareils",
+      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation.",
+      "file": {
+        "onServer": "Copie du fichier sur le serveur",
+        "notOnServer": "Pas de copie du fichier sur le serveur",
+        "unknown": "Copie du fichier sur le serveur inconnue"
+      },
+      "companion": {
+        "live": "Élément Photo ou fichier : {{id}} (présent)",
+        "archived": "Élément Photo ou fichier : {{id}} (supprimé ou remplacé : restaurez-le aussi)"
+      },
+      "byOperator": "Restauration par {{operator}}",
+      "archivedVersion": "Version {{version}} conservée",
+      "prior": {
+        "already_deleted": "Déjà supprimé : rien de conservé",
+        "unknown": "Inconnu du serveur : rien de conservé",
+        "present": "Version conservée"
+      },
+      "current": {
+        "none": "Aucun élément sur le serveur",
+        "live": "Version {{version}} (présente)",
+        "deleted": "Version {{version}} (supprimée)"
+      },
+      "period": {
+        "label": "Période",
+        "all": "Tout",
+        "days_one": "Dernier {{count}} jour",
+        "days_other": "Derniers {{count}} jours"
+      },
+      "view": {
+        "label": "Afficher",
+        "kept": "Supprimés ou remplacés (versions conservées)",
+        "nothing_kept": "Suppressions sans version conservée (jamais reçu ou déjà supprimé)",
+        "all": "Tout"
+      },
+      "search": {
+        "label": "Identifiant de l'élément",
+        "submit": "Rechercher"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} suppression sans version conservée ({{type}}, un élément que le serveur n'a jamais eu ou avait déjà supprimé), depuis l'appareil {{device}}",
+        "summary_other": "{{count}} suppressions sans version conservée ({{type}}, des éléments que le serveur n'a jamais eus ou avait déjà supprimés), depuis l'appareil {{device}}",
+        "show": "Les afficher"
+      },
+      "loadMore": "Afficher plus",
+      "device": {
+        "label": "Modifié par l'appareil",
+        "all": "Tous les appareils"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "Tous les types"
+      },
+      "before": {
+        "label": "Jusqu'au (date)"
+      },
+      "crossDevice": {
+        "label": "Seulement les versions écrites par un autre appareil",
+        "help": "Masque les modifications qu'un appareil a faites sur des éléments qu'il avait lui-même écrits, pour qu'un appareil ne puisse pas noyer un vrai élément sous ses propres suppressions. Décochez pour tout voir."
+      },
+      "keptSummary_one": "{{count}} modification avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "keptSummary_other": "{{count}} modifications avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "priorOrigin": "version écrite par {{device}}"
+    },
     "retry": "Réessayer"
   },
   "rollouts": {
@@ -871,7 +1009,9 @@
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
       "own_mfa_change": "générer de nouveaux codes de secours",
-      "release_publisher_key": "créer ou révoquer une clé du processus de publication"
+      "release_publisher_key": "créer ou révoquer une clé du processus de publication",
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur",
+      "sync_attachment_restore": "restaurer une photo ou une pièce jointe supprimée par la synchronisation"
     }
   },
   "account": {
@@ -1279,7 +1419,18 @@
       "refresh": "Lui demander d'actualiser sa licence maintenant",
       "seeWhatHappened": "Voir ce qui s'est passé",
       "block": "Bloquer cet appareil",
+      "recoveryCode": "Code de récupération administrateur",
       "more": "Autres actions pour {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Code de récupération administrateur",
+      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit dans Maintafox desktop (récupération administrateur) pour créer un nouveau compte administrateur ; les comptes existants ne sont pas modifiés.",
+      "copy": "Copier le code",
+      "copied": "Copié",
+      "copyFailed": "Copie automatique impossible : sélectionnez le code et copiez-le à la main.",
+      "expires": "Valable jusqu'au {{at}}, une seule fois.",
+      "shownOnce": "Il n'est affiché que cette fois : Maintafox ne le conserve pas. Copiez-le maintenant. S'il est perdu, émettez-en un nouveau.",
+      "done": "Terminé"
     },
     "offline": {
       "title": "Règles hors ligne",
@@ -1446,14 +1597,14 @@
     "tabs": {
       "team": "Équipe",
       "audit": "Journal d'audit",
-      "safeguards": "Garde-fous"
+      "safeguards": "Garde-fous",
+      "display": "Affichage"
     },
     "audit": {
       "title": "Journal d'audit"
     },
-    "nothing": {
-      "title": "Rien à régler ici pour votre rôle",
-      "body": "Votre langue et votre compte (mot de passe, codes de secours) sont en haut à droite."
+    "display": {
+      "title": "Affichage"
     }
   },
   "sysHealth": {

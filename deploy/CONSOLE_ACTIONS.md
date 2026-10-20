@@ -17,6 +17,10 @@ Every button of the console now calls an audited API endpoint. Code: `api/src/ro
 | Rollouts → Pause / Resume | `POST /rollouts/:channel/:cohort/pause`, `/resume` | `rollout_publish` | `rollout_governance` in its policy (claim / policy refresh) |
 | Rollouts → Recall | `POST /rollouts/:channel/:cohort/recall` `{recalled_version}` | `forced_rollback` | `rollout_governance: "recalled"`, `rollout_recalled_version` |
 
+A suspended customer stays in the Customers list and the Overview (status "Suspended"; counted in the
+total but not as active, and its licences and devices are not "needs attention" items), so an operator can
+find it and lift the suspension.
+
 Every action needs a reason (`X-Operator-Reason`, kept in the audit ledger); dangerous ones also
 need a fresh authenticator code for their kind (`deploy/VENDOR_AUTH.md`).
 
@@ -53,3 +57,143 @@ with the key. Re-deploying 4.2 later re-applies 012: first drop what it created 
 rollout_cohort_governance; DROP FUNCTION mfx_rollout_governance(text, text); ALTER TABLE
 machine_activations DROP COLUMN policy_refresh_requested_at; ALTER TABLE tenants DROP COLUMN
 suspended_at, DROP COLUMN suspended_reason;`).
+
+## Forced-update floor and the PC's version (licence review R4-S2)
+
+- **Floor format.** The minimum app version (tenant override or cohort baseline) must be
+  `MAJOR.MINOR.PATCH`, optionally with a pre-release tag (`2.0.0-rc.1`). The loose forms `2`,
+  `2.0` and `v2.0.0` are accepted and mean `2.0.0`. Anything else (`latest`, `2.x`, `2.0.0.1`) is
+  refused with `400 invalid_request` when it is set (tenant create, tenant and cohort
+  update-policy). A floor that cannot be read blocks every PC under `required`.
+- **Pre-release builds.** A pre-release such as `0.4.0-dev` counts as **below** `0.4.0`. Set the
+  floor to a version the shipped builds actually report, or a dev/rc build stays blocked.
+- **Policy refresh compares the PC's version.** `POST /api/v1/activation/policy-refresh` accepts
+  `{"app_version": "<running version>"}` (optional, string, max 32; unknown fields are ignored;
+  a wrong type is a 400). Under `required`, a PC at or above the floor is no longer told to
+  update. A desktop that does not send the field (body `{}` or no body), or sends a version that is
+  not `MAJOR.MINOR.PATCH[-pre]`, keeps the old answer: update required. `emergency` blocks every
+  version, as before. Claim and preview apply the same rule to their `app_version`.
+- **An empty field never removes the floor.** On the update-policy `PUT` a missing or `null`
+  `force_min_app_version` keeps the stored floor, and `""` is a 400. The console sends `null` for
+  an empty field, so emptying the field and applying changes nothing.
+- **"Required" always has a floor.** A policy `PUT` whose result would be `required` with no floor
+  is refused with `409 force_min_app_version_needed_by_required_mode` (nothing written); the policy
+  routes lock the policy row (`FOR UPDATE`) so a concurrent change cannot slip in between.
+- **Remove minimum version** (console: Updates > Force-update governance, the button under the
+  minimum version, shown only when one is stored; a confirmation names the floor and the customer,
+  or the channel and rollout group). Its own routes:
+  `POST /api/v1/tenants/:tenantId/update-policy/clear-min-version` and
+  `POST /api/v1/cohorts/:channel/:cohort/update-policy/clear-min-version`, body
+  `{"expected_force_min_app_version": "<the floor shown to the operator>"}` and nothing else (any
+  other field, a missing or empty value: 400). Permission `rollout.manage`, audit reason and step-up
+  `rollout_publish`, like applying a policy. Only the floor is removed; mode and user message stay.
+  Refusals (409): `no_force_min_app_version` (nothing stored), `force_min_app_version_changed`
+  (the stored floor is not the one confirmed), `force_min_app_version_needed_by_required_mode`
+  (the policy is `required`: without a floor `required` blocks every PC, so switch the mode first).
+  Ledger: `tenant_update_policy_min_version_removed` / `cohort_update_policy_min_version_removed`,
+  category `rollout_intervention`; the payload (stored as its hash in the chain) carries
+  `floor_removed: true` and the removed value. The policy history keeps the old floor, so
+  **Roll back** (step-up `forced_rollback`) restores it. The confirmation tells the operator what
+  PCs see: under `emergency` every PC stays blocked until the mode changes; under `off` (or a
+  customer on `inherit`) nothing changes for PCs now.
+
+**Before deploying**, list the stored floors the new rule cannot read and correct them in the
+console (run as the database owner / migration role, which bypasses RLS):
+
+```sql
+WITH floors AS (
+  SELECT 'tenant' AS source, slug AS name, force_min_app_version AS floor, force_update_mode AS mode
+  FROM tenants WHERE force_min_app_version IS NOT NULL
+  UNION ALL
+  SELECT 'cohort', channel || '/' || cohort_label, force_min_app_version, force_update_mode
+  FROM cohort_update_policies WHERE force_min_app_version IS NOT NULL
+)
+SELECT * FROM floors
+WHERE btrim(floor) !~ '^v?(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8}))?(\.(0|[1-9][0-9]{0,8}))?(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$';
+```
+
+Rows with mode `required` are the urgent ones: after the deploy they block every PC of that tenant
+or cohort until the floor is corrected. A policy rollback restores the previous floor from
+`tenant_update_policy_history` / `cohort_update_policy_history` without re-validating it; run the
+same check on `previous_force_min_app_version` there if you plan to roll back.
+
+## Administrator recovery code (decision register 2026-10-19, "No active administrator left on a PC")
+
+> **NEW MIGRATION: `016_admin_recovery_codes.sql`** (new table `admin_recovery_codes`, tenant RLS,
+> including `requested_by`, `identity_check`, `identity_check_note`; no existing table changes). It runs automatically at API start.
+
+**What it is.** A one-time code, signed by Maintafox, bound to one PC activation (tenant, machine
+fingerprint, licence). It **creates one new administrator account on that PC** (valid **24 h**,
+**single use**). It does **not** reset or unlock an existing account; the customer disables the old
+account afterwards. The desktop accepts it whatever the PC's administrator state (rule amended by
+the CMMS Advisor on 2026-10-19: no "no active administrator" precondition), and every active
+administrator of the PC then sees a persistent notice that a recovery code was used.
+
+**When to use it.** When the site can no longer administer the PC, e.g. the only administrator
+forgot their password. The site enters the code in the Maintafox desktop (administrator recovery).
+
+**How.** First check who is asking: call back the customer's registered phone number, or accept an
+email from the registered address, or see them in person. Then Customer → Devices → the PC's "⋯"
+menu → "Administrator recovery code" → **who asked** (name and role at the customer), **how their
+identity was checked** against the registered contact on file (`callback_registered_phone`,
+`email_from_registered_address`, `in_person`, or `other` with a 5–200 character note), reason
+(ledger) → authenticator code (step-up kind `admin_recovery_code`). The code is shown **once** with a copy
+button and its expiry; send it to the site by email or chat. Maintafox does not keep the code (not
+in the database, the ledger, or the idempotency store); if it is lost, issue a new one. The dialog
+lists the codes issued earlier for that PC (when, asked by whom, how checked, valid or expired).
+
+**Server (control API).**
+- `POST /api/v1/tenants/:tenantId/machines/:machineFingerprint/admin-recovery-code`, permission
+  `entitlement.manage`, `X-Operator-Reason` + `X-Step-Up-Token` of kind `admin_recovery_code`
+  (console-only kind: `rust_variant` null in `shared/step-up-actions.v1.json`). Body (required):
+  `requested_by` (2–120 characters), `identity_check` (`callback_registered_phone` |
+  `email_from_registered_address` | `in_person` | `other`), `identity_check_note` (5–200 characters,
+  required with `other`, optional otherwise); anything else or out of bounds is `400 invalid_request`.
+  Returns `201` with `code`, `code_id`, `issued_at`, `expires_at`, `key_id`, `requested_by`,
+  `identity_check`, `identity_check_note`, `audit_record_id` (`Cache-Control: no-store`).
+- Refusals: `404 tenant_not_found | activation_not_found`; `409 tenant_suspended |
+  activation_revoked | license_revoked | license_expired | admin_recovery_code_limit` (at most **3
+  unexpired codes per PC**; re-issuing is allowed below that, earlier codes stay valid until they
+  expire or are used); `403 privileged_action_guard_failed` (no reason, no / wrong step-up),
+  `403 permission_denied`.
+- Ledger: `admin_recovery_code_issued`, category `entitlement`, entity refs tenant / licence /
+  machine, payload `code_id`, `license_id`, `machine_fingerprint`, `key_id`, `issued_at`,
+  `expires_at`, `requested_by`, `identity_check`, `identity_check_note` — never the code or its
+  signature. `requested_by` and the note name a person at the customer: the ledger is hash-chained
+  and cannot be edited, so write only a name and role there (no phone numbers or other personal
+  details), and list it in the data-retention register as audit data kept with the ledger.
+- `GET /api/v1/tenants/:tenantId/admin-recovery-codes[?machine_fingerprint=…]` (`console.view`):
+  issued codes (operator, reason, who asked and how they were checked, when, until when, `expired`),
+  never the codes (`Cache-Control: no-store`).
+
+**Format** (agreed with the desktop licensing verifier; implementation
+`api/src/admin-recovery-signer.ts`, test vector `api/testdata/admin-recovery-vector.json`, regenerate
+with `node api/scripts/admin-recovery-vector.mjs` after `pnpm --filter maintafox-control-api build`;
+besides the primary vector it holds `extra_cases`: an escaped fingerprint that must verify, and
+negatives with their expected result named in `refusal_codes`: bare-payload signature, expired,
+issued in the future, wrong purpose, keys reordered):
+
+```
+MFXREC1.<payload, base64url without padding>.<Ed25519 signature, 128 lowercase hex chars>
+payload = {"v":1,"purpose":"admin_recovery","code_id":"<uuid v4>","tenant_id":"…",
+           "machine_fingerprint":"<as stored>","license_id":"…","issuer":"maintafox-vps",
+           "key_id":"<entitlement signing key id>","signature_alg":"ed25519:admin-recovery:v1",
+           "issued_at":"<toISOString()>","expires_at":"<issued_at + 24 h>"}   (exactly this key order)
+signature = Ed25519("maintafox-admin-recovery:v1\n" + payload) with the entitlement signing key
+```
+
+**What the desktop checks** (refuses otherwise): prefix; base64url; JSON shape and key order
+(re-serialised, bytes compared); `v`, `purpose`, `signature_alg`; `issuer`; `key_id` pinned and not
+compromised; the signature; `tenant_id`, `machine_fingerprint`, `license_id` equal to its stored
+activation claim; now < `expires_at`; `issued_at` not more than 5 minutes in the future; `code_id`
+not used before (single use is enforced on the PC; no consumption report to the server in v1).
+There is no check on the PC's administrator state: the code creates one extra administrator and
+the desktop shows every active administrator a persistent notice.
+
+**Key rotation.** Codes are signed with the current entitlement signing key: after a rotation, codes
+issued with the old key stop working on desktops that no longer pin it (issue a new one).
+
+**Rollback.** Un-record version 16 in `schema_migrations` before starting the previous images (same
+statement as in `PHASE4_DEPLOY.md`, with 16); the previous API ignores the table. Re-deploying later:
+drop the table `admin_recovery_codes` first. Codes already sent stay valid on the desktops until they
+expire (they are verified offline).

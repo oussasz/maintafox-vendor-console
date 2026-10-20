@@ -78,56 +78,7 @@ export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-export function semverCompare(a?: string | null, b?: string | null): number {
-  if (!a || !b) return 0;
-  const pa = a.split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i += 1) {
-    const da = pa[i] ?? 0;
-    const dbv = pb[i] ?? 0;
-    if (da > dbv) return 1;
-    if (da < dbv) return -1;
-  }
-  return 0;
-}
-
 export type ForceUpdateMode = "off" | "required" | "emergency" | "inherit";
-
-/**
- * Effective force-update policy of a device: the tenant policy unless it is "inherit", then its
- * (channel, cohort) policy. Used by activation (claim / policy refresh) and the update manifest.
- */
-export function resolveForceUpdatePolicy(input: {
-  appVersion?: string;
-  tenantMinVersion: string | null;
-  tenantMode: ForceUpdateMode;
-  tenantReason: string | null;
-  cohortMinVersion: string | null;
-  cohortMode: Exclude<ForceUpdateMode, "inherit">;
-  cohortReason: string | null;
-}): {
-  force_min_app_version: string | null;
-  force_update_mode: Exclude<ForceUpdateMode, "inherit">;
-  force_update_reason: string | null;
-  force_update_required: boolean;
-  policy_source: "tenant" | "cohort";
-} {
-  const policySource: "tenant" | "cohort" = input.tenantMode === "inherit" ? "cohort" : "tenant";
-  const mode =
-    policySource === "tenant" ? (input.tenantMode as Exclude<ForceUpdateMode, "inherit">) : input.cohortMode;
-  const minVersion = policySource === "tenant" ? input.tenantMinVersion : input.cohortMinVersion;
-  const reason = policySource === "tenant" ? input.tenantReason : input.cohortReason;
-  const forceUpdateRequired =
-    mode === "emergency" || (mode === "required" && (!input.appVersion || !minVersion || semverCompare(input.appVersion, minVersion) < 0));
-  return {
-    force_min_app_version: minVersion,
-    force_update_mode: mode,
-    force_update_reason: reason,
-    force_update_required: forceUpdateRequired,
-    policy_source: policySource,
-  };
-}
 
 /** Constant-time comparison of two secrets (webhook signature, scrape token). */
 export function safeEqualUtf8(a: string, b: string): boolean {

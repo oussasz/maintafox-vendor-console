@@ -29,7 +29,7 @@ type Errors = Partial<Record<keyof Form, string>>;
 /** Values a new customer starts with (the default edition, channel and rollout group of the API). */
 const NEW_CUSTOMER: Form = { slug: "", display_name: "", rollout_cohort: "stable-main", update_channel: "stable", edition: "core" };
 const CHANNELS: Channel[] = ["stable", "pilot", "internal"];
-const selectClass = "h-11 w-full rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary";
+const selectClass = "h-11 w-full rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary";
 
 /** Field problems as translation keys (vendorConsole `customers.validation.*`). */
 function validate(form: Form): Errors {

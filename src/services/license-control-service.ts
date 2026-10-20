@@ -581,6 +581,43 @@ export async function rollbackCohortUpdatePolicy(
   return CohortUpdatePolicySchema.parse(await res.json());
 }
 
+/**
+ * Removes the customer's minimum version (and nothing else). `expectedFloor` is the floor the
+ * operator confirmed; the server refuses (409) when the stored one differs.
+ */
+export async function clearTenantMinAppVersion(
+  tenantId: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<TenantUpdatePolicy> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/clear-min-version`, {
+    method: "POST",
+    body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+    headers: privilegedHeaders(privileged),
+  });
+  await throwIfNotOk(res);
+  return TenantUpdatePolicySchema.parse(await res.json());
+}
+
+/** Removes the rollout group's minimum version (see clearTenantMinAppVersion). */
+export async function clearCohortMinAppVersion(
+  channel: "stable" | "pilot" | "internal",
+  cohortLabel: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<CohortUpdatePolicy> {
+  const res = await authFetch(
+    `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/clear-min-version`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+      headers: privilegedHeaders(privileged),
+    },
+  );
+  await throwIfNotOk(res);
+  return CohortUpdatePolicySchema.parse(await res.json());
+}
+
 async function postMachineAction(
   tenantId: string,
   machineFingerprint: string,
@@ -627,6 +664,84 @@ export async function rebindMachine(
 /** Asks the device to fetch its policy now (audited, reason required, no step-up). */
 export async function requestMachinePolicyRefresh(tenantId: string, machineFingerprint: string, reasonCode: string): Promise<void> {
   await postMachineAction(tenantId, machineFingerprint, "policy-refresh", {}, { "X-Operator-Reason": reasonCode });
+}
+
+const AdminRecoveryCodeIssuedSchema = z.object({
+  code: z.string().regex(/^MFXREC1\.[A-Za-z0-9_-]+\.[0-9a-f]{128}$/),
+  code_id: z.string(),
+  tenant_id: z.string(),
+  machine_fingerprint: z.string(),
+  license_id: z.string(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  audit_record_id: z.string(),
+});
+export type AdminRecoveryCodeIssued = z.infer<typeof AdminRecoveryCodeIssuedSchema>;
+
+const AdminRecoveryCodeRowSchema = z.object({
+  code_id: z.string(),
+  tenant_id: z.string(),
+  license_id: z.string(),
+  machine_fingerprint: z.string(),
+  issued_by: z.string(),
+  reason: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  audit_record_id: z.string(),
+  expired: z.boolean(),
+});
+export type AdminRecoveryCodeRow = z.infer<typeof AdminRecoveryCodeRowSchema>;
+
+/** How the operator checked the requester against the customer's registered contact (API enum). */
+export const ADMIN_RECOVERY_IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
+export type AdminRecoveryIdentityCheck = (typeof ADMIN_RECOVERY_IDENTITY_CHECKS)[number];
+export type AdminRecoveryRequester = {
+  /** Name and role of the person at the customer who asked (2-120 chars). */
+  requested_by: string;
+  identity_check: AdminRecoveryIdentityCheck;
+  /** Required (5-200 chars) with "other"; optional otherwise. */
+  identity_check_note?: string;
+};
+
+/**
+ * Issues a signed one-time administrator recovery code for the PC (step-up `admin_recovery_code`).
+ * The code is in this response only: the server does not keep it. No Idempotency-Key (the server
+ * does not replay this response, so the code is never stored with it).
+ */
+export async function issueAdminRecoveryCode(
+  tenantId: string,
+  machineFingerprint: string,
+  requester: AdminRecoveryRequester,
+  privileged: PrivilegedActionContext,
+): Promise<AdminRecoveryCodeIssued> {
+  const note = requester.identity_check_note?.trim();
+  const body = {
+    requested_by: requester.requested_by.trim(),
+    identity_check: requester.identity_check,
+    ...(note ? { identity_check_note: note } : {}),
+  };
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/admin-recovery-code`,
+    { method: "POST", body: JSON.stringify(body), headers: privilegedHeaders(privileged) },
+  );
+  await throwIfNotOk(res);
+  return AdminRecoveryCodeIssuedSchema.parse(await res.json());
+}
+
+/** Recovery codes issued for a customer's PCs (newest first), without the codes themselves. */
+export async function listAdminRecoveryCodes(tenantId: string, machineFingerprint?: string): Promise<AdminRecoveryCodeRow[]> {
+  const query = machineFingerprint ? `?machine_fingerprint=${encodeURIComponent(machineFingerprint)}` : "";
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/admin-recovery-codes${query}`);
+  await throwIfNotOk(res);
+  return z.array(AdminRecoveryCodeRowSchema).parse(await res.json());
 }
 
 /** Soft-suspends a tenant: its devices are refused, data kept (step-up `entitlement_suspension`). */

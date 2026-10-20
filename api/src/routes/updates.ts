@@ -15,7 +15,8 @@ import type express from "express";
 import type { ApiContext } from "../app/context.js";
 import { deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { getMediaStore } from "../app/media.js";
-import { resolveForceUpdatePolicy, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { resolveForceUpdatePolicy } from "../app/force-update.js";
+import { structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import {
   isUpdateChannel,
   parseVersion,

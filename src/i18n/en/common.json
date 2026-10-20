@@ -153,6 +153,9 @@
       "idempotency_key_conflict": "This request was already processed with different inputs. Submit it again.",
       "slot_limit_reached": "Activation slot limit reached for this licence.",
       "no_policy_history": "No earlier policy to roll back to.",
+      "no_force_min_app_version": "No minimum version is set any more. Reload to see the current rule.",
+      "force_min_app_version_changed": "The minimum version was changed since this page loaded. Reload and check it before removing it.",
+      "force_min_app_version_needed_by_required_mode": "Under \"Required\", a rule needs a minimum version: without one every PC is asked to update. Keep or set a minimum version, or switch the mode first.",
       "license_revoked": "This licence key is revoked and cannot be changed.",
       "license_expired": "This licence key has expired.",
       "license_not_found": "Licence key not found.",
@@ -165,10 +168,15 @@
       "edition_system_immutable": "Built-in editions cannot be changed.",
       "edition_not_found": "Edition not found.",
       "activation_not_found": "Machine activation not found.",
+      "activation_revoked": "This machine is blocked or no longer holds a seat.",
+      "tenant_suspended": "This customer is suspended. Resume it first.",
+      "admin_recovery_code_limit": "This PC already has the maximum number of recovery codes that are still valid. Use one already sent, or wait until the oldest one expires.",
       "slot_not_held": "This machine does not hold a slot.",
       "same_fingerprint": "The new machine fingerprint is the same as the current one.",
       "target_fingerprint_in_use": "The new machine fingerprint is already activated.",
       "resync_already_requested": "A resynchronisation is already waiting for this device.",
+      "archive_not_found": "This deleted attachment was not found.",
+      "nothing_to_restore": "This entry kept no version (the server held nothing, or the item was already deleted): there is nothing to restore.",
       "confirmation_mismatch": "The typed confirmation does not match.",
       "governance_unchanged": "This cohort is already in that state.",
       "permission_denied": "Your role does not allow this action.",
@@ -193,7 +201,9 @@
       "release_not_registered": "This version is still being uploaded and checked by the release workflow. Try again once it shows as a draft.",
       "release_not_found": "This version no longer exists. Refresh the list.",
       "publisher_key_not_found": "This release workflow key no longer exists. Refresh the list.",
-      "publisher_key_revoked": "This release workflow key is already revoked."
+      "publisher_key_revoked": "This release workflow key is already revoked.",
+      "entity_changed_since_listing": "This item changed on the server since the list was loaded. The list is up to date now: check what the restore will replace, then try again.",
+      "invalid_cursor": "The list position is no longer valid. Reload the list."
     }
   },
   "permissions": {
@@ -211,5 +221,13 @@
       "en": "English",
       "fr": "Français"
     }
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "switchToDark": "Switch to the dark theme",
+    "switchToLight": "Switch to the light theme",
+    "hint": "Saved in this browser only. The console opens in the light theme until you choose otherwise."
   }
 }

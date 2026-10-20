@@ -52,7 +52,7 @@ export function CustomerTable({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("customers.table.searchPh")}
-          className="h-10 w-56 rounded-lg border border-input bg-white px-3 text-sm text-text-primary"
+          className="h-10 w-56 rounded-lg border border-input bg-surface-1 px-3 text-sm text-text-primary"
         />
       </label>
       {customers.length === 0 ? (

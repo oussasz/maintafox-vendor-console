@@ -1,11 +1,12 @@
 /**
  * The devices of a customer in plain words ("Online", "Not seen for 3 days", "Seat freed"), with
  * what an operator may do to each: free its seat, move the seat to a replacement computer, ask it
- * to refresh its licence now, block or unblock it. Every action asks for a reason (audit ledger);
- * all but the refresh also ask for an authenticator code (step-up machine_trust_change).
+ * to refresh its licence now, block or unblock it, or give its site a one-time administrator
+ * recovery code. Every action asks for a reason (audit ledger); all but the refresh also ask for an
+ * authenticator code (step-up machine_trust_change; admin_recovery_code for the recovery code).
  */
 import { MoreHorizontal } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,9 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { errorText } from "@/lib/error-text";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import {
+  ADMIN_RECOVERY_IDENTITY_CHECKS,
+  issueAdminRecoveryCode,
+  listAdminRecoveryCodes,
   listTenantActivations,
   rebindMachine,
   reinstateMachine,
@@ -23,11 +27,15 @@ import {
   requestMachinePolicyRefresh,
   revokeMachine,
   type ActivationRow,
+  type AdminRecoveryCodeIssued,
+  type AdminRecoveryCodeRow,
+  type AdminRecoveryIdentityCheck,
 } from "@/services/license-control-service";
 
 import { OperatorActionDialog } from "../components/OperatorActionDialog";
+import { AdminRecoveryCodeDialog } from "./AdminRecoveryCodeDialog";
 import { useVendorConsole } from "../VendorConsoleContext";
-import { formatAgo } from "../ui/format";
+import { formatAgo, formatDateTime } from "../ui/format";
 import { EmptyState, LoadError, Loading, Notice, StatusPill, type Tone } from "../ui/kit";
 
 /** A device seen within this long is online (same window as the sync health of the server). */
@@ -35,7 +43,7 @@ const ONLINE_WINDOW_MS = 15 * 60_000;
 /** Not seen for longer than this needs a look (same as "not syncing" on the Overview). */
 const NOT_SEEN_ATTENTION_MS = 24 * 3600_000;
 
-type SlotAction = "revoke" | "reinstate" | "release" | "rebind" | "refresh";
+type SlotAction = "revoke" | "reinstate" | "release" | "rebind" | "refresh" | "recovery";
 
 export function deviceName(row: Pick<ActivationRow, "machine_label" | "machine_id">): string {
   return row.machine_label?.trim() || row.machine_id;
@@ -63,6 +71,15 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, setPending] = useState<{ row: ActivationRow; action: SlotAction } | null>(null);
   const [rebindTarget, setRebindTarget] = useState("");
+  const [issuedCode, setIssuedCode] = useState<{ issued: AdminRecoveryCodeIssued; label: string } | null>(null);
+  /** Codes already issued for the PC of the open recovery dialog (null: unknown). Never the codes. */
+  const [earlierCodes, setEarlierCodes] = useState<AdminRecoveryCodeRow[] | null>(null);
+  /** Who asked at the customer and how their identity was checked (recorded with the code). */
+  const [requestedBy, setRequestedBy] = useState("");
+  const [identityCheck, setIdentityCheck] = useState<AdminRecoveryIdentityCheck | "">("");
+  const [identityNote, setIdentityNote] = useState("");
+  /** Increases on every ask(): a code list that arrives for an earlier dialog is ignored. */
+  const askSeq = useRef(0);
   const canManage = can("entitlement.manage");
 
   const load = useCallback(async () => {
@@ -85,6 +102,16 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
     if (action === "refresh") {
       await requestMachinePolicyRefresh(row.tenant_id, row.machine_id, reason);
       setSuccess(t("machines.refreshRequested"));
+    } else if (action === "recovery") {
+      const privileged = { reason_code: reason, step_up_token: await requireStepUp(StepUpKinds.adminRecoveryCode) };
+      const issued = await issueAdminRecoveryCode(
+        row.tenant_id,
+        row.machine_id,
+        { requested_by: requestedBy, identity_check: identityCheck as AdminRecoveryIdentityCheck, identity_check_note: identityNote },
+        privileged,
+      );
+      setIssuedCode({ issued, label: deviceName(row) });
+      return;
     } else {
       const privileged = { reason_code: reason, step_up_token: await requireStepUp(StepUpKinds.machineTrustChange) };
       if (action === "revoke") {
@@ -106,8 +133,32 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
 
   const ask = (row: ActivationRow, action: SlotAction) => {
     setRebindTarget("");
+    setEarlierCodes(null);
+    setRequestedBy("");
+    setIdentityCheck("");
+    setIdentityNote("");
     setPending({ row, action });
+    const seq = ++askSeq.current;
+    if (action === "recovery") {
+      // Tells the operator when codes sent earlier are still usable (the list never holds codes).
+      listAdminRecoveryCodes(row.tenant_id, row.machine_id)
+        .then((codes) => {
+          if (seq === askSeq.current) setEarlierCodes(codes);
+        })
+        .catch(() => {
+          if (seq === askSeq.current) setEarlierCodes(null);
+        });
+    }
   };
+
+  const note = identityNote.trim();
+  const requesterValid =
+    requestedBy.trim().length >= 2 &&
+    requestedBy.trim().length <= 120 &&
+    identityCheck !== "" &&
+    (note === "" ? identityCheck !== "other" : note.length >= 5 && note.length <= 200);
+  const validEarlier = (earlierCodes ?? []).filter((c) => !c.expired);
+  const validUntil = validEarlier.map((c) => c.expires_at).sort().pop() ?? null;
 
   if (error) return <LoadError message={error} onRetry={() => void load()} />;
   if (!rows) return <Loading />;
@@ -163,6 +214,7 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
                     <DropdownMenuItem disabled={Boolean(row.policy_refresh_requested_at)} onSelect={() => ask(row, "refresh")}>
                       {t("devices.action.refresh")}
                     </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => ask(row, "recovery")}>{t("devices.action.recoveryCode")}</DropdownMenuItem>
                     {onSeeHistory ? (
                       <DropdownMenuItem onSelect={() => onSeeHistory(row.machine_id)}>{t("devices.action.seeWhatHappened")}</DropdownMenuItem>
                     ) : null}
@@ -182,10 +234,88 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
         description={pending ? t(`machines.dialog.${pending.action}.body`, { fingerprint: deviceName(pending.row) }) : ""}
         confirmLabel={pending ? t(`machines.dialog.${pending.action}.confirm`) : ""}
         destructive={pending?.action === "revoke" || pending?.action === "release" || pending?.action === "rebind"}
-        extraValid={pending?.action !== "rebind" || (rebindTarget.trim().length >= 8 && rebindTarget.trim() !== pending.row.machine_id)}
+        extraValid={
+          pending?.action === "recovery"
+            ? requesterValid
+            : pending?.action !== "rebind" || (rebindTarget.trim().length >= 8 && rebindTarget.trim() !== pending.row.machine_id)
+        }
         onConfirm={run}
         onClose={() => setPending(null)}
       >
+        {pending?.action === "recovery" ? (
+          <div className="grid gap-2 text-sm text-text-secondary">
+            <ul className="list-disc space-y-1 pl-5">
+              <li>{t("machines.dialog.recovery.pointOnce")}</li>
+              <li>{t("machines.dialog.recovery.pointNotice")}</li>
+              <li>{t("machines.dialog.recovery.pointExpiry")}</li>
+              <li>{t("machines.dialog.recovery.pointShownOnce")}</li>
+            </ul>
+            {validEarlier.length > 0 ? (
+              <p className="text-text-primary">
+                {t("machines.dialog.recovery.stillValid", { count: validEarlier.length, at: formatDateTime(validUntil) })}
+              </p>
+            ) : null}
+            {earlierCodes && earlierCodes.length > 0 ? (
+              <div className="grid gap-1">
+                <p className="font-medium text-text-primary">{t("machines.dialog.recovery.historyTitle")}</p>
+                <ul className="grid gap-1" aria-label={t("machines.dialog.recovery.historyTitle")}>
+                  {earlierCodes.map((c) => (
+                    <li key={c.code_id} className="text-[13px]">
+                      {t("machines.dialog.recovery.historyRow", {
+                        at: formatDateTime(c.issued_at),
+                        who: c.requested_by,
+                        check: t(`machines.dialog.recovery.identityCheck.${c.identity_check}`),
+                      })}
+                      {c.identity_check_note ? ` (${c.identity_check_note})` : ""}
+                      {" · "}
+                      {c.expired
+                        ? t("machines.dialog.recovery.historyExpired")
+                        : t("machines.dialog.recovery.historyValid", { at: formatDateTime(c.expires_at) })}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="grid gap-1">
+              <Label htmlFor="recovery-requested-by">{t("machines.dialog.recovery.requestedByLabel")}</Label>
+              <Input
+                id="recovery-requested-by"
+                autoComplete="off"
+                maxLength={120}
+                value={requestedBy}
+                onChange={(e) => setRequestedBy(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="recovery-identity-check">{t("machines.dialog.recovery.identityCheckLabel")}</Label>
+              <select
+                id="recovery-identity-check"
+                className="flex h-10 w-full rounded-lg border border-input bg-surface-1 px-3 text-sm text-text-primary"
+                value={identityCheck}
+                onChange={(e) => setIdentityCheck(e.target.value as AdminRecoveryIdentityCheck | "")}
+              >
+                <option value="">{t("machines.dialog.recovery.identityCheckChoose")}</option>
+                {ADMIN_RECOVERY_IDENTITY_CHECKS.map((v) => (
+                  <option key={v} value={v}>
+                    {t(`machines.dialog.recovery.identityCheck.${v}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="recovery-identity-note">
+                {identityCheck === "other" ? t("machines.dialog.recovery.identityNoteRequired") : t("machines.dialog.recovery.identityNoteOptional")}
+              </Label>
+              <Input
+                id="recovery-identity-note"
+                autoComplete="off"
+                maxLength={200}
+                value={identityNote}
+                onChange={(e) => setIdentityNote(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : null}
         {pending?.action === "rebind" ? (
           <div className="grid gap-1">
             <Label htmlFor="rebind-target">{t("machines.dialog.rebind.targetLabel")}</Label>
@@ -193,6 +323,7 @@ export function DeviceList({ tenantId, onSeeHistory }: { tenantId: string; onSee
           </div>
         ) : null}
       </OperatorActionDialog>
+      <AdminRecoveryCodeDialog issued={issuedCode?.issued ?? null} deviceLabel={issuedCode?.label ?? ""} onClose={() => setIssuedCode(null)} />
     </div>
   );
 }

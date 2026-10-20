@@ -22,7 +22,7 @@ const pillClass: Record<Tone, string> = {
 
 const dotClass: Record<Tone, string> = {
   ok: "bg-ok",
-  attention: "bg-attention",
+  attention: "bg-attention-strong",
   danger: "bg-danger",
   info: "bg-primary",
   neutral: "bg-text-muted",
@@ -57,7 +57,7 @@ export function Panel({
   return (
     <section
       aria-labelledby={title && labelledBy ? labelledBy : undefined}
-      className={cn("flex min-w-0 flex-col gap-3 rounded-xl border border-surface-border bg-white px-[22px] py-5", className)}
+      className={cn("flex min-w-0 flex-col gap-3 rounded-xl border border-surface-border bg-surface-1 px-[22px] py-5", className)}
     >
       {title || aside ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -90,7 +90,7 @@ export function KpiTile({
   action?: { label: string; to: string };
 }) {
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+    <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
       <span className="text-[13px] font-medium text-text-secondary">{label}</span>
       <span className={cn("text-[30px] font-bold leading-tight", tone === "attention" ? "text-attention-strong" : "text-text-primary")}>{value}</span>
       {action ? (

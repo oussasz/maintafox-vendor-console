@@ -43,7 +43,7 @@ type PendingAction =
   | { kind: "delete"; operator: Operator };
 
 const selectClass =
-  "h-10 rounded-lg border border-input bg-white pl-3 pr-9 text-sm text-text-primary disabled:opacity-60";
+  "h-10 rounded-lg border border-input bg-surface-1 pl-3 pr-9 text-sm text-text-primary disabled:opacity-60";
 
 /**
  * Console operators (owners only): who can sign in, with which role. Roles are enforced by the

@@ -279,6 +279,7 @@
       "auditReason": "Audit reason (kept in the audit log)",
       "tenantOverride": "Tenant override ({{slug}})",
       "minVersion": "Minimum app version",
+      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0. Leaving it empty keeps the current minimum version; \"Remove minimum version\" takes it off.",
       "mode": "Mode",
       "modes": {
         "inherit": "Inherit the cohort policy",
@@ -292,7 +293,22 @@
       "applyCohort": "Apply cohort policy",
       "rollbackTenant": "Roll back tenant policy",
       "rollbackCohort": "Roll back cohort policy",
-      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})"
+      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})",
+      "removeFloor": "Remove minimum version",
+      "floorRemoved": "Minimum version {{floor}} removed. Rolling back restores it.",
+      "removeFloorDialog": {
+        "title": "Remove the minimum version?",
+        "tenantTarget": "Removes the minimum version {{floor}} from the rule of customer {{name}}. The mode and the message shown to users stay as they are.",
+        "cohortTarget": "Removes the minimum version {{floor}} from the rule of rollout group {{cohort}} on channel {{channel}}: it covers every customer of this group that follows the group rule. The mode and the message shown to users stay as they are.",
+        "effect": {
+          "emergency": "Emergency mode stays on: every PC this rule covers stays blocked, whatever its version, until the mode is changed.",
+          "required": "Under \"Required\", a rule without a minimum version asks every PC to update, so it cannot be removed now. Switch the mode to Off first, then remove the minimum version.",
+          "off": "The mode is Off, so nothing changes for PCs now.",
+          "inherit": "This customer follows its rollout group's rule, so nothing changes for PCs now."
+        },
+        "rollbackNote": "The rule before the change is kept: rolling back restores {{floor}}.",
+        "confirm": "Remove minimum version"
+      }
     },
     "completeBeforeAdding": "Complete the following before adding this customer:",
     "status": {
@@ -452,6 +468,32 @@
         "title": "Ask this device to refresh its policy?",
         "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
         "confirm": "Request refresh"
+      },
+      "recovery": {
+        "title": "Give this PC an administrator recovery code?",
+        "body": "Creates one new administrator account on {{fingerprint}} (valid 24 h, single use). Use it when the site can no longer administer this PC, for example when its only administrator forgot their password. The code is signed by Maintafox and works only on this PC:",
+        "confirm": "Issue the code",
+        "pointOnce": "It creates an EXTRA administrator: it does not reset or unlock an existing account. The customer disables the old account afterwards.",
+        "pointNotice": "Every active administrator of the PC sees a persistent notice that a recovery code was used, until they acknowledge it.",
+        "pointExpiry": "It is valid for 24 hours and can be used only once.",
+        "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
+        "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
+        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}}).",
+        "requestedByLabel": "Who asked at the customer (name and role)",
+        "identityCheckLabel": "How you checked their identity against the customer's registered contact",
+        "identityCheckChoose": "Choose…",
+        "identityCheck": {
+          "callback_registered_phone": "Called back on the registered phone number",
+          "email_from_registered_address": "Email from the registered address",
+          "in_person": "In person",
+          "other": "Other (explain below)"
+        },
+        "identityNoteRequired": "How the identity was checked (required, 5 to 200 characters)",
+        "identityNoteOptional": "Note on the identity check (optional)",
+        "historyTitle": "Codes issued for this PC",
+        "historyRow": "{{at}}: asked by {{who}}, {{check}}",
+        "historyValid": "valid until {{at}}",
+        "historyExpired": "expired"
       }
     },
     "tenant": "Tenant",
@@ -566,6 +608,102 @@
         "resync_completed": "Resync done",
         "operator_action": "Operator"
       }
+    },
+    "deletedAttachments": {
+      "title": "Deleted or replaced photos and attachments",
+      "body": "The server keeps the deleted or replaced entry and the device that sent the change. Files uploaded to the server are never deleted. For an equipment, request or work order attachment, also restore its 'Photo or file' entry so devices download the file again. A file that was never uploaded (e.g. from a PC that was offline when it was deleted) cannot be recovered.",
+      "loading": "Loading deleted or replaced attachments…",
+      "empty": "No photo or attachment has been deleted or replaced by synchronisation.",
+      "col": {
+        "deletedAt": "Changed",
+        "item": "Item",
+        "device": "Device that sent the change",
+        "state": "Archived version",
+        "action": "Action",
+        "now": "On the server now"
+      },
+      "type": {
+        "media_attachments": "Photo or file",
+        "asset_photos": "Equipment photo",
+        "di_attachments": "Request attachment",
+        "work_order_attachments": "Work order attachment",
+        "library_documents": "Library document",
+        "asset_document_links": "Equipment document link",
+        "inventory_document_links": "Inventory document link"
+      },
+      "state": {
+        "deleted": "Deleted",
+        "restored": "Restored",
+        "replaced": "Replaced",
+        "replacedByRestore": "Replaced by a restore"
+      },
+      "restoredBy": "Restored {{at}} by {{by}}",
+      "restore": "Restore",
+      "restoreTitle": "Restore this version?",
+      "restoreBody": "{{id}}: version {{archived}}, kept {{at}}, replaces what the server has now: {{current}}. It is sent to every device of this customer; what it replaces is kept and can be restored too.",
+      "restoreConfirm": "Restore on every device",
+      "restored": "Restored: {{id}} is sent to every device at their next sync.",
+      "file": {
+        "onServer": "File copy on the server",
+        "notOnServer": "No file copy on the server",
+        "unknown": "Server file copy unknown"
+      },
+      "companion": {
+        "live": "Photo or file entry: {{id}} (present)",
+        "archived": "Photo or file entry: {{id}} (deleted or replaced: restore it too)"
+      },
+      "byOperator": "Restore by {{operator}}",
+      "archivedVersion": "Version {{version}} kept",
+      "prior": {
+        "already_deleted": "Was already deleted: nothing kept",
+        "unknown": "Unknown to the server: nothing kept",
+        "present": "Version kept"
+      },
+      "current": {
+        "none": "No entry on the server",
+        "live": "Version {{version}} (present)",
+        "deleted": "Version {{version}} (deleted)"
+      },
+      "period": {
+        "label": "Period",
+        "all": "All time",
+        "days_one": "Last {{count}} day",
+        "days_other": "Last {{count}} days"
+      },
+      "view": {
+        "label": "Show",
+        "kept": "Deleted or replaced (versions kept)",
+        "nothing_kept": "Deletes that kept nothing (never held or already deleted)",
+        "all": "Everything"
+      },
+      "search": {
+        "label": "Item ID",
+        "submit": "Search"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} delete that kept nothing ({{type}}, an item the server never held or had already deleted), from device {{device}}",
+        "summary_other": "{{count}} deletes that kept nothing ({{type}}, items the server never held or had already deleted), from device {{device}}",
+        "show": "List them"
+      },
+      "loadMore": "Load more",
+      "device": {
+        "label": "Changed by device",
+        "all": "All devices"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "All types"
+      },
+      "before": {
+        "label": "Up to (date)"
+      },
+      "crossDevice": {
+        "label": "Only versions written by another device",
+        "help": "Hides changes a device made to rows it wrote itself, so a device cannot bury a real entry under its own deletes. Untick to see everything that kept a version."
+      },
+      "keptSummary_one": "{{count}} change that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "keptSummary_other": "{{count}} changes that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "priorOrigin": "version written by {{device}}"
     },
     "retry": "Retry",
     "refreshing": "Refreshing…",
@@ -871,7 +1009,9 @@
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
       "own_mfa_change": "generate new recovery codes",
-      "release_publisher_key": "create or revoke a release workflow key"
+      "release_publisher_key": "create or revoke a release workflow key",
+      "admin_recovery_code": "give a PC a code that creates a new administrator",
+      "sync_attachment_restore": "restore a photo or attachment deleted by synchronisation"
     }
   },
   "account": {
@@ -1279,7 +1419,18 @@
       "refresh": "Ask it to refresh its licence now",
       "seeWhatHappened": "See what happened",
       "block": "Block this device",
+      "recoveryCode": "Administrator recovery code",
       "more": "More actions for {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Administrator recovery code",
+      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it in the Maintafox desktop (administrator recovery) to create one new administrator account; existing accounts are not changed.",
+      "copy": "Copy the code",
+      "copied": "Copied",
+      "copyFailed": "Could not copy automatically: select the code and copy it by hand.",
+      "expires": "Valid until {{at}}, once.",
+      "shownOnce": "It is shown only this once: Maintafox does not keep it. Copy it now. If it is lost, issue a new one.",
+      "done": "Done"
     },
     "offline": {
       "title": "Offline rules",
@@ -1446,14 +1597,14 @@
     "tabs": {
       "team": "Team",
       "audit": "Audit log",
-      "safeguards": "Safeguards"
+      "safeguards": "Safeguards",
+      "display": "Display"
     },
     "audit": {
       "title": "Audit log"
     },
-    "nothing": {
-      "title": "Nothing to set here for your role",
-      "body": "Your language and your account (password, recovery codes) are at the top right."
+    "display": {
+      "title": "Display"
     }
   },
   "sysHealth": {

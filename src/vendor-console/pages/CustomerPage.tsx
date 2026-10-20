@@ -25,6 +25,7 @@ import { AuditLedgerPanel } from "../components/AuditLedgerPanel";
 import { BillingPanel } from "../components/BillingPanel";
 import { EntitlementLifecyclePanel } from "../components/EntitlementLifecyclePanel";
 import { OperatorActionDialog } from "../components/OperatorActionDialog";
+import { DeletedAttachmentsPanel } from "../components/DeletedAttachmentsPanel";
 import { SyncDeviceTimeline } from "../components/SyncDeviceTimeline";
 import { CustomerFormDialog } from "../customers/CustomerFormDialog";
 import { CustomerSupportTab } from "../customers/CustomerSupportTab";
@@ -125,7 +126,10 @@ export function CustomerPage() {
   }
   if (!tenant || !devices) return <Loading />;
 
-  const status = row?.status ?? (tenant.suspended_at ? "suspended" : "unknown");
+  // Suspended as the server decides it (suspend/resume check is_active), so an older row that is
+  // inactive without a suspension date still offers "Lift suspension".
+  const suspended = tenant.is_active !== undefined ? tenant.is_active !== 1 : Boolean(tenant.suspended_at);
+  const status = row?.status ?? (suspended ? "suspended" : "unknown");
   const needsLicence = status === "expires_soon" || status === "expired" || status === "no_licence";
   const seatsUsedPct = row && row.seats > 0 ? Math.min(100, Math.round((row.devices_used / row.seats) * 100)) : 0;
 
@@ -135,7 +139,7 @@ export function CustomerPage() {
         ← {t("customer.back")}
       </Link>
 
-      <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-surface-border bg-white px-[22px] py-5">
+      <header className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-surface-border bg-surface-1 px-[22px] py-5">
         <div className="flex items-center gap-4">
           <div aria-hidden="true" className="flex h-[52px] w-[52px] items-center justify-center rounded-xl bg-primary-bg text-xl font-bold text-primary">
             {initials(tenant.display_name)}
@@ -181,7 +185,7 @@ export function CustomerPage() {
 
         <TabsContent value="overview" className="flex flex-col gap-5">
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.licence")}</span>
               <span className="text-[22px] font-bold text-text-primary">
                 {row?.licence_until
@@ -198,7 +202,7 @@ export function CustomerPage() {
                 </span>
               ) : null}
             </div>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.devices")}</span>
               <span className="text-[22px] font-bold text-text-primary">{t("customer.tiles.seatsUsed", { used: row?.devices_used ?? 0, seats: row?.seats ?? 0 })}</span>
               <div
@@ -212,7 +216,7 @@ export function CustomerPage() {
                 <div className="h-2 bg-primary" style={{ width: `${seatsUsedPct}%` }} />
               </div>
             </div>
-            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-white px-5 py-[18px]">
+            <div className="flex flex-col gap-1.5 rounded-xl border border-surface-border bg-surface-1 px-5 py-[18px]">
               <span className="text-[13px] font-medium text-text-secondary">{t("customer.tiles.sync")}</span>
               <span className={sync.behind > 0 ? "text-[22px] font-bold text-attention-strong" : "text-[22px] font-bold text-text-primary"}>
                 {sync.active === 0 ? t("customer.tiles.noDevices") : sync.behind > 0 ? t("customer.tiles.behind", { count: sync.behind }) : t("customer.tiles.upToDate")}
@@ -226,7 +230,7 @@ export function CustomerPage() {
           </Panel>
 
           {can("customer.manage") ? (
-            <section aria-labelledby="danger-h" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-white px-[22px] py-5">
+            <section aria-labelledby="danger-h" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-surface-1 px-[22px] py-5">
               <div className="flex flex-[1_1_320px] flex-col gap-1">
                 <h2 id="danger-h" className="text-[15px] font-bold text-text-primary">
                   {t("customer.sensitive.title")}
@@ -234,8 +238,8 @@ export function CustomerPage() {
                 <span className="text-[13px] text-text-secondary">{t("customer.sensitive.body")}</span>
               </div>
               <div className="flex flex-wrap gap-2.5">
-                <Button type="button" variant="outline" onClick={() => setSuspension(tenant.suspended_at ? "resume" : "suspend")}>
-                  {tenant.suspended_at ? t("customers.resumeTenant") : t("customers.suspendTenant")}
+                <Button type="button" variant="outline" onClick={() => setSuspension(suspended ? "resume" : "suspend")}>
+                  {suspended ? t("customers.resumeTenant") : t("customers.suspendTenant")}
                 </Button>
                 {can("entitlement.manage") ? (
                   <Button type="button" variant="destructive-outline" onClick={() => goTab("licence")}>
@@ -258,9 +262,14 @@ export function CustomerPage() {
 
         <TabsContent value="sync">
           {can("sync.operate") ? (
-            <Panel>
-              <SyncDeviceTimeline fixedTenantId={tenant.id} initialMachineId={focusDevice} />
-            </Panel>
+            <div className="flex flex-col gap-5">
+              <Panel>
+                <SyncDeviceTimeline fixedTenantId={tenant.id} initialMachineId={focusDevice} />
+              </Panel>
+              <Panel>
+                <DeletedAttachmentsPanel tenantId={tenant.id} />
+              </Panel>
+            </div>
           ) : (
             <EmptyState title={t("customer.sync.noAccess")} />
           )}

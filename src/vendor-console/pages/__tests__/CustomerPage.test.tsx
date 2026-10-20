@@ -74,7 +74,8 @@ describe("CustomerPage", () => {
     expect(screen.getByRole("button", { name: "Renew licence" })).toBeInTheDocument();
     expect(screen.getByText("3 of 5 seats used")).toBeInTheDocument();
     expect(screen.getByText("12 days left")).toBeInTheDocument();
-    expect(screen.getByText("No device activated yet")).toBeInTheDocument();
+    // The device list loads on its own, after the customer.
+    expect(await screen.findByText("No device activated yet")).toBeInTheDocument();
   });
 
   it("suspending asks for a reason and an authenticator code, then calls the API", async () => {
@@ -89,6 +90,17 @@ describe("CustomerPage", () => {
     await waitFor(() =>
       expect(suspendTenant).toHaveBeenCalledWith("tenant_1", { reason_code: "unpaid invoice", step_up_token: "stepup-entitlement_suspension" }),
     );
+  });
+
+  it("an older inactive customer without a suspension date offers to lift the suspension", async () => {
+    vi.mocked(listTenants).mockResolvedValue([{ ...tenant, is_active: 0, suspended_at: null } as ControlTenant]);
+    vi.mocked(getConsoleOverview).mockResolvedValue({
+      customers: [{ ...overview.customers[0], status: "suspended" }],
+    } as unknown as ConsoleOverview);
+    renderAt("/vendor-console/customers/tenant_1");
+    const sensitive = (await screen.findByRole("heading", { name: "Sensitive actions" })).closest("section") as HTMLElement;
+    expect(within(sensitive).getByRole("button", { name: "Lift suspension" })).toBeInTheDocument();
+    expect(within(sensitive).queryByRole("button", { name: "Suspend customer" })).not.toBeInTheDocument();
   });
 
   it("the History tab shows the audit log of this customer only", async () => {

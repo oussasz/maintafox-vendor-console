@@ -3,6 +3,7 @@ import { HeartPulse, KeyRound, LayoutDashboard, LifeBuoy, MonitorSmartphone, Ref
 import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
 
+import { MaintafoxMark } from "@/components/branding/MaintafoxMark";
 import { usePermissions } from "@/hooks/use-permissions";
 import { cn } from "@/lib/utils";
 
@@ -43,11 +44,9 @@ export function VendorConsoleSideNav() {
   const { t } = useTranslation("vendorConsole");
   const { canAny } = usePermissions();
   return (
-    <nav aria-label={t("nav.aria")} className="flex w-[232px] shrink-0 flex-col gap-1 bg-navy px-4 py-6">
+    <nav aria-label={t("nav.aria")} className="flex w-[232px] shrink-0 flex-col gap-1 border-r border-white/5 bg-navy px-4 py-6">
       <div className="flex items-center gap-2.5 px-2 pb-6">
-        <div aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-lg bg-attention font-bold text-navy">
-          M
-        </div>
+        <MaintafoxMark variant="white" size={36} />
         <div className="flex flex-col">
           <span className="text-base font-bold text-white">{t("common:app.name")}</span>
           <span className="text-xs text-navy-muted">{t("shell.consoleName")}</span>
