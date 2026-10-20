@@ -5,6 +5,7 @@
  */
 import { assertTenantOwnsObjectKey } from "../storage/object-store.js";
 import type { Database } from "../db/database.js";
+import { recordAcceptedChange } from "./attachment-archive.js";
 import { signCheckpointToken, verifyCheckpointToken } from "./checkpoint.js";
 import { newBatchId } from "./exchange-v1.js";
 import { PayloadCipher, responseAad } from "./payload-crypto.js";
@@ -374,6 +375,8 @@ export async function runSyncExchangeV2(
         // The key was checked above under the tenant lock; reaching this means a broken invariant.
         throw new Error(`item idempotency_key ${item.idempotency_key} appeared concurrently`);
       }
+      // Archive of attachment deletes / forensic device log (adds rows only; before the state write).
+      await recordAcceptedChange(db, deps.cipher, act, ingress, serverSeq);
       await upsertEntityState(db, deps.cipher, serverSeq, ingress);
       acknowledged_items.push({
         idempotency_key: item.idempotency_key,

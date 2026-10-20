@@ -351,6 +351,10 @@ export const SYNC_TENANT_TABLES = [
   "sync_exchange_idempotency_v2",
   "sync_conflict_log",
   "sync_media_manifest",
+  // Migration 017: archived attachment deletes and the forensic device log (never compacted by
+  // retention; removed only here, with their tenant).
+  "sync_deleted_attachment_archive",
+  "sync_forensic_change_log",
 ] as const;
 
 /** Removes all sync data of a tenant. Runs inside the caller's transaction, under the tenant lock. */

@@ -14,6 +14,7 @@ import type { Database } from "../db/database.js";
 import { initialCheckpointToken, nextCheckpointToken, shouldAdvanceCheckpoint } from "./checkpoint.js";
 import { PayloadCipher, responseAad } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
+import { recordAcceptedChange } from "./attachment-archive.js";
 import { deliveredPayload, insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
 import {
   normalizePayloadHash,
@@ -118,6 +119,10 @@ export async function runSyncExchangeV1(
         protocolVersion: "v1",
       };
       const ingressId = await insertIngress(db, deps.cipher, ingress);
+      if (ingressId !== null) {
+        // Archive of attachment deletes / forensic device log (adds rows only; before the state write).
+        await recordAcceptedChange(db, deps.cipher, act, ingress, ingressId);
+      }
       if (ingressId !== null && deps.registry.scopeOf(ingress.entityType) === "tenant") {
         await upsertEntityState(db, deps.cipher, ingressId, ingress);
       }
