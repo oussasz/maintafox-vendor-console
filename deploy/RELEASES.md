@@ -15,8 +15,29 @@ Console > Updates > Releases (operator, step-up)
   Recall                                                   (never offered again)
 Desktop (every 2 h and on demand)
   GET /api/v1/updates/windows/x86_64/<its version>   (device token)
-  204 = nothing; 200 = Tauri update JSON + `maintafox` {kind upgrade|rollback, mandatory, notes FR/EN}
+  204 = nothing; 200 = Tauri update JSON + `maintafox` object (below)
 ```
+
+## The manifest response (agreed with the desktop, `src-tauri/src/updater/mod.rs`)
+
+Tauri v2 fills the endpoint template `/api/v1/updates/{{target}}/{{arch}}/{{current_version}}` with
+`target` = `windows` and `arch` = `x86_64` on the desktop's only platform. The release workflow
+registers its installer under exactly those two values, and the route looks them up as sent (no
+aliases such as `win64` or `x64`). `current_version` must be `MAJOR.MINOR.PATCH[-pre]` (for example
+`1.2.0` or `0.4.0-dev`); anything else is `400 invalid_update_request` (see "Forced updates").
+
+`204` means nothing to install. `200` is Tauri's dynamic-update JSON (`version`, `notes`, `pub_date`,
+`url`, `signature`) plus:
+
+| `maintafox` field | Value |
+|---|---|
+| `release_id` | Catalog release id (string, always present). The desktop journals it for rollback and audit and refuses an answer without it. |
+| `kind` | `upgrade` or `rollback`. |
+| `mandatory` | `true` when the PC must install it. |
+| `mandatory_reason` | `forced_update_floor` (policy "required", PC below the minimum version), `emergency` (policy "emergency"), `rollback_requested` (header `X-Maintafox-Rollback-To`), `recalled_version` (the PC runs a recalled version); `null` when not mandatory. |
+| `min_version` | The effective minimum version when the forced-update policy makes the offer mandatory (as the operator typed it, e.g. `1.0`; `null` under "emergency" with no minimum); `null` otherwise. |
+| `notes_en`, `notes_fr` | Release notes in both languages. |
+| `mandatory_message` | The operator's own reason text for a forced update, or `null`. Extra field: the desktop ignores unknown fields. |
 
 ## Rules the manifest applies (`api/src/releases/update-manifest.ts`)
 
@@ -29,8 +50,20 @@ Desktop (every 2 h and on demand)
 - **Recall:** catalog recall (all customers) or cohort recall (Phase 4.2, one channel + cohort). A
   recalled version is never offered. Devices running it are offered the newest other release they
   may have, even an older one: that is the rollback to the previous signed installer.
-- **Minimum version** (Updates > Forced updates): a device under the floor gets a mandatory offer
-  that ignores the rollout percentage. Pause and recall still win.
+- **Forced updates** (Updates > Forced updates, tenant or cohort policy): when the policy requires
+  this PC to update, the offer is mandatory and ignores the rollout percentage. Pause and recall
+  still win. "Requires" is decided by `api/src/app/force-update.ts` (`resolveForceUpdatePolicy`),
+  the same function activation and policy refresh use (review R4-S2), with the URL's current
+  version in the role of policy refresh's `app_version`: so the manifest's `mandatory` is policy
+  refresh's `force_update_required` for the same tenant and version. Strict parsing: a pre-release
+  is below its release (`1.0.0-dev` < `1.0.0`), "emergency" always requires, a "required" policy
+  with no readable minimum blocks every PC, and a minimum typed loosely by an operator (`1.0`,
+  `v2`) keeps its exact meaning. A version the strict check cannot read is refused with 400
+  (policy refresh blocks it), never answered "up to date". The manifest's own version ordering
+  (SemVer, `compareVersions`) is only used to pick a release; `api/scripts/force-update-policy.mjs`
+  checks it never contradicts the floor check. When the policy requires an update but the catalog
+  has nothing newer for this PC, the answer is 204 and policy refresh keeps blocking the PC:
+  publish a release at or above the minimum.
 - The desktop checks the manifest again right before downloading, so a recall or pause stops
   installs from the next check.
 
@@ -38,7 +71,19 @@ Desktop (every 2 h and on demand)
 
 | Variable | Value |
 |---|---|
-| `RELEASE_UPDATER_PUBLIC_KEY` | The desktop updater **public** key: the content of `src-tauri/updater/maintafox-updater.pub` in the desktop repo (written by `scripts/release/setup-updater-key.ps1`). Public, not a secret. Unset: the API starts, logs a warning, and `complete` answers 503 `updater_public_key_not_configured`. Invalid: the API refuses to start. |
+| `RELEASE_UPDATER_PUBLIC_KEY` | The desktop updater **public** key: the one-line content of `src-tauri/updater/maintafox-updater.pub` in the desktop repo (written once by the owner with `scripts/release/setup-updater-key.ps1`). Public, not a secret. Unset: the API starts, logs a warning, and `complete` answers 503 `updater_public_key_not_configured`. Invalid: the API refuses to start. |
+
+**It must be the same minisign key the desktop compiles in.** The desktop embeds
+`maintafox-updater.pub` and only installs an update whose signature that key verifies; the release
+workflow signs with the matching private key, which exists only in the desktop repository's GitHub
+secret `TAURI_SIGNING_PRIVATE_KEY`. The server checks every uploaded installer against
+`RELEASE_UPDATER_PUBLIC_KEY` so that a release the desktop would reject never reaches the catalog.
+If the two keys differ, every upload is refused (`updater_signature_invalid`, `key_mismatch`).
+
+**It is not a release publisher key.** The keys under Console > Updates > Releases > Release
+workflow keys (`mfxrp_...`, GitHub secret `MAINTAFOX_RELEASE_PUBLISHER_TOKEN`) are upload
+credentials for CI: they let the workflow talk to this API. They sign nothing and have nothing to do
+with the updater key.
 
 Object storage: releases use the existing media bucket under `<DEPLOYMENT_ENV>/releases/<version>/...`.
 Presigned URLs must be reachable from GitHub Actions (upload) and from customers' desktops
@@ -64,9 +109,12 @@ operator with `rollout.manage` and a step-up code.
 
 1. Backup first (as every deploy): `/opt/backups/<timestamp>/` with `.env` and a `pg_dump`.
 2. Deploy the API and console images from this branch (`docker compose up -d --build`).
-   Migration `016_release_catalog.sql` runs at start: new tables `app_releases`,
-   `app_release_artifacts`, `release_publisher_keys` and the function `mfx_update_candidates`. It
-   changes no existing table.
+   Migration `018_release_catalog.sql` runs at start (after `016_admin_recovery_codes` and
+   `017_sync_attachment_archive`): new tables `app_releases`, `app_release_artifacts`,
+   `release_publisher_keys` and the function `mfx_update_candidates`. It changes no existing table.
+   It was numbered 016 before the merge with the base branch: a test database that applied the
+   old `016_release_catalog` refuses to start (version 16 is now `016_admin_recovery_codes`);
+   recreate that test database. No production database ever had it.
 3. Add `RELEASE_UPDATER_PUBLIC_KEY=<public key>` to `.env` once the owner has created the key, then
    `docker compose up -d control-api`.
 4. Check: `GET /health` is OK; Console > Updates shows the Releases tab; the API log has no
@@ -74,8 +122,10 @@ operator with `rollout.manage` and a step-up code.
 5. With the public object-storage endpoint deployed: raise the body limit for release objects (see
    above), run the release workflow once, and check that the draft appears in the console.
 
-**Rollback:** redeploy the previous images. Migration 016 only adds objects, so the previous API
-works with them in place; to remove them as well, restore the `pg_dump` from step 1. Desktops that
+**Rollback:** redeploy the previous images. Migration 018 only adds objects, so the previous API
+works with them in place once version 18 is un-recorded in `schema_migrations` (the API refuses to
+start on a migration it does not know; same procedure as `PHASE4_DEPLOY.md` "Rollback", with
+version 18). To remove the objects as well, restore the `pg_dump` from step 1. Desktops that
 already installed a newer release keep it (use Recall to move them back once the catalog is up).
 
 ## Audit

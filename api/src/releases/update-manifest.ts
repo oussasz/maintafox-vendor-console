@@ -14,9 +14,15 @@
  * - Pause (cohort governance, Phase 4.2): nothing is offered, except an explicit rollback request
  *   (a desktop whose migration failed after an update asks for the version it came from).
  * - Floor: when the tenant/cohort force-update policy requires this device to update, the offer is
- *   mandatory and ignores the rollout percentage (channel, pause and recall still apply).
+ *   mandatory and ignores the rollout percentage (channel, pause and recall still apply). Whether
+ *   the policy requires it is NOT decided here: routes/updates.ts asks app/force-update.ts
+ *   (resolveForceUpdatePolicy, the R4-S2 strict check used by activation and policy refresh) with
+ *   the URL's current version as app_version, and passes the answer in as `forcedUpdate`.
+ *   compareVersions below only orders releases against each other and against the device.
  */
 import { createHash } from "node:crypto";
+
+import type { resolveForceUpdatePolicy } from "../app/force-update.js";
 
 export const UPDATE_CHANNELS = ["internal", "pilot", "stable"] as const;
 export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
@@ -94,15 +100,38 @@ export type DeviceUpdateContext = {
   currentVersion: string;
   channel: UpdateChannel;
   governance: { state: "active" | "paused" | "recalled"; recalled_version: string | null };
-  /** The force-update policy requires this device to update (tenant/cohort floor or emergency). */
-  updateRequired: boolean;
+  /**
+   * Why the force-update policy requires this device to update (see forcedUpdateReason), or null
+   * when it does not.
+   */
+  forcedUpdate: ForcedUpdateReason | null;
   /** A rollback to this version was requested (failed migration after an update). */
   rollbackTo: string | null;
 };
 
+export type ForcedUpdateReason = "forced_update_floor" | "emergency";
+/** `maintafox.mandatory_reason` in the manifest (null when the offer is optional). */
+export type MandatoryReason = ForcedUpdateReason | "rollback_requested" | "recalled_version";
+
+/**
+ * Maps the shared force-update decision onto the manifest's reason codes. The only input is
+ * resolveForceUpdatePolicy's own answer, so the manifest's mandatory flag is true exactly when
+ * policy refresh reports force_update_required for the same tenant and version.
+ */
+export function forcedUpdateReason(policy: ReturnType<typeof resolveForceUpdatePolicy>): ForcedUpdateReason | null {
+  if (!policy.force_update_required) return null;
+  return policy.force_update_mode === "emergency" ? "emergency" : "forced_update_floor";
+}
+
 export type UpdateDecision =
   | { offer: false; reason: "paused" | "up_to_date" | "rollback_unavailable" }
-  | { offer: true; kind: "upgrade" | "rollback"; mandatory: boolean; release: UpdateCandidate };
+  | {
+      offer: true;
+      kind: "upgrade" | "rollback";
+      mandatory: boolean;
+      mandatoryReason: MandatoryReason | null;
+      release: UpdateCandidate;
+    };
 
 export function resolveUpdate(candidates: readonly UpdateCandidate[], device: DeviceUpdateContext): UpdateDecision {
   const withdrawn = (c: UpdateCandidate) =>
@@ -113,7 +142,7 @@ export function resolveUpdate(candidates: readonly UpdateCandidate[], device: De
     if (!target || compareVersions(target.version, device.currentVersion) >= 0) {
       return { offer: false, reason: "rollback_unavailable" };
     }
-    return { offer: true, kind: "rollback", mandatory: true, release: target };
+    return { offer: true, kind: "rollback", mandatory: true, mandatoryReason: "rollback_requested", release: target };
   }
   if (device.governance.state === "paused") return { offer: false, reason: "paused" };
 
@@ -122,19 +151,27 @@ export function resolveUpdate(candidates: readonly UpdateCandidate[], device: De
     if (withdrawn(c)) return false;
     const rank = channelRank(c.channel);
     if (rank < deviceRank) return false;
-    if (rank > deviceRank || device.updateRequired) return true;
+    if (rank > deviceRank || device.forcedUpdate !== null) return true;
     return rolloutBucket(c.release_id, device.tenantId, device.machineFingerprint) < c.rollout_percent;
   });
   const byVersionDesc = [...eligible].sort((a, b) => compareVersions(b.version, a.version));
 
   const newest = byVersionDesc[0];
   if (newest && compareVersions(newest.version, device.currentVersion) > 0) {
-    return { offer: true, kind: "upgrade", mandatory: device.updateRequired, release: newest };
+    return {
+      offer: true,
+      kind: "upgrade",
+      mandatory: device.forcedUpdate !== null,
+      mandatoryReason: device.forcedUpdate,
+      release: newest,
+    };
   }
   const runningWithdrawn = candidates.some((c) => c.version === device.currentVersion && withdrawn(c));
   if (runningWithdrawn) {
     const previous = byVersionDesc.find((c) => compareVersions(c.version, device.currentVersion) < 0);
-    if (previous) return { offer: true, kind: "rollback", mandatory: true, release: previous };
+    if (previous) {
+      return { offer: true, kind: "rollback", mandatory: true, mandatoryReason: "recalled_version", release: previous };
+    }
   }
   return { offer: false, reason: "up_to_date" };
 }

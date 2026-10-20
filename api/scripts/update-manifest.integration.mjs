@@ -173,6 +173,8 @@ try {
   assert.equal(offer.json.maintafox.kind, "upgrade");
   assert.equal(offer.json.maintafox.mandatory, false);
   assert.equal(offer.json.maintafox.release_id, r100);
+  assert.equal(offer.json.maintafox.mandatory_reason, null);
+  assert.equal(offer.json.maintafox.min_version, null);
   assert.equal(offer.json.notes, "Maintafox 1.0.0: fixes and improvements.");
   assert.equal((await check(devices.internal, "0.4.0-dev", { "Accept-Language": "fr-FR" })).json.notes, "Maintafox 1.0.0 : corrections et améliorations.");
   // The download is the exact signed installer, and the manifest signature verifies it.
@@ -210,9 +212,93 @@ try {
   assert.equal(forced.status, 200, forced.text);
   assert.equal(forced.json.version, "1.0.0");
   assert.equal(forced.json.maintafox.mandatory, true);
-  assert.equal(forced.json.maintafox.mandatory_reason, "Security fix");
+  assert.equal(forced.json.maintafox.mandatory_reason, "forced_update_floor");
   assert.equal(forced.json.maintafox.min_version, "1.0.0");
-  await api.call("PUT", `/api/v1/tenants/${tenant.id}/update-policy`, admin, { force_update_mode: "off" }, await privileged("rollout_publish"));
+  assert.equal(forced.json.maintafox.mandatory_message, "Security fix", "the operator's wording travels separately");
+
+  // ── R4-S2: the manifest's mandatory flag is policy refresh's force_update_required ────────
+  // Same tenant, same version string (URL segment = policy refresh app_version), one device.
+  const agreeLicence = await api.call("POST", "/api/v1/licenses", admin, { tenant_id: tenant.id, max_machines: 1, update_channel: "stable" });
+  assert.equal(agreeLicence.status, 201, agreeLicence.text);
+  let agreeToken = await api.claimDevice(agreeLicence.json.license_key, "fp-stable-agree");
+  const setPolicy = async (body) => {
+    const res = await api.call("PUT", `/api/v1/tenants/${tenant.id}/update-policy`, admin, body, await privileged("rollout_publish"));
+    assert.equal(res.status, 200, res.text);
+  };
+  async function agree(version, expected) {
+    const refresh = await api.call("POST", "/api/v1/activation/policy-refresh", agreeToken, { app_version: version });
+    assert.equal(refresh.status, 200, refresh.text);
+    agreeToken = refresh.json.activation_token ?? agreeToken;
+    const required = refresh.json.force_update_required;
+    assert.equal(required, expected.required, `policy refresh force_update_required for ${JSON.stringify(version)}`);
+    const m = await check(agreeToken, encodeURIComponent(version));
+    const label = `manifest for ${JSON.stringify(version)} (${refresh.json.force_update_mode}, floor ${refresh.json.force_min_app_version})`;
+    assert.equal(m.status, expected.status, `${label}: ${m.text}`);
+    if (m.status === 400) {
+      // A version the shared check cannot read is blocked by policy refresh and refused here:
+      // never a 204 "up to date".
+      assert.equal(required, true, `${label}: an unreadable version is never fine`);
+      return;
+    }
+    if (m.status === 204) {
+      assert.ok(!required || expected.nothingNewer, `${label}: a blocked PC is only told "nothing" when no newer release exists`);
+      return;
+    }
+    const ext = m.json.maintafox;
+    assert.equal(typeof ext.release_id, "string", `${label}: release_id on every 200`);
+    assert.ok(ext.release_id.length > 0);
+    assert.equal(ext.mandatory, required, `${label}: mandatory === force_update_required`);
+    assert.equal(ext.mandatory_reason, expected.reason ?? null, label);
+    assert.equal(ext.min_version, expected.min ?? null, label);
+  }
+  // Valid versions against floor 1.0.0 (1.0.0 is on stable at 0 %: only the floor can offer it).
+  await agree("0.9.0", { required: true, status: 200, reason: "forced_update_floor", min: "1.0.0" });
+  await agree("1.0.0", { required: false, status: 204 });
+  await agree("1.0.1", { required: false, status: 204 });
+  // Pre-release of the floor is below it (both sides).
+  await agree("1.0.0-dev", { required: true, status: 200, reason: "forced_update_floor", min: "1.0.0" });
+  await agree("0.4.0-dev", { required: true, status: 200, reason: "forced_update_floor", min: "1.0.0" });
+  // Invalid for the strict check: blocked by policy refresh, refused by the manifest.
+  for (const bogus of ["1.0", "abc", "v1.0.0", "1.0.0+build.7", "01.0.0", "1.0.0garbage"]) {
+    await agree(bogus, { required: true, status: 400 });
+  }
+  // Operator floor written loosely ("1.0" means 1.0.0) on both sides.
+  await setPolicy({ force_min_app_version: "1.0", force_update_mode: "required", force_update_reason: "Security fix" });
+  await agree("1.0.0", { required: false, status: 204 });
+  await agree("0.9.9", { required: true, status: 200, reason: "forced_update_floor", min: "1.0" });
+  // Emergency: always required, whatever the version; offered whenever something newer exists.
+  await setPolicy({ force_update_mode: "emergency", force_update_reason: "Incident" });
+  await agree("0.9.0", { required: true, status: 200, reason: "emergency", min: "1.0" });
+  await agree("1.0.0", { required: true, status: 204, nothingNewer: true });
+  // "required" may not lose its floor (#10): the removal route refuses, the PUT keeps it.
+  await setPolicy({ force_update_mode: "required" });
+  const removeUnderRequired = await api.call(
+    "POST",
+    `/api/v1/tenants/${tenant.id}/update-policy/clear-min-version`,
+    admin,
+    { expected_force_min_app_version: "1.0" },
+    await privileged("rollout_publish"),
+  );
+  assert.equal(removeUnderRequired.status, 409, removeUnderRequired.text);
+  // No floor: mode off, then the floor removed. Nothing is mandatory; the 0 % rollout applies.
+  await setPolicy({ force_update_mode: "off" });
+  const removed = await api.call(
+    "POST",
+    `/api/v1/tenants/${tenant.id}/update-policy/clear-min-version`,
+    admin,
+    { expected_force_min_app_version: "1.0" },
+    await privileged("rollout_publish"),
+  );
+  assert.equal(removed.status, 200, removed.text);
+  await agree("0.9.0", { required: false, status: 204 });
+  await agree("0.4.0-dev", { required: false, status: 204 });
+  // A legacy row "required" with no floor (cannot be written through the API any more) blocks
+  // every PC on both sides; the manifest offers the update as mandatory with min_version null.
+  await api.su("UPDATE tenants SET force_update_mode = 'required', force_min_app_version = NULL WHERE id = $1", [tenant.id]);
+  await agree("0.9.0", { required: true, status: 200, reason: "forced_update_floor", min: null });
+  await agree("5.0.0", { required: true, status: 204, nothingNewer: true });
+  await api.su("UPDATE tenants SET force_update_mode = 'off' WHERE id = $1", [tenant.id]);
+
   assert.equal((await check(devices.stable, "0.4.0-dev")).status, 204, "floor lifted: back to the 0 % rollout");
   assert.equal((await publish(r100, { channel: "stable", rollout_percent: 100 })).status, 200);
   assert.equal((await check(devices.stable, "0.4.0-dev")).json.version, "1.0.0");
@@ -230,6 +316,9 @@ try {
   assert.equal(rollbackOffer.status, 200, rollbackOffer.text);
   assert.equal(rollbackOffer.json.version, "1.0.0");
   assert.equal(rollbackOffer.json.maintafox.kind, "rollback");
+  assert.equal(rollbackOffer.json.maintafox.release_id, r100);
+  assert.equal(rollbackOffer.json.maintafox.mandatory_reason, "rollback_requested");
+  assert.equal(rollbackOffer.json.maintafox.min_version, null);
   assert.equal((await check(devices.internal, "1.1.0", { "X-Maintafox-Rollback-To": "1.2.0" })).status, 204, "a rollback goes back, never forward");
   await api.call("POST", "/api/v1/rollouts/internal/main/resume", admin, { reason: "fixed" }, await privileged("rollout_publish"));
 
@@ -245,6 +334,9 @@ try {
   assert.equal(back.json.version, "1.0.0");
   assert.equal(back.json.maintafox.kind, "rollback");
   assert.equal(back.json.maintafox.mandatory, true);
+  assert.equal(back.json.maintafox.release_id, r100);
+  assert.equal(back.json.maintafox.mandatory_reason, "recalled_version");
+  assert.equal(back.json.maintafox.min_version, null);
   assert.equal((await publish(r110, { channel: "stable", rollout_percent: 100 })).json.error, "release_recalled");
 
   // Cohort recall (Phase 4.2) of a version withdraws it for that cohort only.

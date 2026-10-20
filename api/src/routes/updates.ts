@@ -6,8 +6,17 @@
  *
  * 204 = nothing to install. 200 = Tauri's "dynamic update server" JSON
  * ({ version, notes, pub_date, url, signature }) plus a `maintafox` object the desktop reads from the
- * raw response (kind upgrade|rollback, mandatory, notes in both languages). The decision itself is
- * releases/update-manifest.ts. `url` is a presigned download of the signed installer; the desktop
+ * raw response: release_id, kind upgrade|rollback, mandatory, mandatory_reason, min_version, notes
+ * in both languages. The decision itself is releases/update-manifest.ts.
+ *
+ * Tauri v2 fills {{target}} = "windows" and {{arch}} = "x86_64" on the desktop's only platform;
+ * the catalog stores artifacts under exactly those values.
+ *
+ * Forced updates (R4-S2): the URL's current version plays the role of policy refresh's
+ * app_version and goes through the same resolveForceUpdatePolicy (app/force-update.ts). The route
+ * accepts only the versions that function can read (MAJOR.MINOR.PATCH[-pre], parseStrictAppVersion):
+ * anything else is a 400, never an "up to date" 204, so the manifest can never call a version fine
+ * that policy refresh blocks. `url` is a presigned download of the signed installer; the desktop
  * re-checks the manifest right before downloading, so a recall stops installs at the next check.
  */
 import type express from "express";
@@ -15,11 +24,11 @@ import type express from "express";
 import type { ApiContext } from "../app/context.js";
 import { deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { getMediaStore } from "../app/media.js";
-import { resolveForceUpdatePolicy } from "../app/force-update.js";
+import { parseStrictAppVersion, resolveForceUpdatePolicy } from "../app/force-update.js";
 import { structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import {
+  forcedUpdateReason,
   isUpdateChannel,
-  parseVersion,
   RELEASE_VERSION_RE,
   resolveUpdate,
   type UpdateCandidate,
@@ -43,7 +52,7 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
   app.get("/api/v1/updates/:target/:arch/:currentVersion", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = (req as express.Request & { activation?: ActivationAuthContext }).activation!;
     const { target, arch, currentVersion } = req.params as { target: string; arch: string; currentVersion: string };
-    if (!PLATFORM_SEGMENT_RE.test(target) || !PLATFORM_SEGMENT_RE.test(arch) || !parseVersion(currentVersion)) {
+    if (!PLATFORM_SEGMENT_RE.test(target) || !PLATFORM_SEGMENT_RE.test(arch) || !parseStrictAppVersion(currentVersion)) {
       res.status(400).json({ error: "invalid_update_request" });
       return;
     }
@@ -108,7 +117,7 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
       currentVersion,
       channel: lic.update_channel,
       governance: governance ?? { state: "active", recalled_version: null },
-      updateRequired: policy.force_update_required,
+      forcedUpdate: forcedUpdateReason(policy),
       rollbackTo: rollbackHeader,
     });
     const logFields = {
@@ -138,7 +147,9 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
       version: chosen.version,
       kind: decision.kind,
       mandatory: decision.mandatory,
+      mandatory_reason: decision.mandatoryReason,
     });
+    const floorDriven = decision.mandatoryReason === "forced_update_floor" || decision.mandatoryReason === "emergency";
     const french = (req.header("Accept-Language") ?? "").toLowerCase().startsWith("fr");
     res.json({
       version: chosen.version,
@@ -150,8 +161,14 @@ export function registerUpdatesRoutes(app: express.Express, ctx: ApiContext): vo
         release_id: chosen.release_id,
         kind: decision.kind,
         mandatory: decision.mandatory,
-        mandatory_reason: decision.mandatory ? policy.force_update_reason : null,
-        min_version: policy.force_min_app_version,
+        // Code: forced_update_floor | emergency | rollback_requested | recalled_version; null when
+        // optional. The operator's own wording travels in mandatory_message (ignored by older
+        // desktops).
+        mandatory_reason: decision.mandatoryReason,
+        // The effective floor when the policy makes this offer mandatory (may be null under
+        // "emergency" with no floor); null otherwise.
+        min_version: floorDriven ? policy.force_min_app_version : null,
+        mandatory_message: floorDriven ? policy.force_update_reason : null,
         notes_en: chosen.notes_en,
         notes_fr: chosen.notes_fr,
       },
