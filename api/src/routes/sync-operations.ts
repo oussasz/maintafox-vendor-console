@@ -236,8 +236,9 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
   });
 
   /**
-   * Photos and attachments deleted by synchronisation (archive, migration 017), newest first:
-   * entity, when, the device that sent the delete, whether it was restored and whether it can be
+   * Photos, attachments and document links deleted or replaced by synchronisation (archive,
+   * migration 017), newest first: entity, when, the device that sent the change, whether a copy of
+   * the file is on the server, the companion "Photo or file" entry, whether it was restored and whether it can be
    * restored now. Never the payload or the file.
    */
   app.get("/api/v1/tenants/:tenantId/sync/deleted-attachments", authMiddleware, async (req, res) => {
@@ -267,7 +268,7 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
    * payload, row_version = current + 1). Reason + step-up `sync_attachment_restore`, audited
    * (sync_attachment_restored). Refusals: 404 tenant_not_found | archive_not_found;
    * 409 already_restored | nothing_to_restore (no live row before the delete) |
-   * entity_changed_since_delete (re-created, updated or deleted again since).
+   * entity_changed_since_delete (re-created, updated or deleted again since the archived change).
    */
   app.post("/api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore", authMiddleware, async (req, res) => {
     const { tenantId, archiveId } = req.params;
@@ -291,15 +292,16 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
         action_category: "sync_repair",
         step_up_kind: StepUpKinds.syncAttachmentRestore,
         scope_tenant_id: tenantId,
-        entity_refs: { tenant_id: tenantId, machine_id: archive.deleted_by_machine_fingerprint },
+        entity_refs: { tenant_id: tenantId, machine_id: archive.changed_by_machine_fingerprint },
         // Identifiers only, never the payload.
         payload: {
           archive_id: String(archive.id),
           entity_type: archive.entity_type,
           entity_sync_id: archive.entity_sync_id,
-          deleted_by_machine_fingerprint: archive.deleted_by_machine_fingerprint,
-          deleted_by_license_id: archive.deleted_by_license_id,
-          delete_row_version: archive.delete_row_version,
+          change_kind: archive.change_kind,
+          changed_by_machine_fingerprint: archive.changed_by_machine_fingerprint,
+          changed_by_license_id: archive.changed_by_license_id,
+          change_row_version: archive.change_row_version,
           payload_hash: archive.prior_payload_hash,
           reason,
         },

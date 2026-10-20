@@ -1,20 +1,25 @@
--- Sync deletes that can be undone, and who changed the safety settings (CMMS Advisor decision
+-- Sync deletes and overwrites of attachments that can be undone, and who changed the safety settings (CMMS Advisor decision
 -- 2026-10-20). The sync server knows the sending DEVICE (activation: licence + machine fingerprint),
 -- never the user, so it cannot prove who deleted something; it can keep what was deleted and which
 -- device sent the change. New tables only: no existing table changes.
 
--- 1. Archive of accepted sync deletes of photos / attachments (the only history sync may delete:
---    media_attachments, asset_photos, di_attachments, work_order_attachments; the list lives in
---    api/src/sync/attachment-archive.ts). Written in the exchange transaction that accepted the
---    delete, before the current state is overwritten by the delete marker. A vendor operator can
---    restore the prior row (reason + step-up sync_attachment_restore, audited): the server then
---    re-issues it to every device as a new server-originated change (deploy/SYNC_OPERATIONS.md).
+-- 1. Archive of photos / attachments deleted OR REPLACED by sync (the only history sync may
+--    delete; the type list lives in api/src/sync/attachment-archive.ts). Written in the exchange
+--    transaction that accepted the change, before the current state is overwritten: for every
+--    accepted delete/archive, and for every accepted upsert/update that replaces a live row with
+--    a different payload (a junk object_key or relative_path destroys the attachment as surely as
+--    a delete). A vendor operator can restore the prior row (reason + step-up
+--    sync_attachment_restore, audited): the server re-issues it to every device as a new
+--    server-originated change (deploy/SYNC_OPERATIONS.md).
+--    Privacy: prior payloads are kept with no time limit, until the tenant is deleted.
 CREATE TABLE sync_deleted_attachment_archive (
   id BIGSERIAL PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   entity_type TEXT NOT NULL,
   entity_sync_id TEXT NOT NULL,
-  -- What the server held just before the delete: 'present' (a live row, archived below),
+  -- 'delete' (delete or archive operation) or 'overwrite' (a live row replaced by another payload).
+  change_kind TEXT NOT NULL CHECK (change_kind IN ('delete', 'overwrite')),
+  -- What the server held just before the change: 'present' (a live row, archived below),
   -- 'already_deleted' (the state was already a delete marker), 'unknown' (no state on the server).
   prior_state TEXT NOT NULL CHECK (prior_state IN ('present', 'already_deleted', 'unknown')),
   prior_operation TEXT NULL,
@@ -30,15 +35,16 @@ CREATE TABLE sync_deleted_attachment_archive (
   object_refs JSONB NOT NULL DEFAULT '{}'::jsonb,
   CHECK (prior_state <> 'present' OR (prior_payload_raw IS NOT NULL AND prior_row_version IS NOT NULL
          AND prior_payload_hash IS NOT NULL AND prior_last_ingress_id IS NOT NULL)),
-  -- The accepted delete and the device that sent it.
-  delete_operation TEXT NOT NULL,
-  delete_row_version BIGINT NOT NULL,
-  delete_ingress_id BIGINT NOT NULL,
-  delete_payload_hash TEXT NOT NULL,
-  deleted_by_license_id TEXT NOT NULL,
-  deleted_by_machine_fingerprint TEXT NOT NULL,
+  CHECK (change_kind = 'delete' OR prior_state = 'present'),
+  -- The accepted change and the device that sent it.
+  change_operation TEXT NOT NULL,
+  change_row_version BIGINT NOT NULL,
+  change_ingress_id BIGINT NOT NULL,
+  change_payload_hash TEXT NOT NULL,
+  changed_by_license_id TEXT NOT NULL,
+  changed_by_machine_fingerprint TEXT NOT NULL,
   protocol_version TEXT NOT NULL CHECK (protocol_version IN ('v1', 'v2')),
-  deleted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- Restore (all set together, once).
   restored_at TIMESTAMPTZ NULL,
   restored_by TEXT NULL,
@@ -54,10 +60,10 @@ CREATE TABLE sync_deleted_attachment_archive (
       AND restore_audit_record_id IS NOT NULL AND restore_ingress_id IS NOT NULL AND restore_row_version IS NOT NULL)
   )
 );
-CREATE UNIQUE INDEX sync_deleted_attachment_archive_delete
-  ON sync_deleted_attachment_archive (tenant_id, delete_ingress_id);
+CREATE UNIQUE INDEX sync_deleted_attachment_archive_change
+  ON sync_deleted_attachment_archive (tenant_id, change_ingress_id);
 CREATE INDEX sync_deleted_attachment_archive_tenant
-  ON sync_deleted_attachment_archive (tenant_id, deleted_at DESC, id DESC);
+  ON sync_deleted_attachment_archive (tenant_id, changed_at DESC, id DESC);
 CREATE INDEX sync_deleted_attachment_archive_entity
   ON sync_deleted_attachment_archive (tenant_id, entity_type, entity_sync_id);
 
@@ -69,17 +75,17 @@ BEGIN
   IF OLD.restored_at IS NOT NULL THEN
     RAISE EXCEPTION 'sync_deleted_attachment_archive % is already restored', OLD.id;
   END IF;
-  IF (NEW.id, NEW.tenant_id, NEW.entity_type, NEW.entity_sync_id, NEW.prior_state, NEW.prior_operation,
+  IF (NEW.id, NEW.tenant_id, NEW.entity_type, NEW.entity_sync_id, NEW.change_kind, NEW.prior_state, NEW.prior_operation,
       NEW.prior_row_version, NEW.prior_payload_raw, NEW.prior_payload_hash, NEW.prior_owner_user_sync_id,
-      NEW.prior_origin_machine_fingerprint, NEW.prior_last_ingress_id, NEW.object_refs, NEW.delete_operation,
-      NEW.delete_row_version, NEW.delete_ingress_id, NEW.delete_payload_hash, NEW.deleted_by_license_id,
-      NEW.deleted_by_machine_fingerprint, NEW.protocol_version, NEW.deleted_at)
+      NEW.prior_origin_machine_fingerprint, NEW.prior_last_ingress_id, NEW.object_refs, NEW.change_operation,
+      NEW.change_row_version, NEW.change_ingress_id, NEW.change_payload_hash, NEW.changed_by_license_id,
+      NEW.changed_by_machine_fingerprint, NEW.protocol_version, NEW.changed_at)
      IS DISTINCT FROM
-     (OLD.id, OLD.tenant_id, OLD.entity_type, OLD.entity_sync_id, OLD.prior_state, OLD.prior_operation,
+     (OLD.id, OLD.tenant_id, OLD.entity_type, OLD.entity_sync_id, OLD.change_kind, OLD.prior_state, OLD.prior_operation,
       OLD.prior_row_version, OLD.prior_payload_raw, OLD.prior_payload_hash, OLD.prior_owner_user_sync_id,
-      OLD.prior_origin_machine_fingerprint, OLD.prior_last_ingress_id, OLD.object_refs, OLD.delete_operation,
-      OLD.delete_row_version, OLD.delete_ingress_id, OLD.delete_payload_hash, OLD.deleted_by_license_id,
-      OLD.deleted_by_machine_fingerprint, OLD.protocol_version, OLD.deleted_at) THEN
+      OLD.prior_origin_machine_fingerprint, OLD.prior_last_ingress_id, OLD.object_refs, OLD.change_operation,
+      OLD.change_row_version, OLD.change_ingress_id, OLD.change_payload_hash, OLD.changed_by_license_id,
+      OLD.changed_by_machine_fingerprint, OLD.protocol_version, OLD.changed_at) THEN
     RAISE EXCEPTION 'sync_deleted_attachment_archive: only the restore columns may change';
   END IF;
   RETURN NEW;

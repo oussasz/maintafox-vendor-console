@@ -186,6 +186,9 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:support-bundles
       # With TEST_S3_* set, also proves a photo deleted by sync and restored comes back byte-identical.
       - run: pnpm --filter maintafox-control-api run test:sync-attachment-archive
+        env:
+          # Fail instead of skipping the byte-identical file check if the S3 settings go missing.
+          REQUIRE_S3: "1"
 
   docker-images:
     name: Docker images build (API + backup + postgres + backup pull)
