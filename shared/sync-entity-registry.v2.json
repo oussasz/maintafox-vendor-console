@@ -858,6 +858,54 @@
     {
       "entity_type": "inspection_schedules",
       "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedules",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedule_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "weekly_schedule_baseline_items",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "site_setting_events",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "site_settings",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_overrides",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "qualification_requirements",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "work_calendar_holidays",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "site_work_weeks",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "schedule_class_versions",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "team_schedule_assignments",
+      "scope": "tenant"
+    },
+    {
+      "entity_type": "personnel_schedule_exceptions",
+      "scope": "tenant"
     }
   ]
 }
