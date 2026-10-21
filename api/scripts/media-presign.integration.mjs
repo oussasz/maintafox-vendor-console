@@ -22,7 +22,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 
-import { CreateBucketCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import {
+  CreateBucketCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { startControlApi } from "./lib/control-api.mjs";
@@ -224,12 +231,7 @@ try {
   const bigBack = Buffer.from(await (await fetch(bigGet.json.url)).arrayBuffer());
   assert.equal(sha256(bigBack), sha256(attachment));
 
-  // The route lets through presigned GET/PUT only. Refused by nginx, before the store:
-  // an unsigned GET of an existing object ...
-  const unsigned = await fetch(`${publicEndpoint}/${bucket}/${put.json.object_key}`);
-  assert.equal(unsigned.status, 403, `unsigned GET through the route: ${unsigned.status}`);
-  await unsigned.arrayBuffer();
-  // ... a correctly signed DELETE URL (another method) ...
+  // The route's upload limit (32 MiB) ... refuses a larger media upload before the store ...
   const publicSigner = new S3Client({
     region,
     endpoint: publicEndpoint,
@@ -238,6 +240,33 @@ try {
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
   });
+  const oversized = randomBytes(33 * 1024 * 1024);
+  const tooBig = await api.call("POST", "/api/v1/sync/media/presign-put", devices.alpha.token, {
+    parent_entity_type: "work_order",
+    parent_entity_sync_id: "wo-0003",
+    content_sha256: sha256(oversized),
+  });
+  assert.equal(tooBig.status, 200, JSON.stringify(tooBig.json));
+  const tooBigRes = await fetch(tooBig.json.url, { method: "PUT", body: oversized });
+  assert.equal(tooBigRes.status, 413, `33 MiB media PUT through the route: ${tooBigRes.status}`);
+  await tooBigRes.arrayBuffer();
+  // ... but not a release installer (release catalog uploads, <env>/releases/..., up to 1 GiB).
+  const releaseKey = "ci/releases/9.9.9/rel_route/windows-x86_64/Maintafox_9.9.9_x64-setup.exe";
+  const releaseUrl = await getSignedUrl(publicSigner, new PutObjectCommand({ Bucket: bucket, Key: releaseKey }), { expiresIn: 60 });
+  const releaseRes = await fetch(releaseUrl, { method: "PUT", body: oversized });
+  assert.ok(releaseRes.ok, `33 MiB release upload through the route failed: ${releaseRes.status} ${await releaseRes.text()}`);
+  assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: releaseKey }))).ContentLength, oversized.length);
+
+  // The route lets through presigned GET/PUT only. Refused by nginx, before the store:
+  // an unsigned GET of an existing object ...
+  const unsigned = await fetch(`${publicEndpoint}/${bucket}/${put.json.object_key}`);
+  assert.equal(unsigned.status, 403, `unsigned GET through the route: ${unsigned.status}`);
+  await unsigned.arrayBuffer();
+  // ... a correctly signed DELETE URL (another method), also under the release prefix ...
+  const releaseDeleteUrl = await getSignedUrl(publicSigner, new DeleteObjectCommand({ Bucket: bucket, Key: releaseKey }), { expiresIn: 60 });
+  const releaseDeleted = await fetch(releaseDeleteUrl, { method: "DELETE" });
+  assert.equal(releaseDeleted.status, 403, `presigned DELETE of a release upload through the route: ${releaseDeleted.status}`);
+  await releaseDeleted.arrayBuffer();
   const deleteUrl = await getSignedUrl(publicSigner, new DeleteObjectCommand({ Bucket: bucket, Key: put.json.object_key }), { expiresIn: 60 });
   const deleted = await fetch(deleteUrl, { method: "DELETE" });
   assert.equal(deleted.status, 403, `presigned DELETE through the route: ${deleted.status}`);
