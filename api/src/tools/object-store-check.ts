@@ -5,7 +5,8 @@
  *   1. the bucket exists (it is created by the object store's own setup, never here);
  *   2. a presigned PUT, exactly as a desktop sends it, stores the bytes;
  *   3. a presigned GET returns the same bytes (SHA-256 compared);
- *   4. the probe object can be deleted again.
+ *   4. the probe object can be deleted again (only keys under PROBE_PREFIX: the API itself never
+ *      deletes tenant media, see sync-attachment-archive.integration.mjs).
  * This catches a wrong key, secret, region, endpoint or bucket name, and a server that rejects the
  * presigned URLs the SDK produces, before any desktop sees it.
  *
@@ -18,7 +19,9 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 
-import { loadObjectStoreConfig, TenantMediaObjectStore } from "../storage/object-store.js";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+
+import { createS3Client, loadObjectStoreConfig, TenantMediaObjectStore, type ObjectStoreConfig } from "../storage/object-store.js";
 
 const PROBE_PREFIX = "_maintafox-check/";
 const PROBE_URL_TTL_SECONDS = 60;
@@ -38,6 +41,12 @@ function viaFromArgs(argv: string[]): "internal" | "public" {
   const via = at >= 0 ? argv[at + 1] : undefined;
   if (via !== "internal" && via !== "public") throw new Error("usage: object-store-check --via internal|public");
   return via;
+}
+
+/** Deletes this check's own probe object; refuses any other key. */
+async function deleteProbe(config: ObjectStoreConfig, key: string): Promise<void> {
+  if (!key.startsWith(PROBE_PREFIX) || key.includes("..")) throw new Error(`refusing to delete '${key}': not a probe object`);
+  await createS3Client(config).send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
 }
 
 async function main(): Promise<void> {
@@ -66,7 +75,7 @@ async function main(): Promise<void> {
       throw new Error(`presigned GET returned ${back.length} bytes that differ from the ${probe.length} bytes written`);
     }
   } finally {
-    await step("delete probe object", () => store.deleteObject(key));
+    await step("delete probe object", () => deleteProbe(config, key));
   }
   process.stdout.write(
     `${JSON.stringify({ ok: true, via, endpoint: config.endpoint, presigned_url_origin: urlOrigin, bucket: config.bucket, region: config.region, checked: ["bucket", "presigned_put", "presigned_get", "delete"] })}\n`,
