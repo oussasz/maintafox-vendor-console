@@ -202,7 +202,8 @@ export function privilegedHeaders(input: PrivilegedActionContext): Record<string
   };
 }
 
-function idempotencyKey(prefix: string): string {
+/** A fresh Idempotency-Key: the API replays the first answer when the same key is sent again. */
+export function idempotencyKey(prefix: string): string {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
   } catch {

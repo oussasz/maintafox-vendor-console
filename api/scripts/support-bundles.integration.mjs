@@ -3,30 +3,45 @@
  * declare -> PUT to the presigned URL -> complete (the server reads the object back and checks
  * size + SHA-256) -> the console lists it and downloads it through a presigned URL (audited).
  *
- * Needs an S3-compatible server: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY
- * (CI: Adobe S3Mock). Refuses to run without them; it never pretends to pass.
+ * Needs an S3-compatible server: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY,
+ * TEST_S3_REGION (CI: the Garage image pinned in docker-compose.yml), and TEST_S3_PUBLIC_ENDPOINT:
+ * the nginx media route in front of it (deploy/nginx-media-proxy.conf, CI:
+ * deploy/object-storage/ci-start-media-proxy.sh), which every presigned URL goes through. The test creates its bucket
+ * (the API never creates one). Refuses to run without them; it never pretends to pass.
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
+
+import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 
 import { startControlApi } from "./lib/control-api.mjs";
 
 const endpoint = process.env.TEST_S3_ENDPOINT?.trim();
 const accessKey = process.env.TEST_S3_ACCESS_KEY?.trim();
 const secretKey = process.env.TEST_S3_SECRET_KEY?.trim();
-if (!endpoint || !accessKey || !secretKey) {
-  console.error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY are required (an S3-compatible test server).");
+const region = process.env.TEST_S3_REGION?.trim();
+const publicEndpoint = process.env.TEST_S3_PUBLIC_ENDPOINT?.trim();
+if (!endpoint || !accessKey || !secretKey || !region || !publicEndpoint) {
+  console.error(
+    "TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION / TEST_S3_PUBLIC_ENDPOINT are required (an S3-compatible test server and the nginx media route in front of it).",
+  );
   process.exit(1);
 }
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+const bucket = `mfx-support-${randomBytes(3).toString("hex")}`;
+await new S3Client({ region, endpoint, forcePathStyle: true, credentials: { accessKeyId: accessKey, secretAccessKey: secretKey } }).send(
+  new CreateBucketCommand({ Bucket: bucket }),
+);
 
 const api = await startControlApi({
   port: 33193,
   extraEnv: {
     S3_ENDPOINT: endpoint,
+    S3_PUBLIC_ENDPOINT: publicEndpoint,
     S3_ACCESS_KEY: accessKey,
     S3_SECRET_KEY: secretKey,
-    S3_BUCKET: `mfx-support-${randomBytes(3).toString("hex")}`,
+    S3_REGION: region,
+    S3_BUCKET: bucket,
     S3_FORCE_PATH_STYLE: "true",
     DEPLOYMENT_ENV: "ci",
   },
@@ -69,6 +84,8 @@ try {
   });
   assert.equal(d.status, 201, JSON.stringify(d.json));
   assert.equal(d.json.upload.method, "PUT");
+  // Signed for the public route, the only address a desktop reaches.
+  assert.ok(d.json.upload.url.startsWith(`${publicEndpoint.replace(/\/$/, "")}/${bucket}/`), d.json.upload.url);
   const bundleId = d.json.bundle_id;
   // Completing before the upload: nothing to verify.
   assert.equal((await api.call("POST", `/api/v1/sync/diagnostic-bundles/${bundleId}/complete`, devices.alpha.one)).status, 409);
@@ -111,6 +128,7 @@ try {
   assert.equal((await api.call("GET", `/api/v1/support/diagnostic-bundles/${t2.json.bundle_id}/download`, admin)).status, 409);
   const link = await api.call("GET", `/api/v1/support/diagnostic-bundles/${bundleId}/download`, admin);
   assert.equal(link.status, 200, JSON.stringify(link.json));
+  assert.ok(link.json.url.startsWith(`${publicEndpoint.replace(/\/$/, "")}/${bucket}/`), link.json.url);
   const downloaded = Buffer.from(await (await fetch(link.json.url)).arrayBuffer());
   assert.equal(sha256(downloaded), sha256(bundleBytes));
   const ledger = (await api.call("GET", "/api/v1/audit/ledger?q=diagnostic_bundle_download", admin)).json;

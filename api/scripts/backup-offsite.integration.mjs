@@ -1,9 +1,11 @@
 /**
- * Off-site backup copy against a real S3-compatible server (CI: a MinIO container) with the real
- * `age` tool (api/src/tools/backup-offsite.ts, deploy/BACKUP_AND_RESTORE.md).
+ * Off-site backup copy against a real S3-compatible server (CI: the Garage image pinned in
+ * docker-compose.yml) with the real `age` tool (api/src/tools/backup-offsite.ts,
+ * deploy/BACKUP_AND_RESTORE.md).
  *
  * Required environment (the test refuses to run without it, it never pretends to pass):
- *   OFFSITE_TEST_S3_ENDPOINT, OFFSITE_TEST_S3_ACCESS_KEY, OFFSITE_TEST_S3_SECRET_KEY
+ *   OFFSITE_TEST_S3_ENDPOINT, OFFSITE_TEST_S3_ACCESS_KEY, OFFSITE_TEST_S3_SECRET_KEY,
+ *   OFFSITE_TEST_S3_REGION
  * and `age` + `age-keygen` on PATH. Buckets `mfx-offsite-test` (off-site) and `mfx-media-test`
  * (stand-in for the tenant media bucket) are created when missing.
  *
@@ -23,14 +25,22 @@ import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, ListObjectsV2
 const endpoint = process.env.OFFSITE_TEST_S3_ENDPOINT?.trim();
 const accessKey = process.env.OFFSITE_TEST_S3_ACCESS_KEY?.trim();
 const secretKey = process.env.OFFSITE_TEST_S3_SECRET_KEY?.trim();
-if (!endpoint || !accessKey || !secretKey) {
-  console.error("OFFSITE_TEST_S3_ENDPOINT / _ACCESS_KEY / _SECRET_KEY are required (an S3-compatible test server).");
+const region = process.env.OFFSITE_TEST_S3_REGION?.trim();
+if (!endpoint || !accessKey || !secretKey || !region) {
+  console.error("OFFSITE_TEST_S3_ENDPOINT / _ACCESS_KEY / _SECRET_KEY / _REGION are required (an S3-compatible test server).");
   process.exit(1);
 }
 const OFFSITE_BUCKET = "mfx-offsite-test";
 const MEDIA_BUCKET = "mfx-media-test";
 
-const s3 = new S3Client({ region: "us-east-1", endpoint, forcePathStyle: true, credentials: { accessKeyId: accessKey, secretAccessKey: secretKey } });
+const s3 = new S3Client({
+  region,
+  endpoint,
+  forcePathStyle: true,
+  credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
+});
 
 async function ensureBucket(name) {
   try {
@@ -69,7 +79,7 @@ async function main() {
     const env = {
       ...process.env,
       BACKUP_OFFSITE_S3_ENDPOINT: endpoint,
-      BACKUP_OFFSITE_S3_REGION: "us-east-1",
+      BACKUP_OFFSITE_S3_REGION: region,
       BACKUP_OFFSITE_S3_BUCKET: OFFSITE_BUCKET,
       BACKUP_OFFSITE_S3_ACCESS_KEY: accessKey,
       BACKUP_OFFSITE_S3_SECRET_KEY: secretKey,
@@ -77,10 +87,14 @@ async function main() {
       BACKUP_OFFSITE_S3_FORCE_PATH_STYLE: "true",
       BACKUP_AGE_RECIPIENT: recipient,
       S3_ENDPOINT: endpoint,
+      // Signs no URL; required by the shared settings loader (api/src/storage/object-store.ts).
+      S3_PUBLIC_ENDPOINT: endpoint,
       S3_ACCESS_KEY: accessKey,
       S3_SECRET_KEY: secretKey,
+      S3_REGION: region,
       S3_BUCKET: MEDIA_BUCKET,
       S3_FORCE_PATH_STYLE: "true",
+      DEPLOYMENT_ENV: "ci",
     };
 
     // push-file: encrypted, plaintext not visible off-site.

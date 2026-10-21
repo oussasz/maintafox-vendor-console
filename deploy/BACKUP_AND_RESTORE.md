@@ -17,7 +17,7 @@
 | Postgres (all control-plane + sync data) | `pg_dump -Fc` every night (`BACKUP_DAILY_AT_UTC`), **restored into a scratch database and verified before it is stored** | volume `backup_data` → `/backups/pg_dump/<db>-<ts>.dump.age` + `.dump.sha256.age` | `BACKUP_LOCAL_RETENTION_DAYS` |
 | Postgres physical copy | `pg_basebackup` (tar.gz) every night | `/backups/base/<ts>/base.tar.gz.age` (+ `backup_manifest.age`, `start-wal`) | same; the newest is always kept |
 | Postgres changes between nights | continuous WAL archiving (`archive_command` → `deploy/backup/wal-archive.sh`), a segment at least every `PG_WAL_ARCHIVE_TIMEOUT_SECONDS` | volume `pg_wal_archive` (`<segment>.gz.age` + `.gz.age.sha256`) | back to the oldest kept base backup |
-| Tenant media (MinIO) | object **versioning** on the bucket (overwrite/delete keeps the old version) | MinIO itself | old versions `MINIO_NONCURRENT_VERSION_RETENTION_DAYS` |
+| Tenant media (Garage bucket, deploy/OBJECT_STORAGE.md) | every object copied every night by `media-backup.js` (Garage has no versioning; this replaces it): deleted or overwritten objects keep their last copy | `/backups/media/current/<key>+<etag>.age`, `/backups/media/removed/<ts>/...` (in SHA256SUMS, pulled on-premise) | removed/overwritten copies `MEDIA_BACKUP_REMOVED_RETENTION_DAYS` |
 | A list of every encrypted file and its SHA-256 | written by each nightly run | `/backups/SHA256SUMS` | current |
 
 `.age` = encrypted with [age](https://age-encryption.org) to `BACKUP_AGE_RECIPIENT` (§7). With
@@ -56,7 +56,7 @@ from gzip straight into age: it is never written unencrypted. Do not start `back
 - `api/src/tools/verify-restored-database.ts`, `api/src/tools/backup-offsite.ts`.
 - Compose: service `backup` (image `maintafox-backup:local`, built from `api/Dockerfile` target
   `backup`), one-shot `pg-wal-archive-init`, Postgres (image `maintafox-postgres:local`) with the
-  archive settings, `minio-init` turning on versioning, volumes `pg_wal_archive`, `backup_data`,
+  archive settings, `object-store` (Garage, media) read by the `media` step of `backup.sh`, volumes `pg_wal_archive`, `backup_data`,
   `backup_work`.
 - Migration `006_backup_runs.sql`.
 
@@ -177,7 +177,8 @@ after stopping the API, rename databases). Drop it afterwards with `dropdb maint
 
 On a new server with this repository and the owner's private key: copy the on-premise folder
 (`backups/` and `wal/`, §8) to the new server's `backup_data` and `pg_wal_archive` volumes, then
-follow 4.1 (newest dump) or 4.2 (base backup + WAL). The `.env` secrets are not in the backups:
+follow 4.1 (newest dump) or 4.2 (base backup + WAL). Tenant media: put `backups/media/current`
+back into the new object store with `media-backup.js restore` (deploy/OBJECT_STORAGE.md §3). The `.env` secrets are not in the backups:
 keep a copy of `.env` in the password manager (without `ENTITLEMENT_SIGNING_PRIVATE_KEY`,
 `JWT_SECRET`, `SYNC_CHECKPOINT_SECRET` and `SYNC_PAYLOAD_ENCRYPTION_KEY` a restored server cannot
 sign licences, accept the devices in the field or read the encrypted sync data).
@@ -197,7 +198,10 @@ A wrong key prints `no identity matched any of the recipients`.
 ## 5. Tests
 
 - `pnpm --filter maintafox-control-api run test:backup-drill` — needs the PostgreSQL 16 programs
-  and `age` on PATH. Real cluster with the production archive settings; real API writes data;
+  and `age` on PATH, and an S3-compatible server for the media copy (`TEST_S3_ENDPOINT`,
+  `_ACCESS_KEY`, `_SECRET_KEY`, `_REGION`; CI: Garage). The media copy is checked too: plaintext
+  copies while encryption is disabled, then encrypted; an overwritten and a deleted object kept
+  aside encrypted; restored with the owner's key (and refused without it). Real cluster with the production archive settings; real API writes data;
   plaintext backups (previous release) → switch to `required` (refused without a recipient, WAL
   too) → plaintext migrated and deleted, every file `.age`, 600/700, `SHA256SUMS` correct, stale
   plaintext in the work directory removed → restore drill with a fresh dump → encrypted dump
@@ -210,7 +214,8 @@ A wrong key prints `no identity matched any of the recipients`.
   private key wiped after it, and the printed key opens what is encrypted to the saved recipient.
 - `bash deploy/backup-pull/ci-test.sh` (CI job "backup-pull") — §8.
 - `pnpm --filter maintafox-control-api run test:backup-offsite` — needs an S3-compatible server
-  and `age`; also checks that locally encrypted files are uploaded as they are.
+  (`OFFSITE_TEST_S3_*`, CI: Garage) and `age`; also checks that locally encrypted files are
+  uploaded as they are.
 
 ## 6. Off-site copy to a provider bucket (not used)
 

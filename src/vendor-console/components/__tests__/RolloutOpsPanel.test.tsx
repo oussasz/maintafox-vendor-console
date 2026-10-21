@@ -24,9 +24,18 @@ import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-op
 import { RolloutOpsPanel } from "../RolloutOpsPanel";
 import { renderWithConsole } from "./renderWithConsole";
 
-function overview(governance: "active" | "paused" | "recalled", recalled: string | null = null): RolloutOverviewV1 {
+type Impact = RolloutOverviewV1["impact"];
+const published: Pick<Impact, "release_id" | "release_version" | "release_channel" | "release_rollout_percent"> = {
+  release_id: "rel_1",
+  release_version: "2.1.0",
+  release_channel: "pilot",
+  release_rollout_percent: 25,
+};
+const nothingPublished: typeof published = { release_id: null, release_version: null, release_channel: null, release_rollout_percent: null };
+
+function overview(governance: "active" | "paused" | "recalled", recalled: string | null = null, release = published): RolloutOverviewV1 {
   return {
-    impact: { release_id: "rel_1", affected_tenants: 1, affected_machines: 2, entitlement_channel_ok: true, known_blockers: [] },
+    impact: { ...release, affected_tenants: 1, affected_machines: 2, entitlement_channel_ok: true, known_blockers: [] },
     cohort_stages: [
       {
         channel: "stable",
@@ -51,6 +60,19 @@ async function stepUp(code: string) {
 describe("RolloutOpsPanel governance", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("shows the latest published release as version, ring and percentage", async () => {
+    vi.mocked(getRolloutOverview).mockResolvedValue(overview("active"));
+    renderWithConsole(<RolloutOpsPanel />);
+    expect(await screen.findByText("rollouts.impact.release")).toBeInTheDocument();
+    expect(screen.queryByText("rel_1")).not.toBeInTheDocument();
+  });
+
+  it("says so when no release is published yet", async () => {
+    vi.mocked(getRolloutOverview).mockResolvedValue(overview("active", null, nothingPublished));
+    renderWithConsole(<RolloutOpsPanel />);
+    expect(await screen.findByText("rollouts.impact.noRelease")).toBeInTheDocument();
   });
 
   it("says devices act only once the updater exists", async () => {

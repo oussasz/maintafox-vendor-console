@@ -721,7 +721,12 @@
       "tenants": "Affected tenants",
       "machines": "Affected machines",
       "channelOk": "Entitlement channel OK",
-      "blockers": "Known blockers"
+      "blockers": "Known blockers",
+      "yes": "Yes",
+      "no": "No",
+      "noBlockers": "None",
+      "noRelease": "No published release yet",
+      "release": "v{{version}} · {{ring}} · {{percent}}%"
     },
     "cohorts": {
       "title": "Channels & cohorts",
@@ -881,7 +886,8 @@
         "tenant": "Customers",
         "operator": "Operators",
         "billing": "Billing",
-        "rollout": "Rollout governance"
+        "rollout": "Rollout governance",
+        "release": "Desktop releases"
       }
     },
     "support": {
@@ -992,10 +998,10 @@
     "kinds": {
       "mass_machine_revoke": "revoke several machines",
       "entitlement_suspension": "revoke a licence or suspend a customer",
-      "forced_rollback": "roll back an update policy or recall a rollout",
+      "forced_rollback": "roll back an update policy, recall a release or a rollout",
       "tenant_restore": "lift a customer suspension",
       "signing_key_rotation": "rotate the licence signing key",
-      "rollout_publish": "set an update policy, pause or resume a rollout",
+      "rollout_publish": "set an update policy, publish a release, pause or resume a rollout",
       "machine_trust_change": "revoke, reinstate, release or rebind a machine",
       "offline_policy_change": "change an offline policy",
       "support_intervention": "record a support intervention",
@@ -1003,6 +1009,7 @@
       "vendor_user_admin": "change a console operator or reset their two-step verification",
       "tenant_delete": "delete a customer and all its data",
       "own_mfa_change": "generate new recovery codes",
+      "release_publisher_key": "create or revoke a release workflow key",
       "admin_recovery_code": "give a PC a code that creates a new administrator",
       "sync_attachment_restore": "restore a photo or attachment deleted by synchronisation"
     }
@@ -1457,6 +1464,7 @@
     "subtitle": "Which customers get a new version, when, and which version they must run.",
     "tabsAria": "Update sections",
     "tabs": {
+      "releases": "Releases",
       "rollouts": "Rollout groups",
       "forced": "Required versions"
     },
@@ -1465,6 +1473,119 @@
       "noCustomers": "No customers yet.",
       "saved": "Saved. Devices apply it at their next licence check.",
       "rolledBack": "Back to the previous rule."
+    },
+    "releases": {
+      "title": "Desktop releases",
+      "refresh": "Refresh",
+      "intro": "Each version the release workflow uploads appears here as a draft. Publish it to a ring, then widen it step by step. Devices are only offered a version once it is published.",
+      "rings": {
+        "internal": "your own test machines.",
+        "pilot": "the customers you selected for early updates.",
+        "stable": "every customer."
+      },
+      "readOnly": "You can view releases. Publishing, recalling and editing notes need the rollout management permission.",
+      "empty": "No release yet.",
+      "emptyBody": "Versions appear here once the release workflow has uploaded them.",
+      "listAria": "Desktop releases, newest first",
+      "status": {
+        "uploading": "Uploading",
+        "draft": "Draft",
+        "internal": "Internal",
+        "pilot": "Pilot",
+        "stable": "Stable",
+        "recalled": "Recalled"
+      },
+      "version": "v{{version}}",
+      "percentOfRing": "{{percent}}% of the ring",
+      "unsigned": "Not code-signed",
+      "unsignedHelp": "This installer is not code-signed: Windows SmartScreen will warn users before it installs.",
+      "showDetails": "Details",
+      "hideDetails": "Hide details",
+      "publishedAt": "Published on {{date}}",
+      "notPublished": "Not published yet",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files",
+      "recalledInfo": "Recalled on {{date}} by {{by}}: {{reason}}",
+      "gitCommit": "Git commit",
+      "registeredBy": "Uploaded by",
+      "registeredAt": "Uploaded on",
+      "artifacts": {
+        "title": "Installer files",
+        "none": "No installer file declared.",
+        "platform": "Platform",
+        "file": "File",
+        "size": "Size",
+        "verified": "Check",
+        "sha256": "SHA-256 fingerprint",
+        "verifiedAt": "Verified {{date}}",
+        "notVerified": "Not verified yet"
+      },
+      "notes": {
+        "title": "Release notes",
+        "help": "Users read these notes before they update, in their language.",
+        "en": "English notes",
+        "fr": "French notes",
+        "required": "Both the English and the French notes are required.",
+        "save": "Save notes",
+        "saving": "Saving…",
+        "saved": "Notes of v{{version}} saved."
+      },
+      "publish": {
+        "action": "Publish",
+        "widen": "Widen",
+        "blocked": {
+          "uploading": "Cannot be published yet: the release workflow has not finished uploading and checking its files.",
+          "recalled": "This version was recalled: it can no longer be published."
+        },
+        "title": "Publish v{{version}}",
+        "body": "Choose who is offered this version. You will confirm with a code from your authenticator app.",
+        "confirm": "Publish",
+        "ringLabel": "Ring",
+        "noNarrowing": "A published version can only be widened: devices of the current ring may already run it. To take it back, recall it.",
+        "percentLabel": "Share of the ring's devices (%)",
+        "preset": "{{percent}}%",
+        "percentHelp": "The percentage applies to the widest ring chosen ({{ring}}); narrower rings get the version in full. Raising it later only adds devices: devices that already installed it keep it.",
+        "percentInvalid": "Enter a whole number from {{min}} to {{max}}.",
+        "unchanged": "This is already how the version is published.",
+        "done": "v{{version}} is now published to {{ring}} at {{percent}}%."
+      },
+      "recall": {
+        "action": "Recall",
+        "title": "Recall v{{version}}?",
+        "body": "Devices stop being offered this version at their next check; devices already running it are moved back to the previous release. A recalled version cannot be published again.",
+        "confirm": "Recall this version",
+        "done": "v{{version}} recalled."
+      }
+    },
+    "keys": {
+      "title": "Release workflow keys",
+      "intro": "The release workflow (GitHub Actions) uses one of these keys to upload new versions. It reads it from the GitHub secret {{secret}}. Revoke a key as soon as it may have leaked.",
+      "create": "New key",
+      "createTitle": "Create a release workflow key",
+      "createBody": "Give the key a name you will recognise (for example the repository it is for). Its token is shown only once.",
+      "createConfirm": "Create key",
+      "labelField": "Key name",
+      "empty": "No release workflow key yet.",
+      "emptyBody": "Create one so the release workflow can upload new versions.",
+      "listAria": "Release workflow keys",
+      "statusActive": "Active",
+      "statusRevoked": "Revoked",
+      "createdBy": "Created {{date}} by {{by}}",
+      "lastUsed": "last used {{date}}",
+      "neverUsed": "never used",
+      "revokedBy": "Revoked {{date}} by {{by}}",
+      "revoke": "Revoke",
+      "revokeTitle": "Revoke the key {{label}}?",
+      "revokeBody": "The release workflow can no longer upload with this key. Versions already uploaded are not affected.",
+      "revokeConfirm": "Revoke key",
+      "revoked": "Key {{label}} revoked.",
+      "tokenTitle": "Token of the key {{label}}",
+      "tokenWarning": "Store it now as the GitHub secret {{secret}}: it cannot be shown again. If you lose it, create a new key and revoke this one.",
+      "tokenLabel": "Key token",
+      "copy": "Copy",
+      "copied": "Copied.",
+      "copyFailed": "Could not copy automatically: select the text and copy it yourself.",
+      "tokenDone": "I have stored it"
     }
   },
   "support": {

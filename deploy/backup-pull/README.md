@@ -128,8 +128,9 @@ The downloaded files stay (they are encrypted).
 ## 5. What the script guarantees
 
 - Only lines of `SHA256SUMS` that name an `*.age` file under `backups/pg_dump/`,
-  `backups/base/<timestamp>/` or `wal/` are accepted; any other line makes the run fail (nothing
-  from outside those folders, no `..`).
+  `backups/base/<timestamp>/`, `wal/` or the media copies (`backups/media/current/...`,
+  `backups/media/removed/<timestamp>/...`, deploy/OBJECT_STORAGE.md §3) are accepted; any other
+  line makes the run fail (nothing from outside those folders, no `..`).
 - A file is put in place only after its SHA-256 matches the server's list; a mismatch fails the run
   (exit code 1) and the bad download is deleted.
 - A file already here with the right SHA-256 is not downloaded again.

@@ -36,8 +36,10 @@ Set-StrictMode -Version 3
 $ErrorActionPreference = 'Stop'
 
 # A manifest line: 64 hex characters, two spaces, a relative path of an encrypted file in one of
-# the three places the server offers. No "..", no absolute path, nothing but *.age.
-$EntryPattern = '^([0-9a-f]{64})  ((backups/pg_dump|backups/base/[0-9]{8}T[0-9]{6}Z|wal)/[A-Za-z0-9._-]+\.age)$'
+# the places the server offers. No "..", no absolute path, nothing but *.age. Media copies
+# (backups/media/..., api/src/tools/media-backup.ts) keep the object key's path: every segment
+# starts with a letter, digit, '_', '-' or '%', so '.' and '..' segments cannot match.
+$EntryPattern = '^([0-9a-f]{64})  ((backups/pg_dump|backups/base/[0-9]{8}T[0-9]{6}Z|wal)/[A-Za-z0-9._-]+\.age|backups/media/(current|removed/[0-9]{8}T[0-9]{6}Z)(/[A-Za-z0-9_%-][A-Za-z0-9._%+-]*)+\.age)$'
 $ManifestRemote = 'backups/SHA256SUMS'
 
 function Write-Log([string]$Message) {

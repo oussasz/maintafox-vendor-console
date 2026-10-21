@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { setRolloutGovernance, type RolloutGovernanceAction } from "@/services/license-control-service";
+import { RELEASE_RINGS } from "@/services/release-catalog-service";
 import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 
 import { useVendorConsole } from "../VendorConsoleContext";
@@ -67,6 +68,14 @@ export function RolloutOpsPanel() {
     void loadOverview();
   }, []);
 
+  /** "v2.1.0 · Pilot · 25%", or why there is nothing to show yet. */
+  const releaseSummary = (impact: RolloutOverviewV1["impact"]) => {
+    if (impact.release_version === null) return t("rollouts.impact.noRelease");
+    const channel = impact.release_channel;
+    const ring = channel && (RELEASE_RINGS as readonly string[]).includes(channel) ? t(`updates.releases.status.${channel}`) : (channel ?? "—");
+    return t("rollouts.impact.release", { version: impact.release_version, ring, percent: impact.release_rollout_percent ?? 0 });
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -96,7 +105,7 @@ export function RolloutOpsPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("rollouts.impact.title")}</CardTitle>
-          <CardDescription>{overview?.impact.release_id ?? "—"}</CardDescription>
+          <CardDescription>{overview ? releaseSummary(overview.impact) : "—"}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
           <div>
@@ -109,12 +118,12 @@ export function RolloutOpsPanel() {
           </div>
           <div>
             <p className="text-xs text-text-muted">{t("rollouts.impact.channelOk")}</p>
-            <p className="text-lg font-semibold">{overview?.impact.entitlement_channel_ok ? "Yes" : "No"}</p>
+            <p className="text-lg font-semibold">{overview?.impact.entitlement_channel_ok ? t("rollouts.impact.yes") : t("rollouts.impact.no")}</p>
           </div>
           <div>
             <p className="text-xs text-text-muted">{t("rollouts.impact.blockers")}</p>
             <ul className="mt-1 list-inside list-disc text-xs text-text-secondary">
-              {(overview?.impact.known_blockers.length ? overview.impact.known_blockers : ["None"]).map((b) => (
+              {(overview?.impact.known_blockers.length ? overview.impact.known_blockers : [t("rollouts.impact.noBlockers")]).map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>

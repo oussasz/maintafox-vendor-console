@@ -721,7 +721,12 @@
       "tenants": "Tenants affectés",
       "machines": "Machines affectées",
       "channelOk": "Canal habilitation OK",
-      "blockers": "Blocages connus"
+      "blockers": "Blocages connus",
+      "yes": "Oui",
+      "no": "Non",
+      "noBlockers": "Aucun",
+      "noRelease": "Aucune version publiée pour l'instant",
+      "release": "v{{version}} · {{ring}} · {{percent}} %"
     },
     "cohorts": {
       "title": "Canaux et cohortes",
@@ -881,7 +886,8 @@
         "tenant": "Clients",
         "operator": "Opérateurs",
         "billing": "Facturation",
-        "rollout": "Gouvernance des déploiements"
+        "rollout": "Gouvernance des déploiements",
+        "release": "Versions du logiciel"
       }
     },
     "support": {
@@ -992,10 +998,10 @@
     "kinds": {
       "mass_machine_revoke": "révoquer plusieurs machines",
       "entitlement_suspension": "révoquer une licence ou suspendre un client",
-      "forced_rollback": "annuler une politique de mise à jour ou rappeler un déploiement",
+      "forced_rollback": "annuler une politique de mise à jour, rappeler une version ou un déploiement",
       "tenant_restore": "lever la suspension d'un client",
       "signing_key_rotation": "changer la clé de signature des licences",
-      "rollout_publish": "définir une politique de mise à jour, suspendre ou reprendre un déploiement",
+      "rollout_publish": "définir une politique de mise à jour, publier une version, suspendre ou reprendre un déploiement",
       "machine_trust_change": "révoquer, rétablir, libérer ou réaffecter une machine",
       "offline_policy_change": "modifier une politique hors ligne",
       "support_intervention": "enregistrer une intervention de support",
@@ -1003,6 +1009,7 @@
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
       "own_mfa_change": "générer de nouveaux codes de secours",
+      "release_publisher_key": "créer ou révoquer une clé du processus de publication",
       "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur",
       "sync_attachment_restore": "restaurer une photo ou une pièce jointe supprimée par la synchronisation"
     }
@@ -1457,6 +1464,7 @@
     "subtitle": "Quels clients reçoivent une nouvelle version, quand, et quelle version ils doivent utiliser.",
     "tabsAria": "Rubriques des mises à jour",
     "tabs": {
+      "releases": "Versions",
       "rollouts": "Groupes de déploiement",
       "forced": "Versions obligatoires"
     },
@@ -1465,6 +1473,119 @@
       "noCustomers": "Aucun client pour l'instant.",
       "saved": "Enregistré. Les appareils l'appliquent à leur prochaine vérification de licence.",
       "rolledBack": "Retour à la règle précédente."
+    },
+    "releases": {
+      "title": "Versions du logiciel",
+      "refresh": "Actualiser",
+      "intro": "Chaque version envoyée par le processus de publication apparaît ici en brouillon. Publiez-la sur un cercle, puis élargissez-la par étapes. Les appareils ne se voient proposer une version qu'une fois publiée.",
+      "rings": {
+        "internal": "vos propres machines de test.",
+        "pilot": "les clients choisis pour recevoir les mises à jour en avance.",
+        "stable": "tous les clients."
+      },
+      "readOnly": "Vous pouvez consulter les versions. Publier, rappeler et modifier les notes nécessitent l'autorisation de gestion des déploiements.",
+      "empty": "Aucune version pour l'instant.",
+      "emptyBody": "Les versions apparaissent ici une fois envoyées par le processus de publication.",
+      "listAria": "Versions du logiciel, de la plus récente à la plus ancienne",
+      "status": {
+        "uploading": "Envoi en cours",
+        "draft": "Brouillon",
+        "internal": "Interne",
+        "pilot": "Pilote",
+        "stable": "Stable",
+        "recalled": "Rappelée"
+      },
+      "version": "v{{version}}",
+      "percentOfRing": "{{percent}} % du cercle",
+      "unsigned": "Non signée",
+      "unsignedHelp": "Cet installateur n'a pas de signature de code : Windows SmartScreen affichera un avertissement aux utilisateurs avant l'installation.",
+      "showDetails": "Détails",
+      "hideDetails": "Masquer les détails",
+      "publishedAt": "Publiée le {{date}}",
+      "notPublished": "Pas encore publiée",
+      "files_one": "{{count}} fichier",
+      "files_other": "{{count}} fichiers",
+      "recalledInfo": "Rappelée le {{date}} par {{by}} : {{reason}}",
+      "gitCommit": "Commit Git",
+      "registeredBy": "Envoyée par",
+      "registeredAt": "Envoyée le",
+      "artifacts": {
+        "title": "Fichiers d'installation",
+        "none": "Aucun fichier d'installation déclaré.",
+        "platform": "Plateforme",
+        "file": "Fichier",
+        "size": "Taille",
+        "verified": "Contrôle",
+        "sha256": "Empreinte SHA-256",
+        "verifiedAt": "Vérifié le {{date}}",
+        "notVerified": "Pas encore vérifié"
+      },
+      "notes": {
+        "title": "Notes de version",
+        "help": "Les utilisateurs lisent ces notes avant de mettre à jour, dans leur langue.",
+        "en": "Notes en anglais",
+        "fr": "Notes en français",
+        "required": "Les notes en anglais et en français sont obligatoires.",
+        "save": "Enregistrer les notes",
+        "saving": "Enregistrement…",
+        "saved": "Notes de la v{{version}} enregistrées."
+      },
+      "publish": {
+        "action": "Publier",
+        "widen": "Élargir",
+        "blocked": {
+          "uploading": "Publication impossible pour l'instant : le processus de publication n'a pas fini d'envoyer et de vérifier ses fichiers.",
+          "recalled": "Cette version a été rappelée : elle ne peut plus être publiée."
+        },
+        "title": "Publier la v{{version}}",
+        "body": "Choisissez à qui cette version est proposée. Vous confirmerez avec un code de votre application d'authentification.",
+        "confirm": "Publier",
+        "ringLabel": "Cercle",
+        "noNarrowing": "Une version publiée ne peut qu'être élargie : des appareils du cercle actuel l'utilisent peut-être déjà. Pour la retirer, rappelez-la.",
+        "percentLabel": "Part des appareils du cercle (%)",
+        "preset": "{{percent}} %",
+        "percentHelp": "Le pourcentage s'applique au cercle le plus large choisi ({{ring}}) ; les cercles plus restreints reçoivent la version en entier. L'augmenter ensuite ne fait qu'ajouter des appareils : ceux qui l'ont déjà installée la gardent.",
+        "percentInvalid": "Saisissez un nombre entier entre {{min}} et {{max}}.",
+        "unchanged": "La version est déjà publiée ainsi.",
+        "done": "La v{{version}} est maintenant publiée sur {{ring}} à {{percent}} %."
+      },
+      "recall": {
+        "action": "Rappeler",
+        "title": "Rappeler la v{{version}} ?",
+        "body": "Les appareils cessent de se voir proposer cette version à leur prochaine vérification ; ceux qui l'utilisent déjà reviennent à la version précédente. Une version rappelée ne peut plus être publiée.",
+        "confirm": "Rappeler cette version",
+        "done": "v{{version}} rappelée."
+      }
+    },
+    "keys": {
+      "title": "Clés du processus de publication",
+      "intro": "Le processus de publication (GitHub Actions) utilise l'une de ces clés pour envoyer les nouvelles versions. Il la lit dans le secret GitHub {{secret}}. Révoquez une clé dès qu'elle a pu fuiter.",
+      "create": "Nouvelle clé",
+      "createTitle": "Créer une clé du processus de publication",
+      "createBody": "Donnez à la clé un nom reconnaissable (par exemple le dépôt concerné). Son jeton n'est affiché qu'une seule fois.",
+      "createConfirm": "Créer la clé",
+      "labelField": "Nom de la clé",
+      "empty": "Aucune clé du processus de publication pour l'instant.",
+      "emptyBody": "Créez-en une pour que le processus de publication puisse envoyer de nouvelles versions.",
+      "listAria": "Clés du processus de publication",
+      "statusActive": "Active",
+      "statusRevoked": "Révoquée",
+      "createdBy": "Créée le {{date}} par {{by}}",
+      "lastUsed": "dernière utilisation le {{date}}",
+      "neverUsed": "jamais utilisée",
+      "revokedBy": "Révoquée le {{date}} par {{by}}",
+      "revoke": "Révoquer",
+      "revokeTitle": "Révoquer la clé {{label}} ?",
+      "revokeBody": "Le processus de publication ne pourra plus envoyer de version avec cette clé. Les versions déjà envoyées ne sont pas concernées.",
+      "revokeConfirm": "Révoquer la clé",
+      "revoked": "Clé {{label}} révoquée.",
+      "tokenTitle": "Jeton de la clé {{label}}",
+      "tokenWarning": "Enregistrez-le maintenant comme secret GitHub {{secret}} : il ne pourra plus être affiché. En cas de perte, créez une nouvelle clé et révoquez celle-ci.",
+      "tokenLabel": "Jeton de la clé",
+      "copy": "Copier",
+      "copied": "Copié.",
+      "copyFailed": "Copie automatique impossible : sélectionnez le texte et copiez-le vous-même.",
+      "tokenDone": "Je l'ai enregistré"
     }
   },
   "support": {

@@ -16,7 +16,8 @@
  * - every accepted change of site_settings / site_setting_events / permit_types is kept with its
  *   sending device in sync_forensic_change_log, which retention never compacts.
  *
- * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY (an S3-compatible server) add
+ * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY, TEST_S3_REGION, TEST_S3_PUBLIC_ENDPOINT
+ * (an S3-compatible server and the nginx media route in front of it) add
  * the byte-identical file check (upload → delete → restore → download the same bytes).
  */
 import assert from "node:assert/strict";
@@ -25,6 +26,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import pg from "pg";
 
 import { startControlApi, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./lib/control-api.mjs";
@@ -43,32 +45,52 @@ function sources(dir, out = []) {
   return out;
 }
 const deleting = sources(join(here, "..", "src")).filter((f) => /DeleteObjects?Command|deleteObject|RemoveObject/.test(readFileSync(f, "utf8")));
-// backup-offsite prunes its own backup bucket, never the tenant media bucket.
+// backup-offsite prunes its own backup bucket, never the tenant media bucket; object-store-check
+// deletes only its own probe object (keys under _maintafox-check/, any other key refused).
+const allowedDeleters = new Set(["src/tools/backup-offsite.ts", "src/tools/object-store-check.ts"]);
 assert.deepEqual(
-  deleting.map((f) => f.replace(/\\/g, "/").replace(/.*\/src\//, "src/")).filter((f) => f !== "src/tools/backup-offsite.ts"),
+  deleting.map((f) => f.replace(/\\/g, "/").replace(/.*\/src\//, "src/")).filter((f) => !allowedDeleters.has(f)),
   [],
   "no API code deletes tenant media objects",
 );
+const checkTool = readFileSync(join(here, "..", "src", "tools", "object-store-check.ts"), "utf8");
+assert.match(checkTool, /if \(!key\.startsWith\(PROBE_PREFIX\)/, "object-store-check deletes probe keys only");
+assert.equal((checkTool.match(/DeleteObjectCommand\(/g) ?? []).length, 1, "object-store-check has one delete: the guarded probe delete");
 
 const s3 = {
   endpoint: process.env.TEST_S3_ENDPOINT?.trim(),
   accessKey: process.env.TEST_S3_ACCESS_KEY?.trim(),
   secretKey: process.env.TEST_S3_SECRET_KEY?.trim(),
+  region: process.env.TEST_S3_REGION?.trim(),
+  // Presigned URLs are signed for the public media route (nginx in front of the store), as in production.
+  publicEndpoint: process.env.TEST_S3_PUBLIC_ENDPOINT?.trim(),
+  bucket: `mfx-archive-test-${randomBytes(4).toString("hex")}`,
 };
-const withObjectStore = Boolean(s3.endpoint && s3.accessKey && s3.secretKey);
+const withObjectStore = Boolean(s3.endpoint && s3.accessKey && s3.secretKey && s3.region && s3.publicEndpoint);
 // CI's object-storage job sets REQUIRE_S3=1: there the byte-identical check must run, never skip.
 if (process.env.REQUIRE_S3 === "1" && !withObjectStore) {
-  console.error("REQUIRE_S3=1 but TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY are not all set.");
+  console.error("REQUIRE_S3=1 but TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION / TEST_S3_PUBLIC_ENDPOINT are not all set.");
   process.exit(1);
+}
+// The API never creates its bucket (the object store's own setup does, deploy/OBJECT_STORAGE.md).
+if (withObjectStore) {
+  await new S3Client({
+    endpoint: s3.endpoint,
+    region: s3.region,
+    forcePathStyle: true,
+    credentials: { accessKeyId: s3.accessKey, secretAccessKey: s3.secretKey },
+  }).send(new CreateBucketCommand({ Bucket: s3.bucket }));
 }
 const api = await startControlApi({
   port: 33251,
   extraEnv: withObjectStore
     ? {
         S3_ENDPOINT: s3.endpoint,
+        S3_PUBLIC_ENDPOINT: s3.publicEndpoint,
         S3_ACCESS_KEY: s3.accessKey,
         S3_SECRET_KEY: s3.secretKey,
-        S3_BUCKET: `mfx-archive-test-${randomBytes(4).toString("hex")}`,
+        S3_REGION: s3.region,
+        S3_BUCKET: s3.bucket,
         S3_FORCE_PATH_STYLE: "true",
         DEPLOYMENT_ENV: "test",
       }
