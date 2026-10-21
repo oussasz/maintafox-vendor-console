@@ -27,7 +27,7 @@ import { pipeline } from "node:stream/promises";
 
 import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 
-import { CHECK_PROBE_PREFIX, createS3Client, isNotFound, TenantMediaObjectStore } from "../storage/object-store.js";
+import { CHECK_PROBE_PREFIX, createS3Client, isNoSuchKey, TenantMediaObjectStore } from "../storage/object-store.js";
 import { isAgeFile, runAge, sha256File } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
@@ -225,7 +225,7 @@ export async function pushMedia(
         await media.downloadObject(objectKey, sink);
       } catch (err) {
         sink.destroy();
-        if (!isNotFound(err)) throw err;
+        if (!isNoSuchKey(err)) throw err;
         // Deleted between the listing and the download: nothing to copy.
         vanished += 1;
         continue;

@@ -27,7 +27,7 @@
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-import { CHECK_PROBE_PREFIX, isNotFound, TenantMediaObjectStore } from "../storage/object-store.js";
+import { CHECK_PROBE_PREFIX, isNoSuchKey, TenantMediaObjectStore } from "../storage/object-store.js";
 import { isAgeFile, runAge } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
@@ -226,7 +226,7 @@ export async function backupMedia(runTs: string): Promise<Record<string, number>
       } catch (err) {
         sink.destroy();
         rmSync(plain, { force: true });
-        if (!isNotFound(err)) throw err;
+        if (!isNoSuchKey(err)) throw err;
         // Deleted between the listing and the download: treated as deleted, not as a failed night.
         // Its older copies (other ETags) were kept aside just above; none is left in current/.
         inBucket.delete(encodedKey);
