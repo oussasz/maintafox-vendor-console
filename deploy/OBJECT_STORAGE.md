@@ -246,8 +246,9 @@ delete `sync_minio_data`.
 - **Release installers: 1 GiB** through the route, for keys under `<DEPLOYMENT_ENV>/releases/` only
   (the release workflow's uploads). They are also in every nightly media copy: count them in the
   disk budget.
-- **Garage logs failed requests with their full URL** (signature included). A failed request's
-  signature was invalid or the object did not exist; still, treat `docker compose logs
-  object-store` as confidential.
+- **Some logs hold full signed URLs.** Garage logs failed requests with their full URL, and the
+  edge's error log does the same on a refused upload (413) or a store error; the edge access log
+  records the path only. Treat `docker compose logs object-store` and `docker compose logs edge`
+  as confidential.
 - **The public address is part of every URL.** Changing `S3_PUBLIC_ENDPOINT` invalidates URLs
   already handed out (15 minutes at most; desktops ask again on their own, §4).

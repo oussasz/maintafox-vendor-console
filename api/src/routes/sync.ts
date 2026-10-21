@@ -194,7 +194,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       });
       return;
     }
-    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey, media.config.deploymentEnv)) {
+    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
       res.status(403).json({ error: "object_key_tenant_mismatch" });
       return;
     }
@@ -222,7 +222,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       return;
     }
     const objectKey = parsed.data.object_key.trim();
-    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey, media.config.deploymentEnv)) {
+    if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
       res.status(403).json({ error: "object_key_tenant_mismatch" });
       return;
     }

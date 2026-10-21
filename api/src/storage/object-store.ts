@@ -178,12 +178,12 @@ export function buildTenantMediaObjectKey(input: {
 /**
  * True when `objectKey` is a media key of `tenantId`: env / media / tenant / ..., with no empty, "."
  * or ".." segment (a proxy that normalises the path before routing must see the key the store
- * stores). With `deploymentEnv`, the first segment must also be that environment.
+ * stores). The env segment is NOT compared with DEPLOYMENT_ENV: desktops build their keys with
+ * their own environment (MAINTAFOX_DEPLOYMENT_ENV, default "dev"), and existing objects carry it.
  */
-export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string, deploymentEnv?: string): boolean {
+export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string): boolean {
   const parts = objectKey.split("/");
   if (parts.some((p) => p === "" || p === "." || p === "..")) return false;
-  if (deploymentEnv !== undefined && parts[0] !== deploymentEnv) return false;
   return parts.length >= 4 && parts[1] === "media" && parts[2] === tenantId;
 }
 

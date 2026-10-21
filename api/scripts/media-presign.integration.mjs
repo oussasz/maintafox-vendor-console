@@ -334,7 +334,6 @@ try {
     `x/media/${devices.alpha.tenantId}/../../../ci/releases/a`,
     `ci/media/${devices.alpha.tenantId}/./x/y`,
     `ci/media/${devices.alpha.tenantId}//x`,
-    `prod/media/${devices.alpha.tenantId}/work_order/wo-0001/${sha256(photo)}`,
   ]) {
     const asPut = await api.call("POST", "/api/v1/sync/media/presign-put", devices.alpha.token, {
       parent_entity_type: "work_order",
@@ -346,6 +345,31 @@ try {
     const asGet = await api.call("POST", "/api/v1/sync/media/presign-get", devices.alpha.token, { object_key: objectKey });
     assert.equal(asGet.status, 403, `presign-get of ${objectKey}: ${JSON.stringify(asGet.json)}`);
   }
+
+  // Desktops build their keys with their own environment (MAINTAFOX_DEPLOYMENT_ENV, default "dev"),
+  // not the server's DEPLOYMENT_ENV ("ci" here): such keys keep working, both ways.
+  const desktopKey = `dev/media/${devices.alpha.tenantId}/work_order/wo-0009/${sha256(photo)}`;
+  const desktopPut = await api.call("POST", "/api/v1/sync/media/presign-put", devices.alpha.token, {
+    parent_entity_type: "work_order",
+    parent_entity_sync_id: "wo-0009",
+    content_sha256: sha256(photo),
+    object_key: desktopKey,
+  });
+  assert.equal(desktopPut.status, 200, JSON.stringify(desktopPut.json));
+  assert.equal(desktopPut.json.object_key, desktopKey);
+  const desktopPutRes = await fetch(desktopPut.json.url, { method: "PUT", body: photo });
+  assert.ok(desktopPutRes.ok, `desktop-key PUT through the route: ${desktopPutRes.status} ${await desktopPutRes.text()}`);
+  const desktopGet = await api.call("POST", "/api/v1/sync/media/presign-get", devices.alpha.token, { object_key: desktopKey });
+  assert.equal(desktopGet.status, 200, JSON.stringify(desktopGet.json));
+  assert.equal(sha256(Buffer.from(await (await fetch(desktopGet.json.url)).arrayBuffer())), sha256(photo));
+
+  // A bucket listing presigned with the store key (as a leaked key would allow) is refused by the
+  // route; so is a presigned list of all buckets.
+  const presignedList = await getSignedUrl(publicSigner, new ListObjectsV2Command({ Bucket: bucket }), { expiresIn: 60 });
+  const listed = await fetch(presignedList);
+  assert.equal(listed.status, 403, `presigned bucket listing through the route: ${listed.status}`);
+  await listed.arrayBuffer();
+  assert.equal(await rawStatus(`/${presignedQuery}`), 403, "bucket-level request at / through the route");
 
   // The object is still there.
   assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: put.json.object_key }))).ContentLength, photo.length);
