@@ -155,6 +155,8 @@ services:
       SYNC_RETENTION_INTERVAL_MINUTES: ${SYNC_RETENTION_INTERVAL_MINUTES:?set SYNC_RETENTION_INTERVAL_MINUTES in .env}
       SYNC_PAYLOAD_ENCRYPTION_KEY: ${SYNC_PAYLOAD_ENCRYPTION_KEY:?set SYNC_PAYLOAD_ENCRYPTION_KEY in .env}
       OPERATOR_ACCESS_LOG_RETENTION_DAYS: ${OPERATOR_ACCESS_LOG_RETENTION_DAYS:?set OPERATOR_ACCESS_LOG_RETENTION_DAYS in .env}
+      # Shown on the console's System health page (same value the backup service uses).
+      BACKUP_LOCAL_RETENTION_DAYS: ${BACKUP_LOCAL_RETENTION_DAYS:-}
       # Optional: bearer token for Prometheus scraping of /api/v1/ops/metrics (unset = operator tokens only).
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
       # Notification email (deploy/NOTIFICATION_EMAIL.md): disabled | smtp. SMTP_* read only with smtp.
@@ -166,6 +168,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       <<: *object-store-env
+      # Desktop updater public key (deploy/RELEASES.md). Unset = releases cannot be registered.
+      RELEASE_UPDATER_PUBLIC_KEY: ${RELEASE_UPDATER_PUBLIC_KEY:-}
       SLICKPAY_PUBLIC_KEY: ${SLICKPAY_PUBLIC_KEY:-}
       SLICKPAY_SECRET_KEY: ${SLICKPAY_SECRET_KEY:-}
       SLICKPAY_WEBHOOK_SECRET: ${SLICKPAY_WEBHOOK_SECRET:-}

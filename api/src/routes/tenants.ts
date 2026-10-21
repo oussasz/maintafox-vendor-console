@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { parsePagination, sendValidationError } from "../app/http.js";
-import { EditionIdSchema, ForceUpdateModeSchema } from "../app/schemas.js";
+import { EditionIdSchema, ForceMinAppVersionSchema, ForceUpdateModeSchema } from "../app/schemas.js";
 import { newId, structuredLog } from "../app/runtime.js";
 import { editionExists } from "../edition-catalog-store.js";
 import { purgeTenantSyncData } from "../sync/index.js";
@@ -15,7 +15,7 @@ import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 const CreateTenantBody = z.object({
   slug: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/),
   display_name: z.string().min(2).max(128),
-  force_min_app_version: z.string().trim().min(1).max(32).optional().nullable(),
+  force_min_app_version: ForceMinAppVersionSchema.optional().nullable(),
   force_update_mode: ForceUpdateModeSchema.optional(),
   force_update_reason: z.string().trim().min(2).max(512).optional().nullable(),
   rollout_cohort: z.string().trim().min(2).max(64).optional(),
@@ -237,6 +237,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
           tenantId,
         );
         await db.run(`DELETE FROM support_tickets WHERE tenant_id = ?`, tenantId);
+        await db.run(`DELETE FROM admin_recovery_codes WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM machine_activations WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM license_keys WHERE tenant_id = ?`, tenantId);
         await db.run(`DELETE FROM tenant_update_policy_history WHERE tenant_id = ?`, tenantId);
@@ -285,6 +286,13 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       return;
     }
     await runIdempotent(req, res, async () => {
+      // Row lock before the audit append (requirePrivilegedAction holds the audit-chain lock to the
+      // end of the transaction), the same order as every other tenant writer: taking them the other
+      // way round deadlocks against a concurrent update-policy or suspend on the same customer.
+      const tenant = await db.get("SELECT id FROM tenants WHERE id = ? FOR UPDATE", tenantId) as { id: string } | undefined;
+      if (!tenant) {
+        return { status: 404, body: { error: "tenant_not_found" } };
+      }
       const guard = await requirePrivilegedAction(req, {
         action_code: "offline_policy_update",
         step_up_kind: StepUpKinds.offlinePolicyChange,
@@ -295,10 +303,6 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       });
       if (!guard.ok) {
         return { status: guard.status, body: guard.body };
-      }
-      const tenant = await db.get("SELECT id FROM tenants WHERE id = ?", tenantId) as { id: string } | undefined;
-      if (!tenant) {
-        return { status: 404, body: { error: "tenant_not_found" } };
       }
       const input = parsed.data;
       await db.run(`UPDATE tenants
@@ -326,13 +330,15 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     const tenantId = req.params.tenantId;
     const { cursor, limit, withPagination } = parsePagination(req.query);
     const effectiveLimit = withPagination ? limit : 10_000;
-    const rows = await db.all(`SELECT a.machine_fingerprint, a.last_seen_at, a.app_version, a.revoked_at, a.revocation_kind,
-                a.policy_refresh_requested_at, l.update_channel
+    const rows = await db.all(`SELECT a.machine_fingerprint, a.machine_label, a.activated_at, a.last_seen_at, a.app_version, a.revoked_at,
+                a.revocation_kind, a.policy_refresh_requested_at, l.update_channel
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          WHERE a.tenant_id = ?
          ORDER BY a.last_seen_at COLLATE "C" DESC, a.machine_fingerprint COLLATE "C" DESC`, tenantId) as Array<{
         machine_fingerprint: string;
+        machine_label: string | null;
+        activated_at: string;
         last_seen_at: string;
         app_version: string | null;
         policy_refresh_requested_at: string | null;
@@ -356,7 +362,11 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
       const heartbeat_freshness = Number.isFinite(ageMs) && ageMs <= 15 * 60_000 ? "live" : "stale";
       return {
         machine_id: row.machine_fingerprint,
+        /** Name the desktop reported for the machine (null when it sent none). */
+        machine_label: row.machine_label,
         tenant_id: tenantId,
+        activated_at_rfc3339: row.activated_at,
+        revoked_at_rfc3339: row.revoked_at,
         last_heartbeat_rfc3339: row.last_seen_at,
         app_version: row.app_version,
         trusted_device: row.revoked_at == null,

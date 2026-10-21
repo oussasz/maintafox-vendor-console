@@ -65,22 +65,78 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter maintafox-control-api run test:all
 
-  contracts-drift:
-    name: Contracts drift against the desktop (step-up action kinds)
+  e2e:
+    name: Browser test (sign-in with TOTP enrolment, step-up action, audit ledger)
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # e2e/serve-api.mjs starts the real API on a fresh database of this server.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
-      # The desktop repository is public: read-only checkout of its main branch, no secret needed.
-      - uses: actions/checkout@v4
-        with:
-          repository: oussasz/maintafox-desktop
-          ref: main
-          path: desktop
-          sparse-checkout: src-tauri/src/vps
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Keep the report and traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e-report
+            e2e-results
+          retention-days: 14
+
+  contracts-drift:
+    name: Contracts drift against the desktop (IPC types, sync registry, step-up kinds)
+    runs-on: ubuntu-24.04
+    env:
+      # The desktop branch this console is built against: phase0/security-hardening holds the
+      # sync v2 allowlist and the IPC types the console and API use (desktop main does not have
+      # them yet). Switch to main when the desktop merges that branch.
+      DESKTOP_CONTRACTS_REF: phase0/security-hardening
+    steps:
+      - uses: actions/checkout@v4
+      # The desktop repository is public: read-only checkout, no secret needed.
+      - uses: actions/checkout@v4
+        with:
+          repository: oussasz/maintafox-desktop
+          ref: ${{ env.DESKTOP_CONTRACTS_REF }}
+          path: desktop
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            src-tauri/src/vps/vendor_admin_console.rs
+            shared/ipc-types.ts
+            shared/sync/server-entity-allowlist.v2.json
+            shared/sync/entity-registry.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Desktop types used by the console (packages/contracts)
+        run: node packages/contracts/scripts/extract-desktop-types.mjs --desktop desktop --check
+      - name: Sync entity registry
+        run: node packages/contracts/scripts/sync-registry-drift.mjs --desktop desktop
+      - name: Step-up action kinds
+        run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
 
   backup-drill:
     name: Backup and restore drill (real PostgreSQL 16 programs, media copy from Garage)
@@ -109,7 +165,7 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:backup-keygen
 
   backup-offsite:
-    name: Object storage on Garage (media upload/download, support bundles, off-site copy, migration tool)
+    name: Object storage on Garage (media upload/download, support bundles, off-site copy, migration tool, release catalog + update manifest, attachment archive)
     runs-on: ubuntu-24.04
     env:
       TEST_S3_ENDPOINT: http://127.0.0.1:3900
@@ -151,6 +207,12 @@ jobs:
       - run: pnpm --filter maintafox-control-api run test:support-bundles
       - run: pnpm --filter maintafox-control-api run test:backup-offsite
       - run: pnpm --filter maintafox-control-api run test:object-store-migrate
+      - run: pnpm --filter maintafox-control-api run test:update-manifest
+      # With TEST_S3_* set, also proves a photo deleted by sync and restored comes back byte-identical.
+      - run: pnpm --filter maintafox-control-api run test:sync-attachment-archive
+        env:
+          # Fail instead of skipping the byte-identical file check if the S3 settings go missing.
+          REQUIRE_S3: "1"
       - name: Object store and media route logs (on failure)
         if: failure()
         run: |

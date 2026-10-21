@@ -46,6 +46,35 @@ function validatePayloadJson(item: SyncOutboxItem): ItemValidationOk | ItemValid
   return { ok: true };
 }
 
+/**
+ * Append-only (history) types whose delete/archive the server still accepts: media_attachments,
+ * whose deletes the desktop replicates by design (row_codec.rs apply_row).
+ */
+const APPEND_ONLY_DELETABLE_TYPES: ReadonlySet<string> = new Set(["media_attachments"]);
+
+/**
+ * Operation rule (v1 and v2): a delete or archive of an append-only registry type is refused with
+ * operation_not_allowed_for_type (desktops would really delete the history row on apply). Upserts
+ * of append-only types are not refused (desktops ignore rewrites; refusing could break re-sends).
+ */
+export function validateOperationForType(
+  item: Pick<SyncOutboxItem, "entity_type" | "operation">,
+  registry: SyncEntityRegistry,
+): ItemValidationOk | ItemValidationFail {
+  const entityType = item.entity_type.trim();
+  if (
+    (item.operation === "delete" || item.operation === "archive") &&
+    registry.isAppendOnly(entityType) &&
+    !APPEND_ONLY_DELETABLE_TYPES.has(entityType)
+  ) {
+    return fail(
+      "operation_not_allowed_for_type",
+      `entity_type '${entityType}' is append-only history: synchronisation never deletes or archives it.`,
+    );
+  }
+  return { ok: true };
+}
+
 /** v1 item rules (unchanged): any well-formed entity type is accepted. */
 export function validateOutboxItem(item: SyncOutboxItem): ItemValidationOk | ItemValidationFail {
   if (!ENTITY_TYPE_PATTERN.test(item.entity_type.trim())) {
@@ -61,7 +90,7 @@ export function validateOutboxItem(item: SyncOutboxItem): ItemValidationOk | Ite
 
 /**
  * v2 item rules, in the order documented in SYNC_PROTOCOL_V2.md §3.1: entity type format →
- * registry → owner rule → payload hash → payload JSON → row-version rule.
+ * registry → operation rule → owner rule → payload hash → payload JSON → row-version rule.
  */
 export function validateOutboxItemV2(
   item: SyncOutboxItemV2,
@@ -77,6 +106,8 @@ export function validateOutboxItemV2(
       `entity_type '${item.entity_type}' is not in the sync entity registry (shared/sync-entity-registry.v2.json).`,
     );
   }
+  const operation = validateOperationForType(item, registry);
+  if (!operation.ok) return operation;
   const owner = item.owner_user_sync_id ?? null;
   if (scope === "user" && owner === null) {
     return fail(

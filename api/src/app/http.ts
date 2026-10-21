@@ -142,7 +142,11 @@ export function parsePagination(query: unknown): {
 }
 
 /** Set by authMiddleware: the operator and the server-side session their access token belongs to. */
-export type AuthRequest = express.Request & { userId?: string; vendorSessionId?: string };
+export type AuthRequest = express.Request & {
+  userId?: string;
+  vendorSessionId?: string;
+  operatorRole?: import("../vendor-auth/roles.js").Role;
+};
 
 /** Set by the MFA-pending middleware (routes/auth.ts): password verified, second factor pending. */
 export type MfaPendingRequest = express.Request & { mfa?: { userId: number; stage: "enroll" | "verify" } };

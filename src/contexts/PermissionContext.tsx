@@ -5,9 +5,10 @@ import {
   fetchMyPermissions,
   isAuthenticationRequiredError,
   isPermissionsLoadError,
+  PermissionsLoadError,
 } from "@/services/admin-permissions";
 import { endSession } from "@/lib/auth-session";
-import type { PermissionRecord } from "@shared/ipc-types";
+import type { PermissionRecord } from "@maintafox/contracts";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated" | "forbidden" | "error";
 
@@ -15,7 +16,7 @@ export interface PermissionContextValue {
   permissions: PermissionRecord[];
   isLoading: boolean;
   sessionStatus: SessionStatus;
-  loadError: string | null;
+  loadError: PermissionsLoadError | null;
   can: (permissionName: string) => boolean;
   canAny: (...permissionNames: string[]) => boolean;
   canAll: (...permissionNames: string[]) => boolean;
@@ -36,7 +37,7 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
   const location = useLocation();
   const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("loading");
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<PermissionsLoadError | null>(null);
 
   const load = useCallback(async () => {
     setSessionStatus("loading");
@@ -57,12 +58,8 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
         setLoadError(null);
         return;
       }
-      const message = isPermissionsLoadError(err)
-        ? err.message
-        : err instanceof Error
-          ? err.message
-          : "Failed to load permissions";
-      setLoadError(message);
+      // fetchMyPermissions classifies every failure; anything else is an answer it could not read.
+      setLoadError(isPermissionsLoadError(err) ? err : new PermissionsLoadError("invalid"));
       setSessionStatus("error");
     }
   }, []);

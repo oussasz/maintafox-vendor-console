@@ -24,13 +24,19 @@ change it.
 ## 2. Entity registry
 
 `shared/sync-entity-registry.v2.json` (in this repository) is the allowlist. Each entry is
-`{ "entity_type": "...", "scope": "tenant" | "user" }`.
+`{ "entity_type": "...", "scope": "tenant" | "user", "append_only": true | false }`.
 
 - `scope: "tenant"`: delivered to every device of the tenant. `owner_user_sync_id` must be absent
   or `null`.
 - `scope: "user"`: `owner_user_sync_id` is required. The item is delivered only to devices whose
   request lists that user in `current_user_sync_ids`.
 - An entity type that is not in the registry is rejected per item with `unknown_entity_type`.
+- `append_only: true` marks history types (the desktop's `conflict_policy` `append_only`, mirrored
+  exactly and checked by `packages/contracts/scripts/sync-registry-drift.mjs`). A `delete` or
+  `archive` of such a type is rejected with `operation_not_allowed_for_type` (§3.1), except
+  `media_attachments`, whose deletes the desktop replicates by design. Upserts are not refused.
+  The flag is required on every entry; adding it to existing entries is an additive change (no
+  entry is renamed or removed).
 - The file is append-only: entries are never renamed or removed. A new entity type is added to the
   file in the same change that makes the desktop stage it. The desktop keeps a copy and should
   check it in CI against this file.
@@ -77,7 +83,9 @@ required on every item (use `null` explicitly for a create).
 
 ### 3.1 Item rules (evaluated in batch order)
 
-1. Field validation, in this order: entity type format → registry membership → owner rule →
+1. Field validation, in this order: entity type format → registry membership → operation rule
+   (`operation_not_allowed_for_type`: `delete` / `archive` of an `append_only` type other than
+   `media_attachments`; also applied to v1 pushes of registry types, §7) → owner rule →
    payload hash format → hash matches `payload_json` → `payload_json` parses → row-version rule:
    `row_version` must equal `base_row_version + 1`, or `1` when `base_row_version` is `null`.
 2. Item idempotency: if this item `idempotency_key` was already applied for the tenant **with the
@@ -248,6 +256,9 @@ Response:
   as v1 always did. v1 pushes of user-scoped or unregistered types stay in the log only (v1 has no
   owner, so they would otherwise reach every device): v2 devices do not receive them.
 - v1 devices keep reading the log with their v1 cursor, so they receive v2 writes as before.
+- A v1 `delete` / `archive` of an `append_only` registry type (other than `media_attachments`) is
+  rejected with `operation_not_allowed_for_type`, like any v1 rejection (the v1 checkpoint does not
+  advance for that request).
 - v1 fixes without a wire change: the exchange is atomic, the v1 cursor advances only together with
   the stored response, and a device whose recent rows are all its own is no longer starved.
 
@@ -293,3 +304,8 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 - 2026-10-12 (Phase 3): additive. Diagnostic bundle endpoints (above). `user_accounts` payloads and
   stored exchange responses are encrypted at rest; delivered bytes and `payload_hash` are unchanged
   (`deploy/TENANT_ISOLATION.md`). Idempotent replays are counted for the ops metrics.
+- 2026-10-20: §2 registry entries carry `append_only`; §3.1 new per-item rejection
+  `operation_not_allowed_for_type` (delete/archive of append-only history, v1 and v2; existing
+  `rejected_items` shape). Server-side only: accepted deletes and overwrites of attachment types are
+  archived and can be restored by an operator as a new server-originated change
+  (`deploy/SYNC_OPERATIONS.md`).

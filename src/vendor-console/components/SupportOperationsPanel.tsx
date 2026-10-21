@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,21 +24,22 @@ import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { useVendorConsole } from "../VendorConsoleContext";
+import { errorText } from "@/lib/error-text";
 
-const COMPLIANCE_EXPORT_LABELS: Record<
-  "entitlement_history" | "machine_state_timeline" | "rollout_actions" | "support_resolution_chronology",
-  string
-> = {
-  entitlement_history: "Entitlement history",
-  machine_state_timeline: "Machine state timeline",
-  rollout_actions: "Rollout actions",
-  support_resolution_chronology: "Support resolution chronology",
-};
+/** Compliance export kinds (labels: vendorConsole `audit.support.exports.kinds.*`). */
+const COMPLIANCE_EXPORT_KINDS = [
+  "entitlement_history",
+  "machine_state_timeline",
+  "rollout_actions",
+  "support_resolution_chronology",
+] as const;
 
 export function SupportOperationsPanel() {
   const { t } = useTranslation("vendorConsole");
   const { requireStepUp } = useVendorConsole();
   const { can } = usePermissions();
+  /** A ticket to show first (from "Open ticket" on the Overview or a customer page). */
+  const focusTicket = useSearchParams()[0].get("ticket");
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [bundles, setBundles] = useState<DiagnosticBundleSummary[]>([]);
   const [tenants, setTenants] = useState<ControlTenant[]>([]);
@@ -72,7 +73,7 @@ export function SupportOperationsPanel() {
       setOfflineRows(offline);
       setTenants(tenantRows);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load support workflows.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }
@@ -85,7 +86,7 @@ export function SupportOperationsPanel() {
   const onIntervene = async (ticket: SupportTicket, nextState: SupportTicket["state"]) => {
     const note = (noteDraft[ticket.ticket_id] ?? "").trim();
     if (note.length < 3) {
-      setError("Intervention note must be at least 3 characters.");
+      setError(t("audit.support.tickets.noteTooShort"));
       return;
     }
     setBusyTicketId(ticket.ticket_id);
@@ -103,9 +104,9 @@ export function SupportOperationsPanel() {
       });
       setNoteDraft((prev) => ({ ...prev, [ticket.ticket_id]: "" }));
       await load();
-      setSuccess(`Intervention logged for ${ticket.ticket_id}.`);
+      setSuccess(t("audit.support.tickets.intervened", { id: ticket.ticket_id }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Intervention failed.");
+      setError(errorText(err));
     } finally {
       setBusyTicketId(null);
     }
@@ -124,15 +125,15 @@ export function SupportOperationsPanel() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      setSuccess("Support ticket CSV export downloaded.");
+      setSuccess(t("audit.support.tickets.exported"));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Support ticket export failed.");
+      setError(errorText(err));
     }
   };
 
   const onCreateTicket = async () => {
     if (!newTicket.tenant_id || newTicket.affected_module.trim().length < 2 || newTicket.summary.trim().length < 3) {
-      setError("Choose a tenant and fill in the module (2+ characters) and the summary (3+ characters).");
+      setError(t("audit.support.newTicket.incomplete"));
       return;
     }
     setCreatingTicket(true);
@@ -147,9 +148,9 @@ export function SupportOperationsPanel() {
       });
       setNewTicket((prev) => ({ ...prev, affected_module: "", summary: "" }));
       await load();
-      setSuccess(`Ticket ${created.ticket_id} opened.`);
+      setSuccess(t("audit.support.newTicket.opened", { id: created.ticket_id }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Opening the ticket failed.");
+      setError(errorText(err));
     } finally {
       setCreatingTicket(false);
     }
@@ -168,9 +169,9 @@ export function SupportOperationsPanel() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      setSuccess(`Diagnostic bundle ${bundleId} download started (recorded as ${link.audit_record_id}).`);
+      setSuccess(t("audit.support.bundle.downloadStarted", { id: bundleId, record: link.audit_record_id }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Bundle download failed.");
+      setError(errorText(err));
     } finally {
       setDownloadingBundleId(null);
     }
@@ -179,10 +180,7 @@ export function SupportOperationsPanel() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-text-secondary">
-        {t(
-          "audit.support.intro",
-          "Structured tickets, diagnostic bundles with redaction, offline reconciliation, and explicit links to audit records.",
-        )}
+        {t("audit.support.intro")}
       </p>
       {error ? (
         <ConsoleStatusBanner tone="error" role="alert">
@@ -193,16 +191,16 @@ export function SupportOperationsPanel() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("audit.support.newTicket.title", "Open a ticket")}</CardTitle>
+          <CardTitle className="text-base">{t("audit.support.newTicket.title")}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-2 text-sm sm:grid-cols-[1fr_auto_1fr_2fr_auto]">
           <select
-            aria-label={t("audit.support.newTicket.tenant", "Tenant")}
-            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            aria-label={t("audit.support.newTicket.tenant")}
+            className="h-9 rounded-lg border border-input bg-surface-1 pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.tenant_id}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, tenant_id: e.target.value }))}
           >
-            <option value="">{t("audit.support.newTicket.tenant", "Tenant")}</option>
+            <option value="">{t("audit.support.newTicket.tenant")}</option>
             {tenants.map((tn) => (
               <option key={tn.id} value={tn.id}>
                 {tn.display_name}
@@ -210,8 +208,8 @@ export function SupportOperationsPanel() {
             ))}
           </select>
           <select
-            aria-label={t("audit.support.newTicket.severity", "Severity")}
-            className="h-8 rounded-md border border-surface-border bg-surface-1 px-2 text-xs"
+            aria-label={t("audit.support.newTicket.severity")}
+            className="h-9 rounded-lg border border-input bg-surface-1 pl-2.5 pr-8 text-xs text-text-primary"
             value={newTicket.severity}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, severity: e.target.value as SupportTicket["severity"] }))}
           >
@@ -223,29 +221,29 @@ export function SupportOperationsPanel() {
             className="h-8 text-xs"
             value={newTicket.affected_module}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, affected_module: e.target.value }))}
-            placeholder={t("audit.support.newTicket.module", "Module (e.g. sync)")}
+            placeholder={t("audit.support.newTicket.module")}
           />
           <Input
             className="h-8 text-xs"
             value={newTicket.summary}
             onChange={(e) => setNewTicket((prev) => ({ ...prev, summary: e.target.value }))}
-            placeholder={t("audit.support.newTicket.summary", "What is wrong?")}
+            placeholder={t("audit.support.newTicket.summary")}
           />
           <Button type="button" size="sm" disabled={creatingTicket} onClick={() => void onCreateTicket()}>
-            {creatingTicket ? t("audit.support.tickets.saving", "Saving…") : t("audit.support.newTicket.submit", "Open ticket")}
+            {creatingTicket ? t("audit.support.tickets.saving") : t("audit.support.newTicket.submit")}
           </Button>
         </CardContent>
       </Card>
 
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t("audit.support.tickets.title", "Tickets")}</h3>
+          <h3 className="text-sm font-semibold">{t("audit.support.tickets.title")}</h3>
           <div className="flex gap-2">
             <Button type="button" size="sm" variant="outline" onClick={() => void onExportTickets()}>
-              {t("audit.support.tickets.export", "Export CSV")}
+              {t("audit.support.tickets.export")}
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={() => void load()}>
-              {t("audit.support.tickets.refresh", "Refresh")}
+              {t("audit.support.tickets.refresh")}
             </Button>
           </div>
         </div>
@@ -253,14 +251,14 @@ export function SupportOperationsPanel() {
           <table className="w-full min-w-[800px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.id", "Ticket")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.tenant", "Tenant")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.state", "State")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.sev", "Severity")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.module", "Module")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.sync", "Sync hint")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.audit", "Linked audit IDs")}</th>
-                <th className="px-3 py-2">{t("audit.support.tickets.col.intervene", "Intervention")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.id")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.tenant")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.state")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.sev")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.module")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.sync")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.audit")}</th>
+                <th className="px-3 py-2">{t("audit.support.tickets.col.intervene")}</th>
               </tr>
             </thead>
             <tbody>
@@ -268,13 +266,18 @@ export function SupportOperationsPanel() {
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={8} className="px-3 py-4 text-center text-sm text-text-muted">
                     {loading
-                      ? t("audit.support.tickets.loading", "Loading tickets…")
-                      : t("audit.support.tickets.empty", "No support tickets yet.")}
+                      ? t("audit.support.tickets.loading")
+                      : t("audit.support.tickets.empty")}
                   </td>
                 </tr>
               ) : null}
               {tickets.map((tk) => (
-                <tr key={tk.ticket_id} className="border-b border-surface-border last:border-0">
+                <tr
+                  key={tk.ticket_id}
+                  ref={tk.ticket_id === focusTicket ? (el) => el?.scrollIntoView({ block: "center" }) : undefined}
+                  aria-current={tk.ticket_id === focusTicket ? "true" : undefined}
+                  className={tk.ticket_id === focusTicket ? "border-b border-surface-border bg-attention-bg last:border-0" : "border-b border-surface-border last:border-0"}
+                >
                   <td className="px-3 py-2 font-mono text-xs">{tk.ticket_id}</td>
                   <td className="px-3 py-2 font-mono text-xs">{tk.tenant_id}</td>
                   <td className="px-3 py-2 text-xs">{tk.state}</td>
@@ -294,7 +297,7 @@ export function SupportOperationsPanel() {
                         onChange={(e) =>
                           setNoteDraft((prev) => ({ ...prev, [tk.ticket_id]: e.target.value }))
                         }
-                        placeholder={t("audit.support.tickets.notePh", "Intervention note")}
+                        placeholder={t("audit.support.tickets.notePh")}
                       />
                       <Button
                         type="button"
@@ -309,8 +312,8 @@ export function SupportOperationsPanel() {
                         }
                       >
                         {busyTicketId === tk.ticket_id
-                          ? t("audit.support.tickets.saving", "Saving…")
-                          : t("audit.support.tickets.intervene", "Log intervention")}
+                          ? t("audit.support.tickets.saving")
+                          : t("audit.support.tickets.intervene")}
                       </Button>
                     </div>
                   </td>
@@ -322,17 +325,17 @@ export function SupportOperationsPanel() {
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold">{t("audit.support.bundle.title", "Diagnostic bundles")}</h3>
+        <h3 className="text-sm font-semibold">{t("audit.support.bundle.title")}</h3>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[800px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.id", "Bundle")}</th>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.tenant", "Tenant / machine")}</th>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.status", "Status")}</th>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.size", "Size")}</th>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.ticket", "Ticket")}</th>
-                <th className="px-3 py-2">{t("audit.support.bundle.col.download", "Download")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.id")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.tenant")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.status")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.size")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.ticket")}</th>
+                <th className="px-3 py-2">{t("audit.support.bundle.col.download")}</th>
               </tr>
             </thead>
             <tbody>
@@ -340,8 +343,8 @@ export function SupportOperationsPanel() {
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={6} className="px-3 py-4 text-center text-sm text-text-muted">
                     {loading
-                      ? t("audit.support.bundle.loading", "Loading bundles…")
-                      : t("audit.support.bundle.empty", "No diagnostic bundle has been uploaded by a desktop yet.")}
+                      ? t("audit.support.bundle.loading")
+                      : t("audit.support.bundle.empty")}
                   </td>
                 </tr>
               ) : null}
@@ -372,7 +375,7 @@ export function SupportOperationsPanel() {
                       disabled={b.status !== "uploaded" || downloadingBundleId === b.bundle_id}
                       onClick={() => void onDownloadBundle(b.bundle_id)}
                     >
-                      {t("audit.support.bundle.download", "Download")}
+                      {t("audit.support.bundle.download")}
                     </Button>
                   </td>
                 </tr>
@@ -384,16 +387,16 @@ export function SupportOperationsPanel() {
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">
-          {t("audit.support.offline.title", "Offline-origin reconciliation")}
+          {t("audit.support.offline.title")}
         </h3>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("audit.support.offline.col.desktop", "Desktop queue")}</th>
-                <th className="px-3 py-2">{t("audit.support.offline.col.vendor", "Vendor ticket")}</th>
-                <th className="px-3 py-2">{t("audit.support.offline.col.sync", "Sync state")}</th>
-                <th className="px-3 py-2">{t("audit.support.offline.col.dup", "Duplicate of")}</th>
+                <th className="px-3 py-2">{t("audit.support.offline.col.desktop")}</th>
+                <th className="px-3 py-2">{t("audit.support.offline.col.vendor")}</th>
+                <th className="px-3 py-2">{t("audit.support.offline.col.sync")}</th>
+                <th className="px-3 py-2">{t("audit.support.offline.col.dup")}</th>
               </tr>
             </thead>
             <tbody>
@@ -401,8 +404,8 @@ export function SupportOperationsPanel() {
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={4} className="px-3 py-4 text-center text-sm text-text-muted">
                     {loading
-                      ? t("audit.support.offline.loading", "Loading reconciliation rows…")
-                      : t("audit.support.offline.empty", "No offline reconciliation rows.")}
+                      ? t("audit.support.offline.loading")
+                      : t("audit.support.offline.empty")}
                   </td>
                 </tr>
               ) : null}
@@ -420,15 +423,15 @@ export function SupportOperationsPanel() {
       </section>
 
       <section className="rounded-lg border border-dashed border-surface-border bg-surface-1/50 p-4">
-        <h3 className="text-sm font-semibold">{t("audit.support.exports.title", "Compliance export kinds")}</h3>
+        <h3 className="text-sm font-semibold">{t("audit.support.exports.title")}</h3>
         <ul className="mt-2 list-inside list-disc text-xs text-text-secondary">
-          {(Object.keys(COMPLIANCE_EXPORT_LABELS) as (keyof typeof COMPLIANCE_EXPORT_LABELS)[]).map((k) => (
-            <li key={k}>{COMPLIANCE_EXPORT_LABELS[k]}</li>
+          {COMPLIANCE_EXPORT_KINDS.map((k) => (
+            <li key={k}>{t(`audit.support.exports.kinds.${k}`)}</li>
           ))}
         </ul>
         {can("sync.operate") ? (
           <Button className="mt-3" type="button" size="sm" variant="secondary" asChild>
-            <Link to="/vendor-console/sync">{t("audit.support.exports.syncLink", "Open sync evidence")}</Link>
+            <Link to="/vendor-console/sync">{t("audit.support.exports.syncLink")}</Link>
           </Button>
         ) : null}
       </section>

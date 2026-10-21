@@ -8,7 +8,8 @@ import type express from "express";
 import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
-import { publicCheckoutRateLimiter, sendValidationError } from "../app/http.js";
+import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
+import { publicCheckoutRateLimiter, resolveActorId, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey, safeEqualUtf8 } from "../app/runtime.js";
 import { systemScopeMiddleware } from "../app/scope.js";
 import { editionExists } from "../edition-catalog-store.js";
@@ -116,8 +117,46 @@ function slugifyTenantSlug(raw: string): string {
   return clipped.length >= 2 ? clipped : "customer";
 }
 
+type PaidOrderRef = {
+  id: string;
+  tenant_id: string;
+  license_id: string | null;
+  plan: string;
+  extra_slots: number;
+  status: string;
+};
+
+type ApplyPaidOutcome =
+  | {
+      kind: "applied";
+      tenantId: string;
+      licenseId: string;
+      expiresAt: string;
+      previousExpiresAt: string | null;
+      maxMachines: number;
+      licenseIssued: boolean;
+    }
+  | { kind: "already_paid" }
+  | { kind: "license_revoked" }
+  | { kind: "issue_failed"; message: string };
+
+/** Order columns shown to operators (no customer contact data: user_info stays server-side). */
+const PAYMENT_ORDER_COLUMNS = `id, tenant_id, license_id, plan, amount, extra_slots, total_amount, currency, status,
+  slickpay_invoice_id, paid_at, error_message, created_at, updated_at, last_reconciled_at, last_reconciled_status`;
+
+const PAYMENT_STATUSES = ["pending", "awaiting_payment", "paid", "failed"] as const;
+const PaymentsQuery = z
+  .object({ status: z.enum(PAYMENT_STATUSES).optional(), tenant_id: z.string().min(3).optional() })
+  .strict();
+
+/** Days from now to `expiresAt` (negative once expired); null for a licence without end. */
+function daysLeft(expiresAt: string | null, nowMs = Date.now()): number | null {
+  if (!expiresAt) return null;
+  return Math.floor((Date.parse(expiresAt) - nowMs) / 86_400_000);
+}
+
 export function registerBillingRoutes(app: express.Express, ctx: ApiContext): void {
-  const { db, appendAuditRecord, insertTenantRow, tenantWriteFailure, pickActiveLicenseForTenant } = ctx;
+  const { db, appendAuditRecord, insertTenantRow, tenantWriteFailure, pickActiveLicenseForTenant, authMiddleware, countActiveActivations } = ctx;
 
   async function slickPayApi(
     method: "GET" | "POST",
@@ -140,6 +179,144 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
       json = {};
     }
     return { ok: res.ok, status: res.status, json };
+  }
+
+  /** SlickPay's own status of an invoice ("paid", ...), lowercase. Network errors throw. */
+  async function fetchInvoiceStatus(
+    invoiceId: string,
+  ): Promise<{ ok: true; status: string } | { ok: false; httpStatus: number }> {
+    const details = await slickPayApi("GET", `/api/v2/users/invoices/${encodeURIComponent(invoiceId)}`);
+    if (!details.ok) return { ok: false, httpStatus: details.status };
+    const data =
+      details.json.data && typeof details.json.data === "object"
+        ? (details.json.data as Record<string, unknown>)
+        : details.json;
+    return { ok: true, status: String(data.payment_status ?? data.status ?? "").toLowerCase() };
+  }
+
+  /**
+   * Applies an order SlickPay reports as paid: renews the licence one year from its current expiry
+   * (or issues one), adds the extra slots, bumps the entitlement lineage, marks the order paid, and
+   * appends the audit record. Used by the webhook and by operator reconciliation; idempotent (an
+   * order already paid is never applied twice, even by concurrent calls).
+   */
+  async function applyPaidOrder(
+    order: PaidOrderRef,
+    invoiceId: string,
+    actor: { actor_id: string; reason_code: string },
+  ): Promise<ApplyPaidOutcome> {
+    type RenewLicenceRow = {
+      id: string;
+      tenant_id: string;
+      max_machines: number;
+      expires_at: string | null;
+      revoked_at: string | null;
+    };
+    const extraSlots = Math.max(0, order.extra_slots ?? 0);
+    const nowIso = new Date().toISOString();
+    let issuedNewLicense = false;
+    let previousExpires: string | null = null;
+    let nextExpires = "";
+    let nextMaxMachines = 0;
+    let finalLicense: RenewLicenceRow | undefined;
+    let licenceRevoked = false;
+    let raceAlreadyPaid = false;
+    try {
+      await db.tx(async () => {
+        // Two deliveries of the same webhook must not both extend the licence, and two different
+        // paid orders of one tenant must extend it one after the other (each from the latest
+        // expiry): lock the tenant's renewals and the order, then read the licence under the lock.
+        await db.lockXact("licence-renewal", order.tenant_id);
+        const locked = await db.get<{ status: string }>(`SELECT status FROM payment_orders WHERE id = ? FOR UPDATE`, order.id);
+        if (locked?.status === "paid") {
+          raceAlreadyPaid = true;
+          return;
+        }
+        let license = order.license_id
+          ? await db.get<RenewLicenceRow>(
+              `SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ? FOR UPDATE`,
+              order.license_id,
+            )
+          : undefined;
+        if (!license) {
+          license = await pickActiveLicenseForTenant(order.tenant_id);
+        }
+        if (license?.revoked_at) {
+          licenceRevoked = true;
+          await db.run(
+            `UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = mfx_utc_now_text() WHERE id = ?`,
+            order.id,
+          );
+          return;
+        }
+        previousExpires = license?.expires_at ?? null;
+        nextExpires = computeLicenseExpiresPlusOneYear(license?.expires_at ?? null);
+        nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
+        finalLicense = license;
+        if (!finalLicense) {
+          const issued = await issueLicenseForPaidOrder({
+            tenantId: order.tenant_id,
+            maxMachines: nextMaxMachines,
+            expiresAt: nextExpires,
+          });
+          finalLicense = {
+            id: issued.id,
+            tenant_id: order.tenant_id,
+            max_machines: issued.max_machines,
+            expires_at: issued.expires_at,
+            revoked_at: null,
+          };
+          issuedNewLicense = true;
+        } else {
+          await db.run(`UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`, nextExpires, nextMaxMachines, finalLicense.id);
+        }
+        await db.run(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`, finalLicense.tenant_id);
+        await db.run(
+          `UPDATE payment_orders
+           SET status = 'paid', paid_at = ?, license_id = ?, slickpay_invoice_id = COALESCE(slickpay_invoice_id, ?),
+               updated_at = mfx_utc_now_text()
+           WHERE id = ?`,
+          nowIso,
+          finalLicense.id,
+          invoiceId,
+          order.id,
+        );
+      });
+    } catch (err) {
+      return { kind: "issue_failed", message: err instanceof Error ? err.message : String(err) };
+    }
+    if (licenceRevoked) return { kind: "license_revoked" };
+    if (raceAlreadyPaid) return { kind: "already_paid" };
+    if (!finalLicense) throw new Error("license_missing_after_payment");
+    const licence: RenewLicenceRow = finalLicense;
+    await appendAuditRecord({
+      actor_id: actor.actor_id,
+      action_code: issuedNewLicense ? "license_issue" : "license_renew",
+      action_category: "billing",
+      correlation_id: order.id,
+      scope_tenant_id: licence.tenant_id,
+      reason_code: actor.reason_code,
+      entity_refs: { tenant_id: licence.tenant_id, entitlement_id: licence.id },
+      payload: {
+        payment_order_id: order.id,
+        invoice_id: invoiceId,
+        plan: order.plan,
+        previous_expires_at: previousExpires,
+        expires_at: nextExpires,
+        max_machines: nextMaxMachines,
+        license_issued: issuedNewLicense,
+        entitlement_lineage_bumped: true,
+      },
+    });
+    return {
+      kind: "applied",
+      tenantId: licence.tenant_id,
+      licenseId: licence.id,
+      expiresAt: nextExpires,
+      previousExpiresAt: previousExpires,
+      maxMachines: nextMaxMachines,
+      licenseIssued: issuedNewLicense,
+    };
   }
 
   async function allocateUniqueTenantSlug(preferred: string): Promise<string> {
@@ -455,16 +632,12 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
 
     let paymentStatus = "";
     try {
-      const details = await slickPayApi("GET", `/api/v2/users/invoices/${encodeURIComponent(invoiceId)}`);
-      if (!details.ok) {
-        res.status(502).json({ error: "slickpay_verify_failed", status: details.status });
+      const verified = await fetchInvoiceStatus(invoiceId);
+      if (!verified.ok) {
+        res.status(502).json({ error: "slickpay_verify_failed", status: verified.httpStatus });
         return;
       }
-      const data =
-        details.json.data && typeof details.json.data === "object"
-          ? (details.json.data as Record<string, unknown>)
-          : details.json;
-      paymentStatus = String(data.payment_status ?? data.status ?? "").toLowerCase();
+      paymentStatus = verified.status;
     } catch (err) {
       res.status(502).json({
         error: "slickpay_verify_network_error",
@@ -514,142 +687,183 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
       return;
     }
 
-    type RenewLicenceRow = {
-      id: string;
-      tenant_id: string;
-      max_machines: number;
-      expires_at: string | null;
-      revoked_at: string | null;
-    };
-    const extraSlots = Math.max(0, order.extra_slots ?? 0);
-    const nowIso = new Date().toISOString();
-    let issuedNewLicense = false;
-    let previousExpires: string | null = null;
-    let nextExpires = "";
-    let nextMaxMachines = 0;
-    let finalLicense: RenewLicenceRow | undefined;
-    let licenceRevoked = false;
-    try {
-      let raceAlreadyPaid = false;
-      await db.tx(async () => {
-        // Two deliveries of the same webhook must not both extend the licence, and two different
-        // paid orders of one tenant must extend it one after the other (each from the latest
-        // expiry): lock the tenant's renewals and the order, then read the licence under the lock.
-        await db.lockXact("licence-renewal", order.tenant_id);
-        const locked = await db.get<{ status: string }>(
-          `SELECT status FROM payment_orders WHERE id = ? FOR UPDATE`,
-          order.id,
-        );
-        if (locked?.status === "paid") {
-          raceAlreadyPaid = true;
-          return;
-        }
-        let license = order.license_id
-          ? await db.get<RenewLicenceRow>(
-              `SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys WHERE id = ? FOR UPDATE`,
-              order.license_id,
-            )
-          : undefined;
-        if (!license) {
-          license = await pickActiveLicenseForTenant(order.tenant_id);
-        }
-        if (license?.revoked_at) {
-          licenceRevoked = true;
-          await db.run(
-            `UPDATE payment_orders SET status = 'failed', error_message = 'license_revoked', updated_at = mfx_utc_now_text() WHERE id = ?`,
-            order.id,
-          );
-          return;
-        }
-        previousExpires = license?.expires_at ?? null;
-        nextExpires = computeLicenseExpiresPlusOneYear(license?.expires_at ?? null);
-        nextMaxMachines = license ? license.max_machines + extraSlots : 1 + extraSlots;
-        finalLicense = license;
-        if (!finalLicense) {
-          const issued = await issueLicenseForPaidOrder({
-            tenantId: order.tenant_id,
-            maxMachines: nextMaxMachines,
-            expiresAt: nextExpires,
-          });
-          finalLicense = {
-            id: issued.id,
-            tenant_id: order.tenant_id,
-            max_machines: issued.max_machines,
-            expires_at: issued.expires_at,
-            revoked_at: null,
-          };
-          issuedNewLicense = true;
-        } else {
-          await db.run(
-            `UPDATE license_keys SET expires_at = ?, max_machines = ? WHERE id = ?`,
-            nextExpires,
-            nextMaxMachines,
-            finalLicense.id,
-          );
-        }
-        await db.run(`UPDATE tenants SET entitlement_lineage = entitlement_lineage + 1 WHERE id = ?`, finalLicense.tenant_id);
-        await db.run(
-          `UPDATE payment_orders
-           SET status = 'paid', paid_at = ?, license_id = ?, slickpay_invoice_id = COALESCE(slickpay_invoice_id, ?),
-               updated_at = mfx_utc_now_text()
-           WHERE id = ?`,
-          nowIso,
-          finalLicense.id,
-          invoiceId,
-          order.id,
-        );
-      });
-      if (licenceRevoked) {
-        res.status(409).json({ error: "license_revoked" });
-        return;
-      }
-      if (raceAlreadyPaid) {
-        res.status(200).json({ ok: true, already_processed: true, payment_order_id: order.id });
-        return;
-      }
-    } catch (err) {
-      res.status(404).json({
-        error: "license_issue_failed",
-        tenant_id: order.tenant_id,
-        message: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-
-    if (!finalLicense) {
-      res.status(500).json({ error: "license_missing_after_payment" });
-      return;
-    }
-
-    await appendAuditRecord({
+    const outcome = await applyPaidOrder(order, invoiceId, {
       actor_id: "system_slickpay_webhook",
-      action_code: issuedNewLicense ? "license_issue" : "license_renew",
-      action_category: "billing",
-      correlation_id: order.id,
-      scope_tenant_id: finalLicense.tenant_id,
       reason_code: "slickpay_paid",
-      entity_refs: { tenant_id: finalLicense.tenant_id, entitlement_id: finalLicense.id },
-      payload: {
-        payment_order_id: order.id,
-        invoice_id: invoiceId,
-        plan: order.plan,
-        previous_expires_at: previousExpires,
-        expires_at: nextExpires,
-        max_machines: nextMaxMachines,
-        license_issued: issuedNewLicense,
-        entitlement_lineage_bumped: true,
-      },
     });
-
+    if (outcome.kind === "already_paid") {
+      res.status(200).json({ ok: true, already_processed: true, payment_order_id: order.id });
+      return;
+    }
+    if (outcome.kind === "license_revoked") {
+      res.status(409).json({ error: "license_revoked" });
+      return;
+    }
+    if (outcome.kind === "issue_failed") {
+      res.status(404).json({ error: "license_issue_failed", tenant_id: order.tenant_id, message: outcome.message });
+      return;
+    }
     res.status(200).json({
       ok: true,
       payment_order_id: order.id,
-      tenant_id: finalLicense.tenant_id,
-      license_id: finalLicense.id,
-      expires_at: nextExpires,
-      previous_expires_at: previousExpires,
-      max_machines: nextMaxMachines,
-      license_issued: issuedNewLicense,
+      tenant_id: outcome.tenantId,
+      license_id: outcome.licenseId,
+      expires_at: outcome.expiresAt,
+      previous_expires_at: outcome.previousExpiresAt,
+      max_machines: outcome.maxMachines,
+      license_issued: outcome.licenseIssued,
+    });
+  });
+
+  /**
+   * A customer's subscription: each licence's term (expiry, days left), slots (max / active) and
+   * every payment order exactly as stored. Whether SlickPay is configured (reconciliation and
+   * payment links need it) and the configured extra-slot price are included.
+   */
+  app.get("/api/v1/billing/tenants/:tenantId/subscription", authMiddleware, async (req, res) => {
+    const tenantId = req.params.tenantId;
+    const tenant = await db.get<{ id: string }>("SELECT id FROM tenants WHERE id = ?", tenantId);
+    if (!tenant) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    const licences = await db.all<{
+      id: string;
+      max_machines: number;
+      expires_at: string | null;
+      revoked_at: string | null;
+      update_channel: string;
+    }>(
+      `SELECT id, max_machines, expires_at, revoked_at, update_channel FROM license_keys
+       WHERE tenant_id = ? ORDER BY created_at DESC, id DESC`,
+      tenantId,
+    );
+    const payments = await db.all(
+      `SELECT ${PAYMENT_ORDER_COLUMNS} FROM payment_orders WHERE tenant_id = ? ORDER BY created_at DESC, id DESC`,
+      tenantId,
+    );
+    res.json({
+      tenant_id: tenantId,
+      licences: await Promise.all(
+        licences.map(async (l) => ({
+          ...l,
+          active_machines: await countActiveActivations(l.id),
+          days_left: l.revoked_at ? null : daysLeft(l.expires_at),
+        })),
+      ),
+      payments,
+      slickpay_configured: slickPayConfigured(),
+      extra_slot_price: Number.isFinite(SLICKPAY_EXTRA_SLOT_PRICE) && SLICKPAY_EXTRA_SLOT_PRICE > 0 ? SLICKPAY_EXTRA_SLOT_PRICE : null,
+    });
+  });
+
+  /** Payment orders of every customer (filters: status, tenant_id), newest first. */
+  app.get("/api/v1/billing/payments", authMiddleware, async (req, res) => {
+    const parsed = PaymentsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "query");
+      return;
+    }
+    const where: string[] = [];
+    const params: string[] = [];
+    if (parsed.data.status) {
+      where.push("status = ?");
+      params.push(parsed.data.status);
+    }
+    if (parsed.data.tenant_id) {
+      where.push("tenant_id = ?");
+      params.push(parsed.data.tenant_id);
+    }
+    const rows = await db.all(
+      `SELECT ${PAYMENT_ORDER_COLUMNS} FROM payment_orders
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY created_at DESC, id DESC LIMIT 500`,
+      ...params,
+    );
+    res.json(rows);
+  });
+
+  /**
+   * Reconciliation: asks SlickPay for the invoice's real status. An invoice SlickPay reports as paid
+   * that was not applied (lost webhook) is applied now, exactly as the webhook would. Nothing else
+   * changes the order's status: the answer is recorded as last_reconciled_status. Audited.
+   */
+  app.post("/api/v1/billing/payments/:orderId/reconcile", authMiddleware, async (req, res) => {
+    const reason = req.header("X-Operator-Reason")?.trim() ?? "";
+    if (reason.length < PRIVILEGED_REASON_MIN_LENGTH) {
+      res.status(400).json({ error: "missing_reason_code" });
+      return;
+    }
+    if (!slickPayConfigured()) {
+      res.status(503).json({ error: "slickpay_not_configured" });
+      return;
+    }
+    const order = await db.get<PaidOrderRef & { slickpay_invoice_id: string | null }>(
+      "SELECT id, tenant_id, license_id, plan, extra_slots, status, slickpay_invoice_id FROM payment_orders WHERE id = ?",
+      req.params.orderId,
+    );
+    if (!order) {
+      res.status(404).json({ error: "payment_order_not_found" });
+      return;
+    }
+    if (!order.slickpay_invoice_id) {
+      res.status(409).json({ error: "no_invoice", message: "This order never reached SlickPay (no invoice)." });
+      return;
+    }
+    let verified: Awaited<ReturnType<typeof fetchInvoiceStatus>>;
+    try {
+      verified = await fetchInvoiceStatus(order.slickpay_invoice_id);
+    } catch (err) {
+      res.status(502).json({ error: "slickpay_verify_network_error", message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    if (!verified.ok) {
+      res.status(502).json({ error: "slickpay_verify_failed", status: verified.httpStatus });
+      return;
+    }
+    const storedStatus = order.status;
+    let outcome = "unchanged";
+    let applied = false;
+    if (verified.status === "paid" && order.status !== "paid") {
+      const result = await applyPaidOrder(order, order.slickpay_invoice_id, {
+        actor_id: resolveActorId(req),
+        reason_code: "slickpay_reconciled",
+      });
+      outcome = result.kind;
+      applied = result.kind === "applied";
+    } else if (verified.status !== "paid" && order.status === "paid") {
+      // Never undone automatically: a paid order SlickPay no longer reports as paid needs a person.
+      outcome = "mismatch_paid_here_not_at_slickpay";
+    }
+    await db.run(
+      "UPDATE payment_orders SET last_reconciled_at = ?, last_reconciled_status = ? WHERE id = ?",
+      new Date().toISOString(),
+      verified.status,
+      order.id,
+    );
+    await appendAuditRecord({
+      actor_id: resolveActorId(req),
+      action_code: "payment_reconciled",
+      action_category: "billing",
+      correlation_id: order.id,
+      scope_tenant_id: order.tenant_id,
+      reason_code: reason,
+      entity_refs: { tenant_id: order.tenant_id, entitlement_id: order.license_id ?? undefined },
+      payload: {
+        payment_order_id: order.id,
+        invoice_id: order.slickpay_invoice_id,
+        stored_status: storedStatus,
+        slickpay_status: verified.status,
+        outcome,
+      },
+    });
+    res.json({
+      payment_order_id: order.id,
+      stored_status: storedStatus,
+      slickpay_status: verified.status,
+      applied,
+      outcome,
+      order: await db.get(`SELECT ${PAYMENT_ORDER_COLUMNS} FROM payment_orders WHERE id = ?`, order.id),
     });
   });
 }

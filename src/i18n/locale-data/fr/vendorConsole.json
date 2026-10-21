@@ -5,7 +5,8 @@
     "tenantSearchPlaceholder": "Tenant / machine / id de corrélation…",
     "tenantSearchAria": "Contexte de recherche opérationnel",
     "degradedBanner": "Dégradé : vérifier files et stockage objet.",
-    "hostHint": "console.maintafox.systems"
+    "hostHint": "console.maintafox.systems",
+    "consoleName": "Console éditeur"
   },
   "nav": {
     "aria": "Sections console fournisseur",
@@ -16,8 +17,15 @@
     "machines": "Machines",
     "sync": "Synchronisation",
     "rollouts": "Déploiements",
-    "health": "Santé plateforme",
-    "audit": "Audit et preuves"
+    "health": "État du système",
+    "audit": "Audit et preuves",
+    "operators": "Opérateurs",
+    "billing": "Facturation",
+    "licences": "Licences et éditions",
+    "devices": "Appareils",
+    "updates": "Mises à jour",
+    "support": "Support",
+    "settings": "Paramètres et équipe"
   },
   "home": {
     "title": "Vue d'ensemble du plan de contrôle",
@@ -34,7 +42,10 @@
     "ops": {
       "openAlerts": "Alertes ouvertes",
       "worst": "Pire : {{s}}",
-      "dlq": "DLQ (agrégé)"
+      "dlq": "DLQ (agrégé)",
+      "empty": "Aucune alerte d'exploitation active.",
+      "refresh": "Actualiser",
+      "refreshing": "Actualisation…"
     },
     "drill": {
       "customers": "Ouvrir clients",
@@ -82,7 +93,89 @@
     "previewAudit": "Prévisualiser charge utile d'audit",
     "submit": "Soumettre (VPS)",
     "pageTitle": "Licences",
-    "pageBody": "Cycle de vie gouverné, aperçu signé et approbation pour actions destructives."
+    "pageBody": "Cycle de vie gouverné, aperçu signé et approbation pour actions destructives.",
+    "addKey": "Ajouter / émettre une clé",
+    "confirmRevokeBody": "Révoque la clé {{id}} et bloque les nouvelles activations. Les activations existantes sont invalidées selon la politique. L'action est conservée pour l'audit.",
+    "confirmRevokeTitle": "Révoquer la clé de licence ?",
+    "editHint": "Modifier la limite de postes, le canal ou l'échéance. Une justification de l'opérateur est requise pour l'audit.",
+    "editKey": "Mettre à jour la clé de licence",
+    "issueHint": "Émettre une nouvelle clé de licence pour le tenant sélectionné. Cette action crée une vraie clé dans l'API du plan de contrôle.",
+    "listHint": "Trouvez et inspectez rapidement les clés. Chaque ligne ouvre toutes les métadonnées de la clé et ses actions de cycle de vie.",
+    "listTitle": "Clés de licence",
+    "loading": "Chargement des clés de licence…",
+    "noLicenses": "Aucune clé émise pour ce tenant.",
+    "noLicensesHint": "Utilisez « Ajouter / émettre une clé » dans la barre ci-dessus pour créer la première clé de ce tenant.",
+    "noMatches": "Aucune clé ne correspond aux filtres.",
+    "noTenants": "Aucun tenant disponible",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "search": "Rechercher des clés",
+    "searchPlaceholder": "Rechercher par clé, id, tenant",
+    "sortBy": "Trier par",
+    "sortDirection": "Ordre de tri",
+    "stateFilter": "Filtre d'état",
+    "tenant": "Tenant",
+    "validation": {
+      "maxMachines": "La limite de postes doit être un nombre entre 1 et 1000.",
+      "expiryInvalid": "L'échéance doit être une date et heure valide.",
+      "expiryPast": "L'échéance ne peut pas être dans le passé.",
+      "reasonCode": "Le code motif doit contenir au moins 2 caractères.",
+      "rationale": "La justification de l'opérateur doit contenir au moins 8 caractères."
+    },
+    "packetNote": "À transmettre de façon sécurisée au seul contact d’intégration du client.",
+    "packetExported": "Dossier d’intégration exporté pour {{id}}.",
+    "selectTenantFirst": "Sélectionnez d’abord un tenant.",
+    "selectKeyFirst": "Sélectionnez d’abord une clé.",
+    "alreadyRevoked": "Cette clé est déjà révoquée.",
+    "selectTenantHint": "Sélectionnez un tenant pour émettre ou gérer ses clés de licence.",
+    "state": {
+      "all": "Toutes",
+      "active": "Active",
+      "expired": "Expirée",
+      "revoked": "Révoquée"
+    },
+    "col": {
+      "issuedAt": "Émise le",
+      "expiry": "Échéance",
+      "slots": "Limite de postes",
+      "keyId": "ID de clé",
+      "licenseKey": "Clé de licence",
+      "issued": "Émise",
+      "state": "État",
+      "slotsShort": "Postes",
+      "actions": "Actions",
+      "channel": "Canal"
+    },
+    "retryTenants": "Recharger les tenants",
+    "retryKeys": "Recharger les clés",
+    "editKeyTitle": "Modifier la clé",
+    "revokedNotEditable": "Une clé révoquée ne peut pas être modifiée",
+    "revokeKey": "Révoquer la clé",
+    "expiryOptional": "Échéance (facultative)",
+    "rationale": "Justification de l’opérateur",
+    "completeBeforeSaving": "Complétez les points suivants avant d’enregistrer :",
+    "updated": "La clé {{id}} a été mise à jour.",
+    "revokeReason": "Motif de révocation (conservé dans le journal d’audit)",
+    "revokeReasonPh": "ex. : rotation de clé, revue de sécurité",
+    "revoked": "La clé {{id}} a été révoquée.",
+    "revoking": "Révocation…",
+    "noTenantSelected": "Aucun tenant sélectionné",
+    "expiryHint": "Pré-remplie à environ 30 jours. Videz le champ pour aucune échéance.",
+    "reasonCodeOptional": "Code motif de l’opérateur (facultatif)",
+    "rationalePh": "Expliquez pourquoi cette clé est émise.",
+    "completeBeforeIssuing": "Complétez les points suivants avant d’émettre :",
+    "issued": "La clé {{id}} a été émise.",
+    "issuing": "Émission…",
+    "issueKey": "Émettre la clé",
+    "detailTitle": "Détail de la clé de licence",
+    "detailBody": "Consultez les métadonnées de la clé, exportez le dossier d’intégration ou révoquez. La colonne Actions de la liste permet de modifier ou de révoquer.",
+    "selectKeyDetail": "Sélectionnez une clé pour voir son détail.",
+    "handoffHint": "Utilisez la copie ou l’export ci-dessous pour remettre la clé en sécurité au contact d’intégration du client.",
+    "copied": "Clé d’activation copiée pour {{id}}.",
+    "copying": "Copie…",
+    "copyKey": "Copier la clé d’activation",
+    "exportPacket": "Exporter le dossier d’intégration",
+    "actionsHint": "Modifiez ou révoquez les clés depuis la colonne Actions de la liste. Une clé révoquée reste dans la piste d’audit."
   },
   "customers": {
     "title": "Clients",
@@ -100,7 +193,8 @@
       "edition": "Édition",
       "cohort": "Cohorte",
       "channel": "Canal",
-      "actions": "Actions"
+      "actions": "Actions",
+      "created": "Créé le"
     },
     "bulk": {
       "title": "Réaffectation de canal en masse (simulation)",
@@ -128,6 +222,138 @@
       "title": "Lever la suspension ?",
       "body": "Les appareils de « {{name}} » peuvent de nouveau synchroniser ; chacun récupère une politique à jour à sa prochaine vérification de licence.",
       "confirm": "Lever la suspension"
+    },
+    "addCompany": "Ajouter un client / une société",
+    "addDescription": "Créer une nouvelle société cliente. Les champs sont validés avant l'envoi à l'API du plan de contrôle.",
+    "addFirstCompany": "Ajouter le premier client / la première société",
+    "channelFilter": "Filtre de canal",
+    "clearFilters": "Effacer les filtres",
+    "companyName": "Nom de la société",
+    "confirmDelete": "Supprimer définitivement",
+    "confirmDeleteBody": "Supprime définitivement « {{name}} » ({{slug}}) ainsi que toutes ses clés de licence et activations. Action irréversible.",
+    "confirmDeleteTitle": "Supprimer le client ?",
+    "creatingTenant": "Création…",
+    "deleteTenant": "Supprimer le tenant",
+    "deletingTenant": "Suppression…",
+    "editCompany": "Modifier le client / la société",
+    "editDescription": "Mettre à jour les métadonnées du tenant. L'identifiant doit rester unique parmi tous les clients.",
+    "editTenant": "Modifier le tenant",
+    "empty": "Aucun client trouvé.",
+    "filterAllChannels": "Tous les canaux",
+    "listHint": "Recherchez, filtrez, triez et sélectionnez un client avant de modifier les paramètres du tenant.",
+    "listTitle": "Liste des clients",
+    "loading": "Chargement des clients…",
+    "noResults": "Aucun client ne correspond aux filtres.",
+    "refreshTenants": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer",
+    "saveChanges": "Enregistrer les modifications",
+    "savingTenant": "Enregistrement…",
+    "searchLabel": "Rechercher des clients",
+    "searchPlaceholder": "Rechercher par identifiant, société, id, cohorte",
+    "selectTenantFirst": "Sélectionnez une ligne client pour voir les métadonnées et politiques du tenant.",
+    "sortAsc": "Croissant",
+    "sortBy": "Trier par",
+    "sortDesc": "Décroissant",
+    "sortDirection": "Ordre de tri",
+    "tenantChannel": "Canal de mise à jour du tenant",
+    "tenantName": "Nom affiché du tenant",
+    "validation": {
+      "slugRequired": "L'identifiant est obligatoire.",
+      "slugFormat": "Utilisez uniquement des minuscules, des chiffres et des tirets.",
+      "slugLength": "L'identifiant doit contenir entre 3 et 64 caractères.",
+      "nameRequired": "Le nom de la société est obligatoire.",
+      "nameLength": "Le nom de la société doit contenir entre 2 et 120 caractères.",
+      "cohortRequired": "La cohorte de déploiement est obligatoire.",
+      "cohortLength": "La cohorte de déploiement doit contenir 64 caractères au plus."
+    },
+    "updatedDone": "Le client « {{name}} » a été mis à jour.",
+    "addedDone": "Le client « {{name}} » a été ajouté.",
+    "deletedDone": "Le client « {{name}} » a été supprimé.",
+    "policy": {
+      "title": "Mises à jour imposées",
+      "body": "Imposez une version minimale de l’application de bureau par tenant ou par cohorte. Le mode urgence bloque les opérations jusqu’à la mise à jour.",
+      "loading": "Chargement de la politique…",
+      "retry": "Recharger la politique",
+      "selectTenant": "Sélectionnez un tenant pour gérer ses mises à jour imposées.",
+      "auditReason": "Motif d’audit (conservé dans le journal d’audit)",
+      "tenantOverride": "Dérogation du tenant ({{slug}})",
+      "minVersion": "Version minimale de l’application",
+      "minVersionHint": "MAJEUR.MINEUR.CORRECTIF, par ex. 1.8.0 (\"2\", \"2.0\" et \"v2.0.0\" sont aussi acceptés). Une préversion comme 0.4.0-dev compte comme inférieure à 0.4.0. Laisser vide conserve la version minimale actuelle ; « Retirer la version minimale » la supprime.",
+      "mode": "Mode",
+      "modes": {
+        "inherit": "Hériter de la politique de la cohorte",
+        "off": "Désactivé",
+        "required": "Obligatoire (version minimale)",
+        "emergency": "Urgence (bloque jusqu’à la mise à jour)"
+      },
+      "userReason": "Motif affiché avec la demande de mise à jour",
+      "needReason": "Saisissez un motif d’audit ci-dessus pour activer ces actions (votre code d’authentification est demandé à l’application).",
+      "applyTenant": "Appliquer la politique du tenant",
+      "applyCohort": "Appliquer la politique de la cohorte",
+      "rollbackTenant": "Revenir à la politique précédente du tenant",
+      "rollbackCohort": "Revenir à la politique précédente de la cohorte",
+      "cohortBaseline": "Base de la cohorte ({{channel}} / {{cohort}})",
+      "removeFloor": "Retirer la version minimale",
+      "floorRemoved": "Version minimale {{floor}} retirée. Un retour en arrière la rétablit.",
+      "removeFloorDialog": {
+        "title": "Retirer la version minimale ?",
+        "tenantTarget": "Retire la version minimale {{floor}} de la règle du client {{name}}. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "cohortTarget": "Retire la version minimale {{floor}} de la règle du groupe de déploiement {{cohort}} sur le canal {{channel}} : elle couvre tous les clients de ce groupe qui suivent la règle du groupe. Le mode et le message affiché aux utilisateurs restent inchangés.",
+        "effect": {
+          "emergency": "Le mode Urgence reste actif : tous les PC couverts par cette règle restent bloqués, quelle que soit leur version, jusqu’à ce que le mode change.",
+          "required": "En mode « Obligatoire », une règle sans version minimale demande à tous les PC de se mettre à jour : elle ne peut donc pas être retirée maintenant. Passez d’abord le mode sur Désactivé, puis retirez la version minimale.",
+          "off": "Le mode est Désactivé : rien ne change pour les PC maintenant.",
+          "inherit": "Ce client suit la règle de son groupe de déploiement : rien ne change pour les PC maintenant."
+        },
+        "rollbackNote": "La règle d’avant est conservée : un retour en arrière rétablit {{floor}}.",
+        "confirm": "Retirer la version minimale"
+      }
+    },
+    "completeBeforeAdding": "Complétez les points suivants avant d’ajouter ce client :",
+    "status": {
+      "active": "Actif",
+      "expires_soon": "Expire bientôt",
+      "expired": "Licence terminée",
+      "not_activated": "Non activé",
+      "no_licence": "Sans licence",
+      "suspended": "Suspendu",
+      "unknown": "Inconnu"
+    },
+    "table": {
+      "search": "Rechercher",
+      "searchPh": "Nom ou code",
+      "col": {
+        "customer": "Client",
+        "edition": "Édition",
+        "devices": "Appareils",
+        "licenceUntil": "Licence jusqu'au",
+        "status": "Statut",
+        "open": "Ouvrir"
+      },
+      "seats": "{{used}} / {{seats}}",
+      "noEndDate": "Sans échéance",
+      "ended": "Terminée le {{date}}",
+      "open": "Ouvrir",
+      "openNamed": "Ouvrir {{name}}",
+      "emptyTitle": "Aucun client pour l'instant",
+      "emptyBody": "Ajoutez votre premier client, puis donnez-lui une clé de licence pour activer ses ordinateurs.",
+      "noMatch": "Aucun client ne correspond à cette recherche."
+    },
+    "page": {
+      "subtitle": "Tous les utilisateurs de Maintafox, leur situation et la suite à donner.",
+      "filter": "Afficher les clients par statut",
+      "all": "Tous"
+    },
+    "form": {
+      "newBody": "Le client reçoit un code utilisé dans sa clé de licence. Vous pourrez lui donner une licence juste après.",
+      "slugHint": "Minuscules, chiffres et tirets, ex. acme-industries. Il ne peut pas servir à un autre client.",
+      "cohortHint": "Les clients d'un même groupe reçoivent les mises à jour ensemble (stable-main sauf si vous testez avec certains).",
+      "channels": {
+        "stable": "Stable (recommandé)",
+        "pilot": "Pilote (mises à jour en avance)",
+        "internal": "Interne (nos tests)"
+      }
     }
   },
   "editions": {
@@ -242,8 +468,65 @@
         "title": "Demander à cet appareil de rafraîchir sa politique ?",
         "body": "{{fingerprint}} récupère sa licence, son édition et ses politiques à sa prochaine vérification de licence au lieu d'attendre son calendrier. Sa synchronisation est en pause jusque-là.",
         "confirm": "Demander le rafraîchissement"
+      },
+      "recovery": {
+        "title": "Donner à ce PC un code de récupération administrateur ?",
+        "body": "Crée un nouveau compte administrateur sur {{fingerprint}} (valable 24 h, usage unique). À utiliser quand le site ne peut plus administrer ce PC, par exemple quand son seul administrateur a oublié son mot de passe. Le code est signé par Maintafox et ne fonctionne que sur ce PC :",
+        "confirm": "Émettre le code",
+        "pointOnce": "Il crée un administrateur SUPPLÉMENTAIRE : il ne réinitialise ni ne débloque aucun compte existant. Le client désactive ensuite l'ancien compte.",
+        "pointNotice": "Chaque administrateur actif du PC voit un avis permanent indiquant qu'un code de récupération a été utilisé, jusqu'à ce qu'il en prenne connaissance.",
+        "pointExpiry": "Il est valable 24 heures et ne peut servir qu'une fois.",
+        "pointShownOnce": "Il ne vous est affiché qu'une fois ; Maintafox ne le conserve pas.",
+        "stillValid_one": "{{count}} code émis plus tôt pour ce PC est encore valable (jusqu'au {{at}}).",
+        "stillValid_other": "{{count}} codes émis plus tôt pour ce PC sont encore valables (jusqu'au {{at}}).",
+        "requestedByLabel": "Qui l'a demandé chez le client (nom et fonction)",
+        "identityCheckLabel": "Comment vous avez vérifié son identité auprès du contact enregistré du client",
+        "identityCheckChoose": "Choisir…",
+        "identityCheck": {
+          "callback_registered_phone": "Rappel au numéro de téléphone enregistré",
+          "email_from_registered_address": "E-mail venant de l'adresse enregistrée",
+          "in_person": "En personne",
+          "other": "Autre (précisez ci-dessous)"
+        },
+        "identityNoteRequired": "Comment l'identité a été vérifiée (obligatoire, 5 à 200 caractères)",
+        "identityNoteOptional": "Remarque sur la vérification d'identité (facultative)",
+        "historyTitle": "Codes émis pour ce PC",
+        "historyRow": "{{at}} : demandé par {{who}}, {{check}}",
+        "historyValid": "valable jusqu'au {{at}}",
+        "historyExpired": "expiré"
       }
-    }
+    },
+    "activationClaim": "Revendication d'activation (API réelle)",
+    "activationClaimHint": "Vérifie que le point d'activation du plan de contrôle accepte une clé et une empreinte de machine.",
+    "empty": "Aucune machine activée pour ce tenant pour l'instant.",
+    "extendGrace": "Prolonger la grâce (+{{hours}} h)",
+    "loading": "Chargement des activations de machines…",
+    "noTenants": "Aucun tenant",
+    "refresh": "Actualiser l'état des machines du tenant",
+    "refreshing": "Actualisation…",
+    "selectedTenant": "Tenant sélectionné",
+    "tenant": "Tenant",
+    "toggleTrustRule": "Basculer la déconnexion en cas de révocation de confiance",
+    "graceExtended": "La période de grâce hors ligne est maintenant de {{hours}} h.",
+    "trustRuleUpdated": "Comportement de révocation de confiance mis à jour.",
+    "policyDialog": {
+      "extendGrace": {
+        "title": "Prolonger la période de grâce hors ligne ?",
+        "body": "Les appareils de ce client pourront rester hors ligne {{hours}} heures de plus avant de devoir joindre le serveur.",
+        "confirm": "Prolonger"
+      },
+      "toggleTrust": {
+        "title": "Changer l’effet d’une révocation de confiance ?",
+        "body": "Bascule entre une déconnexion immédiate et une déconnexion à la prochaine vérification de licence lorsqu’on révoque la confiance d’un appareil.",
+        "confirm": "Changer"
+      }
+    },
+    "licenseKey": "Clé de licence",
+    "fingerprint": "Empreinte de la machine",
+    "appVersion": "Version de l’application",
+    "claimDone": "Activation revendiquée ; données des machines actualisées.",
+    "claiming": "Revendication…",
+    "claim": "Revendiquer l’activation"
   },
   "sync": {
     "title": "Synchronisation",
@@ -272,15 +555,15 @@
     },
     "repair": {
       "title": "File de réparation",
-      "hint": "Actions explicites ; validation RBAC côté serveur.",
+      "hint": "Mesuré par le serveur. Les éléments refusés se rejouent depuis l'appareil lui-même (son centre de synchronisation : le serveur n'en garde que les identifiants et les motifs) ; un appareil dont la copie est fausse peut être entièrement resynchronisé ci-dessous.",
       "col": {
         "id": "Élément",
         "tenant": "Tenant",
         "queue": "File",
         "sev": "Gravité",
-        "summary": "Résumé",
-        "actions": "Actions"
-      }
+        "summary": "Résumé"
+      },
+      "empty": "La file de réparation est vide."
     },
     "anomalies": {
       "title": "Anomalies politique heartbeat impactant la sync",
@@ -289,13 +572,144 @@
         "machine": "Machine",
         "code": "Code",
         "detected": "Détecté"
-      }
+      },
+      "empty": "Aucune anomalie de heartbeat détectée."
     },
     "drill": {
       "title": "Détail des échecs",
       "empty": "Aucune ligne d'échec pour ce tenant.",
       "attempts": "Tentatives"
-    }
+    },
+    "timeline": {
+      "title": "Historique de l'appareil",
+      "body": "Tout ce que le serveur a enregistré pour un appareil : échanges (et nouvelles tentatives), éléments refusés, conflits, resynchronisations et actions d'opérateurs.",
+      "customer": "Client",
+      "machine": "Machine",
+      "span": "Période",
+      "hours_one": "dernière heure",
+      "hours_other": "{{count}} dernières heures",
+      "protocol": "Protocole",
+      "lag": "Retard",
+      "checkpointAge": "Âge du point de reprise",
+      "lastSeen": "Vu pour la dernière fois",
+      "empty": "Rien d'enregistré sur cette période.",
+      "noMachine": "Aucune machine activée pour ce client.",
+      "resync": "Resynchronisation complète",
+      "resyncTitle": "Resynchroniser entièrement cet appareil ?",
+      "resyncBody": "À sa prochaine synchronisation, {{machine}} apprend que sa copie n'est plus à jour : il garde ses modifications non envoyées, retélécharge toutes les données, puis les envoie. À utiliser quand les données de l'appareil semblent fausses ou incomplètes.",
+      "resyncConfirm": "Resynchroniser",
+      "resyncRequested": "Resynchronisation demandée : elle démarre à la prochaine synchronisation de l'appareil.",
+      "resyncOpen": "Resynchronisation demandée le {{at}} par {{by}} : en attente de la prochaine synchronisation de l'appareil.",
+      "kind": {
+        "exchange": "Synchro",
+        "rejection": "Refusé",
+        "conflict": "Conflit",
+        "resync_requested": "Resynchro demandée",
+        "resync_completed": "Resynchro faite",
+        "operator_action": "Opérateur"
+      }
+    },
+    "empty": "Aucune télémétrie de synchronisation pour l'instant.",
+    "loading": "Chargement de la télémétrie de synchronisation…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "deletedAttachments": {
+      "title": "Photos et pièces jointes supprimées ou remplacées",
+      "body": "Le serveur garde l'élément supprimé ou remplacé et l'appareil qui a envoyé la modification. Les fichiers envoyés au serveur ne sont jamais supprimés. Pour une pièce jointe d'équipement, de demande ou d'ordre de travail, restaurez aussi son élément « Photo ou fichier » pour que les appareils téléchargent à nouveau le fichier. Un fichier qui n'a jamais été envoyé (par exemple depuis un PC hors ligne au moment de la suppression) ne peut pas être récupéré.",
+      "loading": "Chargement des pièces jointes supprimées ou remplacées…",
+      "empty": "Aucune photo ni pièce jointe n'a été supprimée ou remplacée par la synchronisation.",
+      "col": {
+        "deletedAt": "Modifié le",
+        "item": "Élément",
+        "device": "Appareil qui a envoyé la modification",
+        "state": "Version archivée",
+        "action": "Action",
+        "now": "Sur le serveur maintenant"
+      },
+      "type": {
+        "media_attachments": "Photo ou fichier",
+        "asset_photos": "Photo d'équipement",
+        "di_attachments": "Pièce jointe de demande",
+        "work_order_attachments": "Pièce jointe d'ordre de travail",
+        "library_documents": "Document de bibliothèque",
+        "asset_document_links": "Lien de document d'équipement",
+        "inventory_document_links": "Lien de document de stock"
+      },
+      "state": {
+        "deleted": "Supprimé",
+        "restored": "Restauré",
+        "replaced": "Remplacé",
+        "replacedByRestore": "Remplacé par une restauration"
+      },
+      "restoredBy": "Restauré le {{at}} par {{by}}",
+      "restore": "Restaurer",
+      "restoreTitle": "Restaurer cette version ?",
+      "restoreBody": "{{id}} : la version {{archived}}, conservée le {{at}}, remplace ce que le serveur a maintenant : {{current}}. Elle est envoyée à tous les appareils de ce client ; ce qu'elle remplace est conservé et peut aussi être restauré.",
+      "restoreConfirm": "Restaurer sur tous les appareils",
+      "restored": "Restauré : {{id}} est envoyé à tous les appareils à leur prochaine synchronisation.",
+      "file": {
+        "onServer": "Copie du fichier sur le serveur",
+        "notOnServer": "Pas de copie du fichier sur le serveur",
+        "unknown": "Copie du fichier sur le serveur inconnue"
+      },
+      "companion": {
+        "live": "Élément Photo ou fichier : {{id}} (présent)",
+        "archived": "Élément Photo ou fichier : {{id}} (supprimé ou remplacé : restaurez-le aussi)"
+      },
+      "byOperator": "Restauration par {{operator}}",
+      "archivedVersion": "Version {{version}} conservée",
+      "prior": {
+        "already_deleted": "Déjà supprimé : rien de conservé",
+        "unknown": "Inconnu du serveur : rien de conservé",
+        "present": "Version conservée"
+      },
+      "current": {
+        "none": "Aucun élément sur le serveur",
+        "live": "Version {{version}} (présente)",
+        "deleted": "Version {{version}} (supprimée)"
+      },
+      "period": {
+        "label": "Période",
+        "all": "Tout",
+        "days_one": "Dernier {{count}} jour",
+        "days_other": "Derniers {{count}} jours"
+      },
+      "view": {
+        "label": "Afficher",
+        "kept": "Supprimés ou remplacés (versions conservées)",
+        "nothing_kept": "Suppressions sans version conservée (jamais reçu ou déjà supprimé)",
+        "all": "Tout"
+      },
+      "search": {
+        "label": "Identifiant de l'élément",
+        "submit": "Rechercher"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} suppression sans version conservée ({{type}}, un élément que le serveur n'a jamais eu ou avait déjà supprimé), depuis l'appareil {{device}}",
+        "summary_other": "{{count}} suppressions sans version conservée ({{type}}, des éléments que le serveur n'a jamais eus ou avait déjà supprimés), depuis l'appareil {{device}}",
+        "show": "Les afficher"
+      },
+      "loadMore": "Afficher plus",
+      "device": {
+        "label": "Modifié par l'appareil",
+        "all": "Tous les appareils"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "Tous les types"
+      },
+      "before": {
+        "label": "Jusqu'au (date)"
+      },
+      "crossDevice": {
+        "label": "Seulement les versions écrites par un autre appareil",
+        "help": "Masque les modifications qu'un appareil a faites sur des éléments qu'il avait lui-même écrits, pour qu'un appareil ne puisse pas noyer un vrai élément sous ses propres suppressions. Décochez pour tout voir."
+      },
+      "keptSummary_one": "{{count}} modification avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "keptSummary_other": "{{count}} modifications avec version conservée depuis l'appareil {{device}} ({{cross}} sur la version d'un autre appareil)",
+      "priorOrigin": "version écrite par {{device}}"
+    },
+    "retry": "Réessayer"
   },
   "rollouts": {
     "title": "Déploiements",
@@ -307,7 +721,12 @@
       "tenants": "Tenants affectés",
       "machines": "Machines affectées",
       "channelOk": "Canal habilitation OK",
-      "blockers": "Blocages connus"
+      "blockers": "Blocages connus",
+      "yes": "Oui",
+      "no": "Non",
+      "noBlockers": "Aucun",
+      "noRelease": "Aucune version publiée pour l'instant",
+      "release": "v{{version}} · {{ring}} · {{percent}} %"
     },
     "cohorts": {
       "title": "Canaux et cohortes",
@@ -317,13 +736,15 @@
       "pause": "Mettre en pause",
       "recall": "Rappel",
       "resume": "Reprendre",
-      "recalledVersion": "Version rappelée : {{version}}"
+      "recalledVersion": "Version rappelée : {{version}}",
+      "empty": "Aucune cohorte disponible."
     },
     "diagnostics": {
       "title": "Diagnostics release (24h)",
       "hint": "Signature, migration et heartbeats post-déploiement dans une même vue.",
       "count": "{{n}} événements",
-      "last": "Dernier"
+      "last": "Dernier",
+      "empty": "Aucun diagnostic de déploiement disponible."
     },
     "governance": {
       "deviceNotice": "La pause et le rappel sont enregistrés sur le serveur, inscrits au journal d'audit et transmis à chaque appareil de la cohorte avec sa politique. Les postes de travail agiront dessus quand le module de mise à jour (phase 5 du plan) existera : aujourd'hui ils n'installent pas de mises à jour d'eux-mêmes, donc rien ne change encore pour eux.",
@@ -348,7 +769,11 @@
         "confirm": "Rappeler",
         "versionLabel": "Version à rappeler (ex. 1.4.2)"
       }
-    }
+    },
+    "loading": "Chargement de la télémétrie des déploiements…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer"
   },
   "health": {
     "title": "Santé plateforme",
@@ -356,7 +781,17 @@
     "pageTitle": "Santé plateforme et incidents",
     "pageBody": "Télémétrie unifiée, pression infra et propriété des alertes. Perçage tenant-safe.",
     "services": {
-      "title": "État des services"
+      "title": "État des services",
+      "empty": "Aucune télémétrie de service disponible.",
+      "names": {
+        "api": "API",
+        "workers": "Tâches de fond",
+        "postgresql": "PostgreSQL",
+        "redis": "Redis",
+        "object_storage": "Stockage objet",
+        "admin_ui": "Console d'administration",
+        "backups": "Sauvegardes"
+      }
     },
     "pressure": {
       "title": "Pression infrastructure",
@@ -366,14 +801,19 @@
         "value": "Valeur",
         "threshold": "Indication seuil",
         "trend": "Tendance"
-      }
+      },
+      "empty": "Aucune mesure de charge de l'infrastructure disponible."
     },
     "drill": {
       "title": "Vues opérationnelles liées",
       "body": "Liens d'incident tenant-safe vers sync et déploiements sans données client hors périmètre.",
       "sync": "Ouvrir santé sync",
       "rollouts": "Ouvrir déploiements"
-    }
+    },
+    "loading": "Chargement de la télémétrie de la plateforme…",
+    "refresh": "Actualiser",
+    "refreshing": "Actualisation…",
+    "retry": "Réessayer"
   },
   "ops": {
     "alerts": {
@@ -384,7 +824,8 @@
       "owner": "Propriétaire (id acteur)",
       "ack": "Accuser réception",
       "note": "Ajouter une note",
-      "readOnly": "Géré par le workflow d'alerte amont ; ce panneau est en lecture seule."
+      "readOnly": "Géré par le workflow d'alerte amont ; ce panneau est en lecture seule.",
+      "empty": "Aucune alerte dans cette vue."
     }
   },
   "audit": {
@@ -408,14 +849,7 @@
       "chainFail": "Problème chaîne ou intégrité",
       "open": "Ouvrir",
       "filter": {
-        "all": "Toutes les catégories",
-        "auth": "Auth / session",
-        "entitlement": "Habilitation",
-        "machine": "Machine",
-        "sync": "Réparation sync",
-        "rollout": "Déploiement",
-        "platform": "Plateforme",
-        "support": "Support"
+        "all": "Toutes les catégories"
       },
       "col": {
         "seq": "Seq",
@@ -433,7 +867,27 @@
         "snapshots": "SHA-256 avant / après",
         "chainPrev": "Hachage chaîne précédente",
         "refs": "Références entités (perçage)",
-        "severityHint": "Gravité opérationnelle (alertes liées)"
+        "severityHint": "Gravité opérationnelle (alertes liées)",
+        "severityNotProvided": "Non fourni par l'API d'audit pour un enregistrement isolé."
+      },
+      "empty": "Aucun enregistrement d'audit pour ce filtre.",
+      "export": "Exporter en CSV",
+      "loading": "Chargement des enregistrements d'audit…",
+      "refresh": "Actualiser",
+      "categories": {
+        "auth_session": "Connexion / session (bureau)",
+        "entitlement": "Licences et postes",
+        "machine": "Confiance des machines",
+        "sync_repair": "Réparation de synchro",
+        "rollout_intervention": "Mises à jour imposées",
+        "platform_override": "Dérogation plateforme",
+        "support_intervention": "Support",
+        "vendor_auth": "Connexion à la console",
+        "tenant": "Clients",
+        "operator": "Opérateurs",
+        "billing": "Facturation",
+        "rollout": "Gouvernance des déploiements",
+        "release": "Versions du logiciel"
       }
     },
     "support": {
@@ -447,8 +901,19 @@
           "sev": "Gravité",
           "module": "Module",
           "sync": "Indic. sync",
-          "audit": "IDs audit liés"
-        }
+          "audit": "IDs audit liés",
+          "intervene": "Intervention"
+        },
+        "empty": "Aucun ticket de support pour l'instant.",
+        "export": "Exporter en CSV",
+        "intervene": "Consigner une intervention",
+        "loading": "Chargement des tickets…",
+        "notePh": "Note d'intervention",
+        "refresh": "Actualiser",
+        "saving": "Enregistrement…",
+        "noteTooShort": "La note d'intervention doit contenir au moins 3 caractères.",
+        "intervened": "Intervention consignée pour {{id}}.",
+        "exported": "Tickets de support exportés (CSV)."
       },
       "bundle": {
         "title": "Paquets diagnostics",
@@ -462,7 +927,8 @@
           "size": "Taille",
           "ticket": "Ticket",
           "download": "Téléchargement"
-        }
+        },
+        "downloadStarted": "Téléchargement du lot de diagnostic {{id}} lancé (enregistré sous {{record}})."
       },
       "offline": {
         "title": "Réconciliation origine hors ligne",
@@ -471,11 +937,19 @@
           "vendor": "Ticket fournisseur",
           "sync": "État sync",
           "dup": "Doublon de"
-        }
+        },
+        "empty": "Aucune ligne de rapprochement hors ligne.",
+        "loading": "Chargement des lignes de rapprochement…"
       },
       "exports": {
         "title": "Types d'export conformité",
-        "syncLink": "Ouvrir preuves sync"
+        "syncLink": "Ouvrir preuves sync",
+        "kinds": {
+          "entitlement_history": "Historique des licences",
+          "machine_state_timeline": "Chronologie de l'état des machines",
+          "rollout_actions": "Actions de déploiement",
+          "support_resolution_chronology": "Chronologie de résolution du support"
+        }
       },
       "newTicket": {
         "title": "Ouvrir un ticket",
@@ -483,7 +957,9 @@
         "severity": "Gravité",
         "module": "Module (ex. sync)",
         "summary": "Quel est le problème ?",
-        "submit": "Ouvrir le ticket"
+        "submit": "Ouvrir le ticket",
+        "incomplete": "Choisissez un client et renseignez le module (2 caractères ou plus) et le résumé (3 caractères ou plus).",
+        "opened": "Ticket {{id}} ouvert."
       }
     },
     "harden": {
@@ -491,15 +967,20 @@
       "guards": {
         "title": "Garde-fous actions privilégiées",
         "body": "Le serveur refuse ces actions sans motif et sans nouveau code de l'application d'authentification, valable pour ce type d'action uniquement ; chaque tentative figure au journal d'audit.",
-        "kindsAria": "Actions qui demandent un nouveau code d'authentification"
+        "kindsAria": "Actions qui demandent un nouveau code d'authentification",
+        "refresh": "Actualiser"
       },
       "runbooks": {
-        "title": "Guides d'incident"
+        "title": "Guides d'incident",
+        "empty": "Aucune procédure publiée pour l'instant.",
+        "loading": "Chargement des procédures…"
       },
       "readiness": {
         "title": "Matrice de readiness (drills)",
         "pass": "OK",
-        "gap": "Écart"
+        "gap": "Écart",
+        "empty": "Aucun contrôle de préparation disponible.",
+        "loading": "Chargement de la matrice de préparation…"
       }
     }
   },
@@ -517,17 +998,20 @@
     "kinds": {
       "mass_machine_revoke": "révoquer plusieurs machines",
       "entitlement_suspension": "révoquer une licence ou suspendre un client",
-      "forced_rollback": "annuler une politique de mise à jour ou rappeler un déploiement",
+      "forced_rollback": "annuler une politique de mise à jour, rappeler une version ou un déploiement",
       "tenant_restore": "lever la suspension d'un client",
       "signing_key_rotation": "changer la clé de signature des licences",
-      "rollout_publish": "définir une politique de mise à jour, suspendre ou reprendre un déploiement",
+      "rollout_publish": "définir une politique de mise à jour, publier une version, suspendre ou reprendre un déploiement",
       "machine_trust_change": "révoquer, rétablir, libérer ou réaffecter une machine",
       "offline_policy_change": "modifier une politique hors ligne",
       "support_intervention": "enregistrer une intervention de support",
       "sync_repair": "rejouer ou réparer la synchronisation d'un appareil",
       "vendor_user_admin": "modifier un opérateur de la console ou réinitialiser sa vérification en deux étapes",
       "tenant_delete": "supprimer un client et toutes ses données",
-      "own_mfa_change": "générer de nouveaux codes de secours"
+      "own_mfa_change": "générer de nouveaux codes de secours",
+      "release_publisher_key": "créer ou révoquer une clé du processus de publication",
+      "admin_recovery_code": "donner à un PC un code qui crée un nouvel administrateur",
+      "sync_attachment_restore": "restaurer une photo ou une pièce jointe supprimée par la synchronisation"
     }
   },
   "account": {
@@ -554,11 +1038,642 @@
       "title": "Vos nouveaux codes de secours",
       "body": "Chaque code sert une fois, si vous perdez votre application d'authentification. Ils ne sont affichés que maintenant : imprimez-les ou enregistrez-les en lieu sûr.",
       "done": "Je les ai enregistrés"
+    },
+    "password": {
+      "menu": "Changer le mot de passe",
+      "title": "Changer votre mot de passe",
+      "body": "Au moins {{min}} caractères. Vos autres sessions se terminent ; celle-ci continue.",
+      "current": "Mot de passe actuel",
+      "next": "Nouveau mot de passe",
+      "confirmLabel": "Nouveau mot de passe (à nouveau)",
+      "confirm": "Changer le mot de passe",
+      "done_one": "Mot de passe changé. {{count}} autre session terminée.",
+      "done_other": "Mot de passe changé. {{count}} autres sessions terminées."
     }
   },
   "operatorAction": {
     "reasonLabel": "Motif (conservé dans le journal d'audit)",
     "cancel": "Annuler",
     "working": "En cours…"
+  },
+  "operators": {
+    "title": "Opérateurs de la console",
+    "body": "Qui peut se connecter à cette console et ce qu'il peut faire. Le serveur vérifie le rôle de chaque opérateur à chaque requête ; chaque modification ici demande un motif et un nouveau code d'authentification, et est inscrite au journal d'audit.",
+    "add": "Ajouter un opérateur",
+    "loading": "Chargement des opérateurs…",
+    "empty": "Aucun opérateur.",
+    "you": "(vous)",
+    "never": "Jamais",
+    "roleFor": "Rôle de {{email}}",
+    "disable": "Désactiver",
+    "enable": "Activer",
+    "mfaReset": "Réinitialiser la vérification en deux étapes",
+    "delete": "Supprimer",
+    "col": {
+      "name": "Opérateur",
+      "role": "Rôle",
+      "status": "État",
+      "lastLogin": "Dernière connexion",
+      "actions": "Actions"
+    },
+    "status": {
+      "active": "Actif",
+      "disabled": "Désactivé",
+      "mfa": "Deux étapes activées",
+      "noMfa": "Pas encore configuré"
+    },
+    "roles": {
+      "owner": "Propriétaire",
+      "operations": "Exploitation",
+      "support": "Support",
+      "auditor": "Auditeur"
+    },
+    "rolesTitle": "Ce que chaque rôle peut faire",
+    "roleHelp": {
+      "owner": "tout, y compris gérer les opérateurs.",
+      "operations": "clients, licences, machines, déploiements, synchronisation et support ; ne gère pas les opérateurs.",
+      "support": "tickets et paquets de diagnostic, réparation de synchronisation ; lit le reste.",
+      "auditor": "lit le journal d'audit et l'état de la plateforme ; ne modifie rien."
+    },
+    "form": {
+      "email": "E-mail",
+      "name": "Nom",
+      "role": "Rôle",
+      "password": "Mot de passe initial (au moins {{min}} caractères ; transmettez-le vous-même)"
+    },
+    "done": {
+      "role": "Rôle de {{email}} modifié.",
+      "disabled": "{{email}} est désactivé : ses sessions sont terminées et il ne peut plus se connecter.",
+      "enabled": "{{email}} peut de nouveau se connecter.",
+      "deleted": "{{email}} a été supprimé (le journal d'audit conserve ses actions)."
+    },
+    "dialog": {
+      "create": {
+        "title": "Ajouter un opérateur",
+        "body": "Il se connecte avec cet e-mail et ce mot de passe, puis configure sa propre application d'authentification avec le code à usage unique affiché ensuite.",
+        "confirm": "Créer"
+      },
+      "role": {
+        "title": "Changer le rôle ?",
+        "body": "{{email}} devient {{role}}. Cela s'applique dès sa prochaine requête.",
+        "confirm": "Changer le rôle"
+      },
+      "disable": {
+        "title": "Désactiver cet opérateur ?",
+        "body": "{{email}} est déconnecté partout et ne peut plus se connecter avant réactivation. Le compte et son historique d'audit sont conservés.",
+        "confirm": "Désactiver"
+      },
+      "enable": {
+        "title": "Activer cet opérateur ?",
+        "body": "{{email}} peut de nouveau se connecter.",
+        "confirm": "Activer"
+      },
+      "mfaReset": {
+        "title": "Réinitialiser la vérification en deux étapes ?",
+        "body": "L'application d'authentification et les codes de secours de {{email}} cessent de fonctionner et il est déconnecté. Sa prochaine connexion demande le code de réinitialisation affiché ensuite, puis une nouvelle configuration.",
+        "confirm": "Réinitialiser"
+      },
+      "delete": {
+        "title": "Supprimer cet opérateur ?",
+        "body": "{{email}} est déconnecté et supprimé. Ses actions passées restent dans le journal d'audit.",
+        "confirm": "Supprimer"
+      }
+    },
+    "code": {
+      "enrolment": {
+        "title": "Code d'activation à usage unique",
+        "body": "Remettez ce code à {{email}} avec son mot de passe (si possible par un autre canal). Sa première connexion le demande avant la configuration de l'application d'authentification. Il n'est affiché que maintenant."
+      },
+      "reset": {
+        "title": "Code de réinitialisation à usage unique",
+        "body": "Remettez ce code à {{email}}. Sa prochaine connexion le demande, puis il configure de nouveau son application d'authentification. Il n'est affiché que maintenant."
+      },
+      "done": "Je l'ai transmis"
+    }
+  },
+  "billing": {
+    "title": "Facturation et abonnement",
+    "body": "Durée de licence, emplacements, et chaque paiement tel qu'enregistré. « Vérifier auprès de SlickPay » demande le vrai statut à SlickPay : un paiement n'est appliqué que si SlickPay le dit payé ; rien ici ne marque un paiement comme payé à la main.",
+    "customer": "Client",
+    "loading": "Chargement…",
+    "noLicence": "Aucune licence pour ce client.",
+    "noPayments": "Aucun paiement pour ce client.",
+    "noInvoice": "pas de facture (jamais arrivé chez SlickPay)",
+    "history": "Historique des paiements",
+    "extraSlots_one": "+{{count}} emplacement",
+    "extraSlots_other": "+{{count}} emplacements",
+    "lastChecked": "SlickPay a répondu « {{status}} » ({{at}})",
+    "slickpayOff": "SlickPay n'est pas configuré sur le serveur : liens de paiement et vérifications indisponibles (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} paiement n'est pas soldé : vérifiez-le auprès de SlickPay si le client dit avoir payé.",
+    "openOrders_other": "{{count}} paiements ne sont pas soldés : vérifiez-les auprès de SlickPay si le client dit avoir payé.",
+    "manualExtension": "Prolonger ou ajouter des emplacements à la main (Droits)",
+    "col": {
+      "created": "Créé",
+      "plan": "Offre",
+      "amount": "Montant",
+      "status": "Statut (enregistré)",
+      "slickpay": "Facture SlickPay",
+      "actions": "Actions"
+    },
+    "status": {
+      "pending": "En attente",
+      "awaiting_payment": "Paiement attendu",
+      "paid": "Payé",
+      "failed": "Échoué"
+    },
+    "licence": {
+      "until": "Valable jusqu'au {{date}}",
+      "noEnd": "Sans date de fin",
+      "revoked": "Révoquée",
+      "daysLeft_one": "{{count}} jour restant",
+      "daysLeft_other": "{{count}} jours restants",
+      "expiredAgo_one": "Expirée depuis {{count}} jour",
+      "expiredAgo_other": "Expirée depuis {{count}} jours",
+      "slots": "Machines : {{active}} emplacements utilisés sur {{max}}",
+      "channel": "Canal de mise à jour : {{channel}}"
+    },
+    "reconcile": {
+      "button": "Vérifier auprès de SlickPay",
+      "title": "Vérifier ce paiement auprès de SlickPay ?",
+      "body": "Le serveur demande à SlickPay le statut de la facture {{invoice}}. Si SlickPay la dit payée et qu'elle n'a pas été appliquée (notification perdue), la licence est renouvelée maintenant, comme pour un paiement normal. Rien d'autre ne change.",
+      "confirm": "Vérifier",
+      "outcome": {
+        "applied": "SlickPay dit payé : le paiement est maintenant appliqué et la licence renouvelée.",
+        "unchanged": "SlickPay répond « {{slickpay}} » : rien à changer.",
+        "already_paid": "Déjà appliqué : rien à changer.",
+        "license_revoked": "SlickPay dit payé, mais la licence est révoquée : paiement non appliqué (commande marquée échouée).",
+        "issue_failed": "SlickPay dit payé, mais la licence n'a pas pu être renouvelée : voir le journal d'audit.",
+        "mismatch_paid_here_not_at_slickpay": "Enregistré comme payé ici, mais SlickPay répond maintenant « {{slickpay}} ». Rien n'a été annulé : vérifiez auprès de SlickPay et du client."
+      }
+    },
+    "link": {
+      "button": "Créer un lien de paiement",
+      "title": "Créer un lien de paiement SlickPay",
+      "body": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an et les emplacements supplémentaires ajoutés. Prix d'un emplacement supplémentaire : {{price}}.",
+      "bodyNoSlotPrice": "SlickPay crée une facture pour ce client ; envoyez-lui le lien. Au paiement, la licence est renouvelée pour un an. Les emplacements supplémentaires nécessitent SLICKPAY_EXTRA_SLOT_PRICE sur le serveur.",
+      "plan": "Nom de l'offre",
+      "amount": "Montant (DZD, hors emplacements supplémentaires)",
+      "extraSlots": "Emplacements supplémentaires",
+      "confirm": "Créer le lien",
+      "created": "Lien de paiement créé ({{amount}} {{currency}}) : envoyez-le au client."
+    }
+  },
+  "entitlements": {
+    "pageBody": "Cycle de vie gouverné par états, aperçu de la revendication signée et approbation auditable des changements destructifs.",
+    "pageTitle": "Licences"
+  },
+  "overview": {
+    "title": "Vue d'ensemble",
+    "greeting": {
+      "morning": "Bonjour, {{name}}",
+      "afternoon": "Bon après-midi, {{name}}",
+      "evening": "Bonsoir, {{name}}"
+    },
+    "subtitle": "Tout ce qui suit est à jour. Ce qui vous attend est en premier.",
+    "findCustomer": "Trouver un client",
+    "newCustomer": "+ Nouveau client",
+    "figures": "Chiffres clés",
+    "kpi": {
+      "customers": "Clients actifs",
+      "customersHint": "sur {{count}} au total",
+      "devices": "Appareils utilisés",
+      "devicesHint_one": "{{count}} poste encore libre",
+      "devicesHint_other": "{{count}} postes encore libres",
+      "expiring": "Licences expirant sous {{days}} jours",
+      "reviewRenewals": "Voir les renouvellements",
+      "noneExpiring": "Rien à renouveler bientôt",
+      "tickets": "Tickets de support ouverts",
+      "openSupport": "Ouvrir le support"
+    },
+    "attention": "À traiter",
+    "items_one": "{{count}} élément",
+    "items_other": "{{count}} éléments",
+    "health": "État du système",
+    "healthDetails": "Détails",
+    "customers": "Clients"
+  },
+  "attention": {
+    "none": {
+      "title": "Rien ne vous attend pour l'instant",
+      "body": "Les renouvellements, les appareils qui ne se synchronisent plus, les nouveaux tickets et les problèmes de sauvegarde apparaîtront ici."
+    },
+    "action": {
+      "renew": "Renouveler",
+      "viewDevice": "Voir l'appareil",
+      "openTicket": "Ouvrir le ticket",
+      "openHealth": "Voir l'état du système",
+      "open": "Ouvrir"
+    },
+    "backup_failed": {
+      "title": "La dernière sauvegarde a échoué",
+      "detail": "Tentative du {{at}}. L'état du système en donne la cause."
+    },
+    "backup_late": {
+      "title": "Aucune sauvegarde récente",
+      "detail": "Une sauvegarde doit avoir lieu chaque nuit. Vérifiez le service de sauvegarde."
+    },
+    "restore_test_failed": {
+      "title": "Le dernier test de restauration a échoué",
+      "detail": "Les sauvegardes risquent d'être inutilisables tant que ce n'est pas corrigé."
+    },
+    "restore_test_overdue": {
+      "title": "Test de restauration en retard",
+      "detail": "Un test mensuel prouve que les sauvegardes se restaurent ; aucun n'a réussi récemment."
+    },
+    "licence_expired": {
+      "title_one": "{{customer}} : licence terminée depuis {{count}} jour",
+      "title_other": "{{customer}} : licence terminée depuis {{count}} jours",
+      "detail": "Édition {{edition}} · ses appareils sont refusés jusqu'au renouvellement"
+    },
+    "licence_expiring": {
+      "title_one": "{{customer}} : la licence expire dans {{count}} jour",
+      "title_other": "{{customer}} : la licence expire dans {{count}} jours",
+      "detail": "Édition {{edition}} · {{devices}} appareil(s)"
+    },
+    "device_not_syncing": {
+      "title_one": "Un appareil ne s'est pas synchronisé depuis {{count}} jour",
+      "title_other": "Un appareil ne s'est pas synchronisé depuis {{count}} jours",
+      "detail": "{{customer}} · {{device}}"
+    },
+    "device_never_synced": {
+      "title": "Un appareil ne s'est jamais synchronisé",
+      "detail": "{{customer}} · {{device}} · vu pour la dernière fois {{ago}}"
+    },
+    "ticket_new_with_file": {
+      "title": "Nouveau ticket de support avec un fichier de diagnostic",
+      "detail": "{{customer}} · « {{summary}} »"
+    },
+    "ticket_new": {
+      "title": "Nouveau ticket de support",
+      "detail": "{{customer}} · « {{summary}} »"
+    },
+    "unknown": {
+      "title": "Un point est à vérifier",
+      "detail": "{{customer}}"
+    }
+  },
+  "customer": {
+    "back": "Tous les clients",
+    "edition": "Édition {{edition}}",
+    "since": "Client depuis le {{date}}",
+    "editDetails": "Modifier les informations",
+    "renewLicence": "Renouveler la licence",
+    "addLicence": "Attribuer une licence",
+    "tabsAria": "Rubriques du client",
+    "tabs": {
+      "overview": "Vue d'ensemble",
+      "licence": "Licence et facturation",
+      "sync": "Synchronisation",
+      "support": "Support",
+      "history": "Historique"
+    },
+    "tiles": {
+      "licence": "Licence",
+      "validUntil": "Valable jusqu'au {{date}}",
+      "noEnd": "Valable, sans échéance",
+      "ended": "Terminée le {{date}}",
+      "noLicence": "Pas encore de licence",
+      "daysLeft_one": "{{count}} jour restant",
+      "daysLeft_other": "{{count}} jours restants",
+      "devices": "Appareils",
+      "seatsUsed": "{{used}} postes utilisés sur {{seats}}",
+      "seatsBar": "Postes utilisés",
+      "sync": "Synchronisation",
+      "upToDate": "À jour",
+      "noDevices": "Aucun appareil",
+      "behind_one": "{{count}} appareil en retard",
+      "behind_other": "{{count}} appareils en retard",
+      "lastContact": "Dernier contact {{ago}}"
+    },
+    "devices": "Appareils",
+    "sensitive": {
+      "title": "Actions sensibles",
+      "body": "Chacune demande votre code d'authentification et un motif, et est enregistrée dans le journal d'audit.",
+      "revokeLicence": "Révoquer une clé de licence",
+      "delete": "Supprimer le client"
+    },
+    "notFound": {
+      "title": "Ce client n'existe pas (ou plus)",
+      "body": "Il a peut-être été supprimé. Retrouvez-le depuis la liste des clients."
+    },
+    "sync": {
+      "noAccess": "Votre rôle n'inclut pas les opérations de synchronisation."
+    },
+    "history": {
+      "title": "Historique",
+      "body": "Tout ce qui a été fait pour ce client, par qui et pourquoi.",
+      "noAccess": "Votre rôle n'inclut pas le journal d'audit."
+    },
+    "support": {
+      "noAccess": "Votre rôle n'inclut pas le support.",
+      "noTickets": "Aucun ticket de support pour ce client",
+      "noTicketsBody": "Les tickets ouverts depuis leurs postes, ou par vous, apparaissent ici.",
+      "withFile_one": "{{count}} fichier de diagnostic",
+      "withFile_other": "{{count}} fichiers de diagnostic",
+      "files": "Fichiers de diagnostic",
+      "noFiles": "Aucun fichier de diagnostic reçu de ce client.",
+      "goToSupport": "Aller au Support pour télécharger ou répondre",
+      "state": {
+        "new": "Nouveau",
+        "triaged": "En cours d'analyse",
+        "waiting_for_vendor": "En attente de nous",
+        "waiting_for_customer": "En attente du client",
+        "resolved": "Résolu",
+        "closed": "Fermé"
+      }
+    }
+  },
+  "devices": {
+    "subtitle": "Chaque poste activé avec une licence, ce qu'il fait et ce que vous pouvez y faire.",
+    "tabsAria": "Rubriques des appareils",
+    "tabs": {
+      "devices": "Appareils",
+      "sync": "Synchronisation de tous les clients",
+      "test": "Tester une activation"
+    },
+    "customer": "Client",
+    "noCustomers": {
+      "title": "Aucun client pour l'instant",
+      "body": "Les appareils apparaissent dès qu'un client active Maintafox avec sa clé de licence."
+    },
+    "empty": {
+      "title": "Aucun appareil activé pour l'instant",
+      "body": "Donnez sa clé de licence au client : chaque ordinateur qui active Maintafox apparaît ici."
+    },
+    "version": "version {{version}}",
+    "seen": "vu {{ago}}",
+    "status": {
+      "online": "En ligne",
+      "lastSeen": "Vu {{ago}}",
+      "notSeenDays_one": "Pas vu depuis {{count}} jour",
+      "notSeenDays_other": "Pas vu depuis {{count}} jours",
+      "neverSeen": "Jamais vu",
+      "released": "Poste libéré",
+      "blocked": "Bloqué",
+      "licenceRevoked": "Licence révoquée"
+    },
+    "action": {
+      "freeSeat": "Libérer ce poste",
+      "unblock": "Débloquer",
+      "moveSeat": "Transférer le poste sur un nouvel ordinateur",
+      "refresh": "Lui demander d'actualiser sa licence maintenant",
+      "seeWhatHappened": "Voir ce qui s'est passé",
+      "block": "Bloquer cet appareil",
+      "recoveryCode": "Code de récupération administrateur",
+      "more": "Autres actions pour {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Code de récupération administrateur",
+      "issuedBody": "Envoyez ce code au site de {{name}} par e-mail ou par messagerie. Une personne devant ce PC le saisit dans Maintafox desktop (récupération administrateur) pour créer un nouveau compte administrateur ; les comptes existants ne sont pas modifiés.",
+      "copy": "Copier le code",
+      "copied": "Copié",
+      "copyFailed": "Copie automatique impossible : sélectionnez le code et copiez-le à la main.",
+      "expires": "Valable jusqu'au {{at}}, une seule fois.",
+      "shownOnce": "Il n'est affiché que cette fois : Maintafox ne le conserve pas. Copiez-le maintenant. S'il est perdu, émettez-en un nouveau.",
+      "done": "Terminé"
+    },
+    "offline": {
+      "title": "Règles hors ligne",
+      "body": "Combien de temps les ordinateurs de ce client peuvent travailler sans joindre le serveur, et l'effet d'un blocage.",
+      "grace": "Peut travailler hors ligne pendant",
+      "hours_one": "{{count}} heure",
+      "hours_other": "{{count}} heures",
+      "trustRevoke": "Le blocage d'un appareil s'applique",
+      "atOnce": "Immédiatement",
+      "atNextCheck": "À sa prochaine vérification de licence",
+      "reconnect": "Doit se signaler avant de reprendre"
+    },
+    "test": {
+      "body": "Vérifie qu'une clé de licence et une empreinte d'ordinateur sont acceptées. C'est une vraie activation : l'ordinateur prend un poste (libérez-le ensuite dans Appareils).",
+      "appVersionOptional": "Version de l'application (facultatif)",
+      "accepted": "Activation acceptée.",
+      "customer": "Client",
+      "licence": "Licence"
+    }
+  },
+  "licences": {
+    "subtitle": "Les clés de licence de chaque client, le contenu de chaque édition, et les paiements.",
+    "tabsAria": "Rubriques des licences",
+    "tabs": {
+      "keys": "Clés de licence",
+      "editions": "Éditions",
+      "payments": "Paiements"
+    }
+  },
+  "updates": {
+    "subtitle": "Quels clients reçoivent une nouvelle version, quand, et quelle version ils doivent utiliser.",
+    "tabsAria": "Rubriques des mises à jour",
+    "tabs": {
+      "releases": "Versions",
+      "rollouts": "Groupes de déploiement",
+      "forced": "Versions obligatoires"
+    },
+    "force": {
+      "customer": "Client",
+      "noCustomers": "Aucun client pour l'instant.",
+      "saved": "Enregistré. Les appareils l'appliquent à leur prochaine vérification de licence.",
+      "rolledBack": "Retour à la règle précédente."
+    },
+    "releases": {
+      "title": "Versions du logiciel",
+      "refresh": "Actualiser",
+      "intro": "Chaque version envoyée par le processus de publication apparaît ici en brouillon. Publiez-la sur un cercle, puis élargissez-la par étapes. Les appareils ne se voient proposer une version qu'une fois publiée.",
+      "rings": {
+        "internal": "vos propres machines de test.",
+        "pilot": "les clients choisis pour recevoir les mises à jour en avance.",
+        "stable": "tous les clients."
+      },
+      "readOnly": "Vous pouvez consulter les versions. Publier, rappeler et modifier les notes nécessitent l'autorisation de gestion des déploiements.",
+      "empty": "Aucune version pour l'instant.",
+      "emptyBody": "Les versions apparaissent ici une fois envoyées par le processus de publication.",
+      "listAria": "Versions du logiciel, de la plus récente à la plus ancienne",
+      "status": {
+        "uploading": "Envoi en cours",
+        "draft": "Brouillon",
+        "internal": "Interne",
+        "pilot": "Pilote",
+        "stable": "Stable",
+        "recalled": "Rappelée"
+      },
+      "version": "v{{version}}",
+      "percentOfRing": "{{percent}} % du cercle",
+      "unsigned": "Non signée",
+      "unsignedHelp": "Cet installateur n'a pas de signature de code : Windows SmartScreen affichera un avertissement aux utilisateurs avant l'installation.",
+      "showDetails": "Détails",
+      "hideDetails": "Masquer les détails",
+      "publishedAt": "Publiée le {{date}}",
+      "notPublished": "Pas encore publiée",
+      "files_one": "{{count}} fichier",
+      "files_other": "{{count}} fichiers",
+      "recalledInfo": "Rappelée le {{date}} par {{by}} : {{reason}}",
+      "gitCommit": "Commit Git",
+      "registeredBy": "Envoyée par",
+      "registeredAt": "Envoyée le",
+      "artifacts": {
+        "title": "Fichiers d'installation",
+        "none": "Aucun fichier d'installation déclaré.",
+        "platform": "Plateforme",
+        "file": "Fichier",
+        "size": "Taille",
+        "verified": "Contrôle",
+        "sha256": "Empreinte SHA-256",
+        "verifiedAt": "Vérifié le {{date}}",
+        "notVerified": "Pas encore vérifié"
+      },
+      "notes": {
+        "title": "Notes de version",
+        "help": "Les utilisateurs lisent ces notes avant de mettre à jour, dans leur langue.",
+        "en": "Notes en anglais",
+        "fr": "Notes en français",
+        "required": "Les notes en anglais et en français sont obligatoires.",
+        "save": "Enregistrer les notes",
+        "saving": "Enregistrement…",
+        "saved": "Notes de la v{{version}} enregistrées."
+      },
+      "publish": {
+        "action": "Publier",
+        "widen": "Élargir",
+        "blocked": {
+          "uploading": "Publication impossible pour l'instant : le processus de publication n'a pas fini d'envoyer et de vérifier ses fichiers.",
+          "recalled": "Cette version a été rappelée : elle ne peut plus être publiée."
+        },
+        "title": "Publier la v{{version}}",
+        "body": "Choisissez à qui cette version est proposée. Vous confirmerez avec un code de votre application d'authentification.",
+        "confirm": "Publier",
+        "ringLabel": "Cercle",
+        "noNarrowing": "Une version publiée ne peut qu'être élargie : des appareils du cercle actuel l'utilisent peut-être déjà. Pour la retirer, rappelez-la.",
+        "percentLabel": "Part des appareils du cercle (%)",
+        "preset": "{{percent}} %",
+        "percentHelp": "Le pourcentage s'applique au cercle le plus large choisi ({{ring}}) ; les cercles plus restreints reçoivent la version en entier. L'augmenter ensuite ne fait qu'ajouter des appareils : ceux qui l'ont déjà installée la gardent.",
+        "percentInvalid": "Saisissez un nombre entier entre {{min}} et {{max}}.",
+        "unchanged": "La version est déjà publiée ainsi.",
+        "done": "La v{{version}} est maintenant publiée sur {{ring}} à {{percent}} %."
+      },
+      "recall": {
+        "action": "Rappeler",
+        "title": "Rappeler la v{{version}} ?",
+        "body": "Les appareils cessent de se voir proposer cette version à leur prochaine vérification ; ceux qui l'utilisent déjà reviennent à la version précédente. Une version rappelée ne peut plus être publiée.",
+        "confirm": "Rappeler cette version",
+        "done": "v{{version}} rappelée."
+      }
+    },
+    "keys": {
+      "title": "Clés du processus de publication",
+      "intro": "Le processus de publication (GitHub Actions) utilise l'une de ces clés pour envoyer les nouvelles versions. Il la lit dans le secret GitHub {{secret}}. Révoquez une clé dès qu'elle a pu fuiter.",
+      "create": "Nouvelle clé",
+      "createTitle": "Créer une clé du processus de publication",
+      "createBody": "Donnez à la clé un nom reconnaissable (par exemple le dépôt concerné). Son jeton n'est affiché qu'une seule fois.",
+      "createConfirm": "Créer la clé",
+      "labelField": "Nom de la clé",
+      "empty": "Aucune clé du processus de publication pour l'instant.",
+      "emptyBody": "Créez-en une pour que le processus de publication puisse envoyer de nouvelles versions.",
+      "listAria": "Clés du processus de publication",
+      "statusActive": "Active",
+      "statusRevoked": "Révoquée",
+      "createdBy": "Créée le {{date}} par {{by}}",
+      "lastUsed": "dernière utilisation le {{date}}",
+      "neverUsed": "jamais utilisée",
+      "revokedBy": "Révoquée le {{date}} par {{by}}",
+      "revoke": "Révoquer",
+      "revokeTitle": "Révoquer la clé {{label}} ?",
+      "revokeBody": "Le processus de publication ne pourra plus envoyer de version avec cette clé. Les versions déjà envoyées ne sont pas concernées.",
+      "revokeConfirm": "Révoquer la clé",
+      "revoked": "Clé {{label}} révoquée.",
+      "tokenTitle": "Jeton de la clé {{label}}",
+      "tokenWarning": "Enregistrez-le maintenant comme secret GitHub {{secret}} : il ne pourra plus être affiché. En cas de perte, créez une nouvelle clé et révoquez celle-ci.",
+      "tokenLabel": "Jeton de la clé",
+      "copy": "Copier",
+      "copied": "Copié.",
+      "copyFailed": "Copie automatique impossible : sélectionnez le texte et copiez-le vous-même.",
+      "tokenDone": "Je l'ai enregistré"
+    }
+  },
+  "support": {
+    "subtitle": "Tickets des clients et de leurs appareils, fichiers de diagnostic, et suites données."
+  },
+  "settings": {
+    "subtitle": "Votre équipe, le journal d'audit de chaque action, et les garde-fous de la console.",
+    "tabsAria": "Rubriques des paramètres",
+    "tabs": {
+      "team": "Équipe",
+      "audit": "Journal d'audit",
+      "safeguards": "Garde-fous",
+      "display": "Affichage"
+    },
+    "audit": {
+      "title": "Journal d'audit"
+    },
+    "display": {
+      "title": "Affichage"
+    }
+  },
+  "sysHealth": {
+    "subtitle": "Vert : rien à faire. Orange : à regarder bientôt. Chaque ligne dit ce qu'elle signifie.",
+    "tabsAria": "Rubriques de l'état",
+    "tabs": {
+      "summary": "Résumé",
+      "details": "Détails techniques"
+    },
+    "allOk": "Tout fonctionne",
+    "needsLook": "Un point est à vérifier",
+    "checked": "Vérifié {{ago}}",
+    "server": "Serveur",
+    "online": "En ligne",
+    "degraded": "À vérifier",
+    "answering": "La base répond en",
+    "ms": "{{ms}} ms",
+    "database": "Base de données",
+    "dbState": {
+      "ok": "Saine",
+      "slow": "Lente",
+      "down": "Injoignable",
+      "unknown": "Inconnu"
+    },
+    "fileStorage": "Stockage des fichiers",
+    "storageState": {
+      "ok": "Sain",
+      "not_configured": "Non configuré",
+      "unreachable": "Injoignable",
+      "unknown": "Inconnu"
+    },
+    "diskFree": "Espace disque libre",
+    "diskOf": "{{free}} sur {{total}}",
+    "unknown": "Inconnu",
+    "backups": "Sauvegardes",
+    "protected": "Protégé",
+    "lookSoon": "À regarder",
+    "lastBackup": "Dernière sauvegarde",
+    "lastBackupFailed": "L'exécution du {{at}} a échoué ; la date ci-dessus est la dernière réussie.",
+    "backupAtEncrypted": "{{at}} · chiffrée",
+    "encryptedWithKey": "Chiffrée avec votre clé",
+    "lastRestoreTest": "Dernier test de restauration",
+    "passedOn": "Réussi · {{at}}",
+    "failed": "Échoué",
+    "never": "Jamais",
+    "copiesKept": "Copies conservées",
+    "days_one": "{{count}} jour",
+    "days_other": "{{count}} jours",
+    "onlyOnServer": "Toutes les copies sont sur ce serveur uniquement. Ajoutez une copie sur un ordinateur de votre bureau (récupération des sauvegardes) pour être protégé si le serveur est perdu.",
+    "offsiteFailed": "La copie externe a échoué : seules les copies de ce serveur sont à jour.",
+    "sync": "Synchronisation",
+    "allUpToDate": "Tout est à jour",
+    "devicesToCheck_one": "{{count}} appareil à vérifier",
+    "devicesToCheck_other": "{{count}} appareils à vérifier",
+    "devicesUpToDate": "Appareils à jour",
+    "devicesSyncing": "Appareils synchronisés normalement",
+    "nOfM": "{{n}} sur {{m}}",
+    "refused": "Modifications refusées, pas encore corrigées ({{hours}} dernières h)",
+    "conflicts": "Modifications en conflit ({{hours}} dernières h)",
+    "seeBehind": "Voir l'appareil en retard",
+    "updates": "Mises à jour de l'application",
+    "versionsInUse_one": "{{count}} version utilisée",
+    "versionsInUse_other": "{{count}} versions utilisées",
+    "noDevices": "Aucun appareil activé pour l'instant.",
+    "version": "Version {{version}}",
+    "versionUnknown": "Version non communiquée",
+    "devicesCount_one": "{{count}} appareil",
+    "devicesCount_other": "{{count}} appareils",
+    "releaseCatalogLater": "La dernière version publiée s'affichera ici avec le catalogue des versions (phase 5).",
+    "goToUpdates": "Aller aux mises à jour"
   }
 }

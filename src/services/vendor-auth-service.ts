@@ -46,7 +46,7 @@ const SessionResponse = z.object({
 export type SessionGrant = z.infer<typeof SessionResponse>;
 
 const SessionInfo = z.object({
-  user: z.object({ id: z.number(), email: z.string() }),
+  user: z.object({ id: z.number(), email: z.string(), display_name: z.string().nullable().optional(), role: z.string().optional() }),
   session: z.object({ id: z.string(), created_at: z.string(), expires_at: z.string() }),
   mfa: z.object({ enrolled: z.boolean(), recovery_codes_remaining: z.number().int().min(0) }),
   step_up_ttl_seconds: z.number().int().positive(),

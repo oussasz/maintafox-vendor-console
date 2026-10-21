@@ -8,6 +8,7 @@ import type { AuditEntityRefs } from "../audit-chain.js";
 import { verifyDeviceActivationToken, verifyStepUpToken, verifyVendorAdminToken } from "../auth-tokens.js";
 import type { Database } from "../db/database.js";
 import type { VendorAuth } from "../vendor-auth/service.js";
+import { ROUTE_PERMISSIONS, roleAllows } from "../vendor-auth/roles.js";
 import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
@@ -17,10 +18,11 @@ import { openOperatorScope, tenantScope } from "./scope.js";
 
 export function createGuards(db: Database, { appendAuditRecord }: AuditAppender, vendorAuth: VendorAuth) {
   /**
-   * Vendor-console operator authentication. Only accepts vendor_admin tokens (device activation,
-   * MFA-pending and step-up tokens are rejected by audience/kind) and re-checks that the token's
-   * session is still open for that operator, so logout, "log out everywhere", refresh-token reuse,
-   * an MFA reset or a deleted operator stop an unexpired token immediately.
+   * Vendor-console operator authentication and authorisation. Only accepts vendor_admin tokens
+   * (device activation, MFA-pending and step-up tokens are rejected by audience/kind), re-checks
+   * that the token's session is still open for that enabled operator (logout, "log out everywhere",
+   * refresh-token reuse, an MFA reset, a disabled or deleted operator stop an unexpired token
+   * immediately), then checks the operator's role grants the route's permission.
    */
   async function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
     const h = req.headers.authorization;
@@ -33,12 +35,27 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       res.status(401).json({ error: "invalid_token" });
       return;
     }
-    if (!(await vendorAuth.isSessionActive(claims.sessionId, claims.userId))) {
+    const role = await vendorAuth.activeSessionRole(claims.sessionId, claims.userId);
+    if (!role) {
       res.status(401).json({ error: "session_ended" });
+      return;
+    }
+    // Least privilege, server-side: the route's required permission (vendor-auth/roles.ts). A route
+    // missing from the table is refused rather than left open.
+    const routeKey = `${req.method} ${(req.route as { path?: string } | undefined)?.path ?? req.path}`;
+    const requirement = ROUTE_PERMISSIONS[routeKey];
+    if (!requirement) {
+      structuredLog("route_permission_missing", { route: routeKey });
+      res.status(500).json({ error: "route_permission_missing" });
+      return;
+    }
+    if (!roleAllows(role, requirement)) {
+      res.status(403).json({ error: "permission_denied", required_permission: requirement });
       return;
     }
     (req as AuthRequest).userId = String(claims.userId);
     (req as AuthRequest).vendorSessionId = claims.sessionId;
+    (req as AuthRequest).operatorRole = role;
     // Console routes act across tenants: an explicit, recorded operator scope for this request.
     const scope = await openOperatorScope(db, resolveActorId(req), { method: req.method, path: req.path });
     db.runInScope(scope, next);

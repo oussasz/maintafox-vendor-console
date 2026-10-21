@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "./src"),
       "@shared": resolve(__dirname, "./shared"),
+      "@maintafox/contracts": resolve(__dirname, "./packages/contracts/src/index.ts"),
     },
   },
   server: {
@@ -20,6 +21,11 @@ export default defineConfig({
     setupFiles: "./src/test/setup.ts",
     globals: true,
     css: true,
+    // Dialog + step-up flows type many characters in jsdom; 5 s (default) is too tight on a busy
+    // machine or CI runner, a hung test still fails.
+    testTimeout: 15_000,
+    // e2e/: Playwright browser tests (pnpm test:e2e), not vitest.
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "e2e/**"],
   },
   base: process.env.VITE_BASE_PATH ?? "/",
 });

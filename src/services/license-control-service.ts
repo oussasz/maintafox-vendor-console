@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { apiBase } from "@/lib/api-base";
 import { authFetch } from "@/lib/api-client";
+import { throwIfNotOk } from "@/lib/api-error";
 
 /** System + custom edition ids from the persisted catalog. */
 const EditionIdSchema = z.string().min(2).max(64);
@@ -36,7 +37,9 @@ const CapabilitiesMapSchema = z
       [K in ModuleCapabilityKey]: z.ZodBoolean;
     },
   )
-  .strict();
+  // A module a newer server adds is kept as is (and sent back unchanged on save), never a
+  // reason to refuse the whole edition list.
+  .passthrough();
 
 export type CapabilitiesMap = z.infer<typeof CapabilitiesMapSchema>;
 
@@ -127,7 +130,10 @@ const ActivationTenantStatusSchema = z.object({
 
 const ActivationRowSchema = z.object({
   machine_id: z.string(),
+  machine_label: z.string().nullable().optional(),
   tenant_id: z.string(),
+  activated_at_rfc3339: z.string().optional(),
+  revoked_at_rfc3339: z.string().nullable().optional(),
   last_heartbeat_rfc3339: z.string().nullable(),
   app_version: z.string().nullable().optional(),
   trusted_device: z.boolean(),
@@ -185,100 +191,6 @@ export type PrivilegedActionContext = {
   step_up_token: string;
 };
 
-type ControlPlaneErrorBody = {
-  error?: string;
-  message?: string;
-  detail?: string | unknown;
-  details?: unknown;
-  max_machines?: number;
-};
-
-/** True when the message indicates a duplicate tenant slug (409 from POST /tenants). */
-export function isDuplicateTenantSlugMessage(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("already taken") ||
-    /\b(unique|duplicate)\b.*\bslug\b|\bslug\b.*\b(unique|duplicate)\b/.test(m) ||
-    (m.includes("sqlite") && m.includes("unique") && m.includes("slug")) ||
-    (m.includes("constraint") && m.includes("slug"))
-  );
-}
-
-/**
- * Maps control-plane JSON error bodies to operator-readable messages (incl. 409 conflicts).
- */
-export async function parseControlPlaneErrorResponse(res: Response): Promise<string> {
-  let body: ControlPlaneErrorBody = {};
-  try {
-    body = (await res.json()) as ControlPlaneErrorBody;
-  } catch {
-    return `Request failed (${res.status})`;
-  }
-  const code = typeof body.error === "string" ? body.error.trim() : "";
-  const msg = typeof body.message === "string" ? body.message.trim() : "";
-  const detailStr =
-    typeof body.detail === "string"
-      ? body.detail.trim()
-      : Array.isArray(body.detail)
-        ? body.detail
-            .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
-            .join(" ")
-        : "";
-
-  if (res.status === 409) {
-    if (code === "tenant_conflict") {
-      if (isDuplicateTenantSlugMessage(msg) || isDuplicateTenantSlugMessage(detailStr)) {
-        return "This tenant slug is already taken. Choose a different slug.";
-      }
-      if (msg || detailStr) {
-        return msg || detailStr;
-      }
-      return "This tenant slug is already taken. Choose a different slug.";
-    }
-    if (code === "idempotency_key_conflict") {
-      return "This request was already processed with different inputs. Retry with a fresh idempotency key.";
-    }
-    if (code === "slot_limit_reached") {
-      const max = body.max_machines;
-      return max != null
-        ? `Activation slot limit reached for this license (max ${max} machines).`
-        : "Activation slot limit reached for this license.";
-    }
-    if (code === "no_policy_history") {
-      return msg || "No policy history available to roll back.";
-    }
-    if (code === "license_revoked") {
-      return msg || "This license key is revoked and cannot be updated.";
-    }
-    if (code === "edition_version_conflict") {
-      return msg || "This edition was modified by another operator. Refresh and try again.";
-    }
-    if (code === "edition_in_use") {
-      return msg || "This edition is still assigned to one or more tenants (including inactive).";
-    }
-    if (code === "edition_id_taken") {
-      return msg || "An edition with this id already exists.";
-    }
-    if (msg || detailStr) {
-      return msg || detailStr;
-    }
-  }
-
-  if (res.status === 404 && (code === "tenant_not_found" || code === "license_not_found")) {
-    return msg || (code === "license_not_found" ? "License key not found." : "Tenant not found.");
-  }
-
-  if (msg) return msg;
-  if (detailStr) return detailStr;
-  if (code) return `${code.replace(/_/g, " ")} (${res.status})`;
-  return `Request failed (${res.status})`;
-}
-
-async function throwIfNotOk(res: Response): Promise<void> {
-  if (res.ok) return;
-  throw new Error(await parseControlPlaneErrorResponse(res));
-}
-
 /** Minimum X-Operator-Reason length; the API enforces the same (api/src/app/config.ts). */
 export const PRIVILEGED_REASON_MIN_LENGTH = 4;
 
@@ -290,7 +202,8 @@ export function privilegedHeaders(input: PrivilegedActionContext): Record<string
   };
 }
 
-function idempotencyKey(prefix: string): string {
+/** A fresh Idempotency-Key: the API replays the first answer when the same key is sent again. */
+export function idempotencyKey(prefix: string): string {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
   } catch {
@@ -668,6 +581,43 @@ export async function rollbackCohortUpdatePolicy(
   return CohortUpdatePolicySchema.parse(await res.json());
 }
 
+/**
+ * Removes the customer's minimum version (and nothing else). `expectedFloor` is the floor the
+ * operator confirmed; the server refuses (409) when the stored one differs.
+ */
+export async function clearTenantMinAppVersion(
+  tenantId: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<TenantUpdatePolicy> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/clear-min-version`, {
+    method: "POST",
+    body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+    headers: privilegedHeaders(privileged),
+  });
+  await throwIfNotOk(res);
+  return TenantUpdatePolicySchema.parse(await res.json());
+}
+
+/** Removes the rollout group's minimum version (see clearTenantMinAppVersion). */
+export async function clearCohortMinAppVersion(
+  channel: "stable" | "pilot" | "internal",
+  cohortLabel: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<CohortUpdatePolicy> {
+  const res = await authFetch(
+    `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/clear-min-version`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+      headers: privilegedHeaders(privileged),
+    },
+  );
+  await throwIfNotOk(res);
+  return CohortUpdatePolicySchema.parse(await res.json());
+}
+
 async function postMachineAction(
   tenantId: string,
   machineFingerprint: string,
@@ -714,6 +664,84 @@ export async function rebindMachine(
 /** Asks the device to fetch its policy now (audited, reason required, no step-up). */
 export async function requestMachinePolicyRefresh(tenantId: string, machineFingerprint: string, reasonCode: string): Promise<void> {
   await postMachineAction(tenantId, machineFingerprint, "policy-refresh", {}, { "X-Operator-Reason": reasonCode });
+}
+
+const AdminRecoveryCodeIssuedSchema = z.object({
+  code: z.string().regex(/^MFXREC1\.[A-Za-z0-9_-]+\.[0-9a-f]{128}$/),
+  code_id: z.string(),
+  tenant_id: z.string(),
+  machine_fingerprint: z.string(),
+  license_id: z.string(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  audit_record_id: z.string(),
+});
+export type AdminRecoveryCodeIssued = z.infer<typeof AdminRecoveryCodeIssuedSchema>;
+
+const AdminRecoveryCodeRowSchema = z.object({
+  code_id: z.string(),
+  tenant_id: z.string(),
+  license_id: z.string(),
+  machine_fingerprint: z.string(),
+  issued_by: z.string(),
+  reason: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  audit_record_id: z.string(),
+  expired: z.boolean(),
+});
+export type AdminRecoveryCodeRow = z.infer<typeof AdminRecoveryCodeRowSchema>;
+
+/** How the operator checked the requester against the customer's registered contact (API enum). */
+export const ADMIN_RECOVERY_IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
+export type AdminRecoveryIdentityCheck = (typeof ADMIN_RECOVERY_IDENTITY_CHECKS)[number];
+export type AdminRecoveryRequester = {
+  /** Name and role of the person at the customer who asked (2-120 chars). */
+  requested_by: string;
+  identity_check: AdminRecoveryIdentityCheck;
+  /** Required (5-200 chars) with "other"; optional otherwise. */
+  identity_check_note?: string;
+};
+
+/**
+ * Issues a signed one-time administrator recovery code for the PC (step-up `admin_recovery_code`).
+ * The code is in this response only: the server does not keep it. No Idempotency-Key (the server
+ * does not replay this response, so the code is never stored with it).
+ */
+export async function issueAdminRecoveryCode(
+  tenantId: string,
+  machineFingerprint: string,
+  requester: AdminRecoveryRequester,
+  privileged: PrivilegedActionContext,
+): Promise<AdminRecoveryCodeIssued> {
+  const note = requester.identity_check_note?.trim();
+  const body = {
+    requested_by: requester.requested_by.trim(),
+    identity_check: requester.identity_check,
+    ...(note ? { identity_check_note: note } : {}),
+  };
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/admin-recovery-code`,
+    { method: "POST", body: JSON.stringify(body), headers: privilegedHeaders(privileged) },
+  );
+  await throwIfNotOk(res);
+  return AdminRecoveryCodeIssuedSchema.parse(await res.json());
+}
+
+/** Recovery codes issued for a customer's PCs (newest first), without the codes themselves. */
+export async function listAdminRecoveryCodes(tenantId: string, machineFingerprint?: string): Promise<AdminRecoveryCodeRow[]> {
+  const query = machineFingerprint ? `?machine_fingerprint=${encodeURIComponent(machineFingerprint)}` : "";
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/admin-recovery-codes${query}`);
+  await throwIfNotOk(res);
+  return z.array(AdminRecoveryCodeRowSchema).parse(await res.json());
 }
 
 /** Soft-suspends a tenant: its devices are refused, data kept (step-up `entitlement_suspension`). */

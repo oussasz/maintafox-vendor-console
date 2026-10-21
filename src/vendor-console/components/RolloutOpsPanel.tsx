@@ -7,11 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StepUpKinds } from "@/lib/step-up-kinds";
 import { setRolloutGovernance, type RolloutGovernanceAction } from "@/services/license-control-service";
+import { RELEASE_RINGS } from "@/services/release-catalog-service";
 import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 
 import { useVendorConsole } from "../VendorConsoleContext";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OperatorActionDialog } from "./OperatorActionDialog";
+import { errorText } from "@/lib/error-text";
 
 type CohortStage = RolloutOverviewV1["cohort_stages"][number];
 
@@ -55,7 +57,7 @@ export function RolloutOpsPanel() {
     try {
       setOverview(await getRolloutOverview());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load rollout telemetry.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -66,15 +68,20 @@ export function RolloutOpsPanel() {
     void loadOverview();
   }, []);
 
+  /** "v2.1.0 · Pilot · 25%", or why there is nothing to show yet. */
+  const releaseSummary = (impact: RolloutOverviewV1["impact"]) => {
+    if (impact.release_version === null) return t("rollouts.impact.noRelease");
+    const channel = impact.release_channel;
+    const ring = channel && (RELEASE_RINGS as readonly string[]).includes(channel) ? t(`updates.releases.status.${channel}`) : (channel ?? "—");
+    return t("rollouts.impact.release", { version: impact.release_version, ring, percent: impact.release_rollout_percent ?? 0 });
+  };
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("rollouts.pageTitle", "Rollout control")}</h1>
+        <h2 className="text-[17px] font-bold text-text-primary">{t("rollouts.pageTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "rollouts.pageBody",
-            "Cohort staging, pause/recall, and integrated failure diagnostics. Recall requires step-up and server approval.",
-          )}
+          {t("rollouts.pageBody")}
         </p>
       </header>
 
@@ -90,33 +97,33 @@ export function RolloutOpsPanel() {
         <ConsoleStatusBanner tone="error" role="alert">
           <p>{error}</p>
           <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => void loadOverview(true)}>
-            {t("rollouts.retry", "Retry")}
+            {t("rollouts.retry")}
           </Button>
         </ConsoleStatusBanner>
       ) : null}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("rollouts.impact.title", "Impact preview (next activation)")}</CardTitle>
-          <CardDescription>{overview?.impact.release_id ?? "—"}</CardDescription>
+          <CardTitle className="text-base">{t("rollouts.impact.title")}</CardTitle>
+          <CardDescription>{overview ? releaseSummary(overview.impact) : "—"}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
           <div>
-            <p className="text-xs text-text-muted">{t("rollouts.impact.tenants", "Affected tenants")}</p>
+            <p className="text-xs text-text-muted">{t("rollouts.impact.tenants")}</p>
             <p className="text-lg font-semibold">{overview?.impact.affected_tenants ?? 0}</p>
           </div>
           <div>
-            <p className="text-xs text-text-muted">{t("rollouts.impact.machines", "Affected machines")}</p>
+            <p className="text-xs text-text-muted">{t("rollouts.impact.machines")}</p>
             <p className="text-lg font-semibold">{overview?.impact.affected_machines ?? 0}</p>
           </div>
           <div>
-            <p className="text-xs text-text-muted">{t("rollouts.impact.channelOk", "Entitlement channel OK")}</p>
-            <p className="text-lg font-semibold">{overview?.impact.entitlement_channel_ok ? "Yes" : "No"}</p>
+            <p className="text-xs text-text-muted">{t("rollouts.impact.channelOk")}</p>
+            <p className="text-lg font-semibold">{overview?.impact.entitlement_channel_ok ? t("rollouts.impact.yes") : t("rollouts.impact.no")}</p>
           </div>
           <div>
-            <p className="text-xs text-text-muted">{t("rollouts.impact.blockers", "Known blockers")}</p>
+            <p className="text-xs text-text-muted">{t("rollouts.impact.blockers")}</p>
             <ul className="mt-1 list-inside list-disc text-xs text-text-secondary">
-              {(overview?.impact.known_blockers.length ? overview.impact.known_blockers : ["None"]).map((b) => (
+              {(overview?.impact.known_blockers.length ? overview.impact.known_blockers : [t("rollouts.impact.noBlockers")]).map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>
@@ -126,9 +133,9 @@ export function RolloutOpsPanel() {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{t("rollouts.cohorts.title", "Channels & cohorts")}</h2>
+          <h2 className="text-sm font-semibold">{t("rollouts.cohorts.title")}</h2>
           <Button type="button" size="sm" variant="outline" onClick={() => void loadOverview(true)}>
-            {refreshing ? t("rollouts.refreshing", "Refreshing…") : t("rollouts.refresh", "Refresh")}
+            {refreshing ? t("rollouts.refreshing") : t("rollouts.refresh")}
           </Button>
         </div>
         <div className="grid gap-3 md:grid-cols-3">
@@ -141,13 +148,13 @@ export function RolloutOpsPanel() {
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
                   <p>
-                    {c.tenant_count} {t("rollouts.cohorts.tenants", "tenants")} · {c.machine_count}{" "}
-                    {t("rollouts.cohorts.machines", "machines")}
+                    {c.tenant_count} {t("rollouts.cohorts.tenants")} · {c.machine_count}{" "}
+                    {t("rollouts.cohorts.machines")}
                   </p>
                   <p className="text-xs uppercase text-text-muted">{c.governance}</p>
                   {c.paused_at_rfc3339 ? (
                     <p className="text-xs text-text-secondary">
-                      {t("rollouts.cohorts.pausedAt", "Paused at")}: {c.paused_at_rfc3339}
+                      {t("rollouts.cohorts.pausedAt")}: {c.paused_at_rfc3339}
                     </p>
                   ) : null}
                   {c.recalled_version ? (
@@ -161,7 +168,7 @@ export function RolloutOpsPanel() {
                   <div className="flex flex-wrap gap-2 pt-2">
                     {c.governance === "active" ? (
                       <Button type="button" size="sm" variant="secondary" onClick={() => setGovernance({ stage: c, action: "pause" })}>
-                        {t("rollouts.cohorts.pause", "Pause stage")}
+                        {t("rollouts.cohorts.pause")}
                       </Button>
                     ) : (
                       <Button type="button" size="sm" variant="secondary" onClick={() => setGovernance({ stage: c, action: "resume" })}>
@@ -177,7 +184,7 @@ export function RolloutOpsPanel() {
                         setGovernance({ stage: c, action: "recall" });
                       }}
                     >
-                      {t("rollouts.cohorts.recall", "Recall")}
+                      {t("rollouts.cohorts.recall")}
                     </Button>
                   </div>
                 </CardContent>
@@ -187,8 +194,8 @@ export function RolloutOpsPanel() {
             <Card>
               <CardContent className="py-6 text-center text-sm text-text-muted">
                 {loading
-                  ? t("rollouts.loading", "Loading rollout telemetry…")
-                  : t("rollouts.cohorts.empty", "No cohorts available.")}
+                  ? t("rollouts.loading")
+                  : t("rollouts.cohorts.empty")}
               </CardContent>
             </Card>
           )}
@@ -197,13 +204,10 @@ export function RolloutOpsPanel() {
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">
-          {t("rollouts.diagnostics.title", "Release diagnostics (24h)")}
+          {t("rollouts.diagnostics.title")}
         </h2>
         <p className="text-xs text-text-secondary">
-          {t(
-            "rollouts.diagnostics.hint",
-            "Signature, migration, and post-deploy heartbeat failures in one view for containment decisions.",
-          )}
+          {t("rollouts.diagnostics.hint")}
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {overview?.diagnostics.length ? (
@@ -212,12 +216,12 @@ export function RolloutOpsPanel() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm">{CATEGORY_LABEL[d.category] ?? d.category}</CardTitle>
                   <CardDescription>
-                    {t("rollouts.diagnostics.count", "{{n}} events", { n: d.count_24h })}
+                    {t("rollouts.diagnostics.count", { n: d.count_24h })}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-xs text-text-secondary">
                   <p>
-                    {t("rollouts.diagnostics.last", "Last")}: {d.last_event_rfc3339 ?? "—"}
+                    {t("rollouts.diagnostics.last")}: {d.last_event_rfc3339 ?? "—"}
                   </p>
                   <p className="mt-2 font-mono">
                     {d.sample_correlation_ids.length ? d.sample_correlation_ids.join(", ") : "—"}
@@ -228,7 +232,7 @@ export function RolloutOpsPanel() {
           ) : (
             <Card>
               <CardContent className="py-6 text-center text-sm text-text-muted">
-                {t("rollouts.diagnostics.empty", "No rollout diagnostics available.")}
+                {t("rollouts.diagnostics.empty")}
               </CardContent>
             </Card>
           )}

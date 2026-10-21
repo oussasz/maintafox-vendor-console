@@ -7,6 +7,9 @@
  * never synced counts as position 0 and blocks compaction for its tenant: a v1 device has no
  * snapshot, so it must still find the whole log when it first syncs (or is reinstated).
  * Current state and tombstones are never compacted: v2 delivery reads them, not the log.
+ * Never touched either: the archive of attachment deletes (sync_deleted_attachment_archive) and the
+ * forensic device log (sync_forensic_change_log), which keep the sending device of each change after
+ * its log row is compacted (attachment-archive.ts). They are removed only with their tenant.
  *
  * Idempotency pruning: stored exchange responses (v1 and v2) older than
  * SYNC_IDEMPOTENCY_RETENTION_DAYS are deleted.

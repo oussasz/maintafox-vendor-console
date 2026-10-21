@@ -98,8 +98,9 @@ export function refreshCookieOf(headers) {
 /**
  * Logs in (enrolling TOTP on first login). Returns the session: access token, refresh cookie,
  * TOTP secret, recovery codes (first login only) and `stepUp(kind)` (cached per kind for its TTL).
+ * `enrolmentCode`: the one-time code of a new operator or of an MFA reset, when the server asks.
  */
-export async function loginOperator(baseUrl, email, password) {
+export async function loginOperator(baseUrl, email, password, { enrolmentCode } = {}) {
   const login = await post(baseUrl, "/api/v1/auth/login", { body: { email, password } });
   if (login.status !== 200) throw new Error(`login failed (${login.status}): ${login.text}`);
   const key = `${baseUrl}|${email.toLowerCase()}`;
@@ -107,7 +108,13 @@ export async function loginOperator(baseUrl, email, password) {
   let secret = enrolled.get(key);
   let recoveryCodes = null;
   if (login.json.status === "mfa_enrollment_required") {
-    const start = await post(baseUrl, "/api/v1/auth/mfa/enroll/start", { bearer: login.json.mfa_token });
+    if (login.json.reset_code_required && !enrolmentCode) {
+      throw new Error(`${email} needs its one-time enrolment / reset code to enrol`);
+    }
+    const start = await post(baseUrl, "/api/v1/auth/mfa/enroll/start", {
+      bearer: login.json.mfa_token,
+      body: login.json.reset_code_required ? { reset_code: enrolmentCode } : undefined,
+    });
     if (start.status !== 200) throw new Error(`enroll/start failed (${start.status}): ${start.text}`);
     secret = start.json.secret_base32;
     done = await post(baseUrl, "/api/v1/auth/mfa/enroll/confirm", {

@@ -2,14 +2,11 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    // Like i18next: a string 2nd arg is the default value; an options object is not rendered.
-    t: (key: string, fallback?: unknown) => (typeof fallback === "string" ? fallback : key),
-  }),
-}));
+import "@/test/i18n";
+
 
 vi.mock("@/services/license-control-service", () => ({
+  PRIVILEGED_REASON_MIN_LENGTH: 4,
   listTenants: vi.fn(),
   listEditions: vi.fn(),
   listTenantLicenses: vi.fn(),
@@ -100,7 +97,10 @@ describe("EntitlementLifecyclePanel", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByDisplayValue("lic-001")).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue("active")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("Active")).toBeInTheDocument();
+    // Revoking needs a reason for the audit ledger.
+    expect(within(dialog).getByRole("button", { name: "Revoke key" })).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText("Revoke reason (kept in the audit log)"), "rotation");
     expect(within(dialog).getByRole("button", { name: "Revoke key" })).toBeEnabled();
   });
 
@@ -181,12 +181,12 @@ describe("EntitlementLifecyclePanel", () => {
     await userEvent.click(screen.getByText("MFX-KEY-001"));
     const dialog = await screen.findByRole("dialog");
 
-    await userEvent.type(within(dialog).getByLabelText("Revoke reason"), "security incident");
+    await userEvent.type(within(dialog).getByLabelText("Revoke reason (kept in the audit log)"), "security incident");
     await userEvent.click(within(dialog).getByRole("button", { name: "Revoke key" }));
 
     // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
-    await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
-    await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+    await userEvent.type(await screen.findByLabelText("6-digit code from your authenticator app"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
 
     await waitFor(() => {
@@ -197,7 +197,7 @@ describe("EntitlementLifecyclePanel", () => {
     });
 
     expect(
-      within(dialog).getByText(/Use the list Actions column to edit metadata or revoke from the grid/i),
+      within(dialog).getByText(/Use the Actions column of the list to edit or revoke/i),
     ).toBeInTheDocument();
   });
 
@@ -272,19 +272,19 @@ describe("EntitlementLifecyclePanel", () => {
     });
     expect(typeof calledWith?.expires_at).toBe("string");
     expect(Number.isNaN(Date.parse(String(calledWith?.expires_at)))).toBe(false);
-    expect(await screen.findByText("Key lic-new-001 was issued successfully.")).toBeInTheDocument();
+    expect(await screen.findByText("Key lic-new-001 was issued.")).toBeInTheDocument();
 
     const detailDialog = await screen.findByRole("dialog", { name: "Entitlement key detail" });
-    expect(within(detailDialog).getByRole("button", { name: "Revoke key" })).toBeEnabled();
+    expect(within(detailDialog).getByRole("button", { name: "Revoke key" })).toBeDisabled();
     await userEvent.type(
-      within(detailDialog).getByLabelText("Revoke reason"),
+      within(detailDialog).getByLabelText("Revoke reason (kept in the audit log)"),
       "tenant onboarding correction",
     );
     await userEvent.click(within(detailDialog).getByRole("button", { name: "Revoke key" }));
 
     // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
-    await userEvent.type(await screen.findByLabelText("stepUp.codeLabel"), "123456");
-    await userEvent.click(screen.getByRole("button", { name: "stepUp.confirm" }));
+    await userEvent.type(await screen.findByLabelText("6-digit code from your authenticator app"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
 
     await waitFor(() => {
