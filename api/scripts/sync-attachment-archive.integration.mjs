@@ -44,12 +44,17 @@ function sources(dir, out = []) {
   return out;
 }
 const deleting = sources(join(here, "..", "src")).filter((f) => /DeleteObjects?Command|deleteObject|RemoveObject/.test(readFileSync(f, "utf8")));
-// backup-offsite prunes its own backup bucket, never the tenant media bucket.
+// backup-offsite prunes its own backup bucket, never the tenant media bucket; object-store-check
+// deletes only its own probe object (keys under _maintafox-check/, any other key refused).
+const allowedDeleters = new Set(["src/tools/backup-offsite.ts", "src/tools/object-store-check.ts"]);
 assert.deepEqual(
-  deleting.map((f) => f.replace(/\\/g, "/").replace(/.*\/src\//, "src/")).filter((f) => f !== "src/tools/backup-offsite.ts"),
+  deleting.map((f) => f.replace(/\\/g, "/").replace(/.*\/src\//, "src/")).filter((f) => !allowedDeleters.has(f)),
   [],
   "no API code deletes tenant media objects",
 );
+const checkTool = readFileSync(join(here, "..", "src", "tools", "object-store-check.ts"), "utf8");
+assert.match(checkTool, /if \(!key\.startsWith\(PROBE_PREFIX\)/, "object-store-check deletes probe keys only");
+assert.equal((checkTool.match(/DeleteObjectCommand\(/g) ?? []).length, 1, "object-store-check has one delete: the guarded probe delete");
 
 const s3 = {
   endpoint: process.env.TEST_S3_ENDPOINT?.trim(),

@@ -11,7 +11,6 @@
  */
 import {
   CopyObjectCommand,
-  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
@@ -345,9 +344,5 @@ export class TenantMediaObjectStore {
       }),
     );
     return { etag: (out.ETag ?? "").replace(/"/g, "") };
-  }
-
-  async deleteObject(objectKey: string): Promise<void> {
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
   }
 }
