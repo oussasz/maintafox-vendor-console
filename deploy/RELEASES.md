@@ -140,7 +140,7 @@ Presigned URLs must be reachable from GitHub Actions (upload) and from customers
 32 MB, but an installer is larger: raise `client_max_body_size` for release objects (for example a
 `location` matching `/<bucket>/<env>/releases/` with 1 GB) when both branches are deployed.** Until
 the public endpoint is deployed, the upload step of the release workflow fails (the URL points to
-the internal `minio:9000`); nothing is registered half-way.
+the internal `http://object-store:3900`); nothing is registered half-way.
 
 ## Release workflow key (one-time setup)
 

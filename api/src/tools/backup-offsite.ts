@@ -27,7 +27,7 @@ import { pipeline } from "node:stream/promises";
 
 import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 
-import { createS3Client, TenantMediaObjectStore } from "../storage/object-store.js";
+import { CHECK_PROBE_PREFIX, createS3Client, isNotFound, TenantMediaObjectStore } from "../storage/object-store.js";
 import { isAgeFile, runAge, sha256File } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
@@ -201,11 +201,17 @@ export async function pushDirectory(store: OffsiteStore, dir: string, keyPrefix:
 }
 
 /** Copies every media object that is not off-site yet (media keys are content-addressed). */
-export async function pushMedia(store: OffsiteStore, media: TenantMediaObjectStore): Promise<{ uploaded: number; already: number }> {
+export async function pushMedia(
+  store: OffsiteStore,
+  media: TenantMediaObjectStore,
+): Promise<{ uploaded: number; already: number; vanished: number }> {
   const present = await store.listRelativeKeys("media");
   let uploaded = 0;
   let already = 0;
+  let vanished = 0;
   for (const objectKey of await media.listObjectKeys()) {
+    // The start-up check's probe objects are not media and live only seconds.
+    if (objectKey.startsWith(CHECK_PROBE_PREFIX)) continue;
     const key = `media/${assertRelativeKey(objectKey)}`;
     if (present.has(key)) {
       already += 1;
@@ -214,14 +220,23 @@ export async function pushMedia(store: OffsiteStore, media: TenantMediaObjectSto
     const work = mkdtempSync(join(tmpdir(), "mfx-media-"));
     try {
       const plain = join(work, "object");
-      await media.downloadObject(objectKey, createWriteStream(plain));
+      const sink = createWriteStream(plain);
+      try {
+        await media.downloadObject(objectKey, sink);
+      } catch (err) {
+        sink.destroy();
+        if (!isNotFound(err)) throw err;
+        // Deleted between the listing and the download: nothing to copy.
+        vanished += 1;
+        continue;
+      }
       await store.pushFile(plain, key);
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
     uploaded += 1;
   }
-  return { uploaded, already };
+  return { uploaded, already, vanished };
 }
 
 function argValue(argv: string[], name: string): string {

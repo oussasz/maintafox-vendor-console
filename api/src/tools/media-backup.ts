@@ -27,7 +27,7 @@
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
-import { TenantMediaObjectStore } from "../storage/object-store.js";
+import { CHECK_PROBE_PREFIX, isNotFound, TenantMediaObjectStore } from "../storage/object-store.js";
 import { isAgeFile, runAge } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
@@ -163,7 +163,7 @@ export async function backupMedia(runTs: string): Promise<Record<string, number>
   const work = join(workDir, `media-${runTs}`);
   mkdirSync(currentDir, { recursive: true, mode: 0o700 });
   mkdirSync(work, { recursive: true, mode: 0o700 });
-  const stats = { objects: 0, bytes: 0, copied: 0, unchanged: 0, superseded: 0, removed: 0, encrypted_existing: 0, pruned_runs: 0 };
+  const stats = { objects: 0, bytes: 0, copied: 0, unchanged: 0, superseded: 0, removed: 0, vanished: 0, encrypted_existing: 0, pruned_runs: 0 };
 
   // What is already copied, by encoded key. Leftovers of an interrupted run (*.partial) go.
   const copies = new Map<string, CopyFile[]>();
@@ -193,6 +193,8 @@ export async function backupMedia(runTs: string): Promise<Record<string, number>
   try {
     const inBucket = new Set<string>();
     for (const obj of await media.listObjects()) {
+      // The start-up check's probe objects are not media and live only seconds.
+      if (obj.key.startsWith(CHECK_PROBE_PREFIX)) continue;
       if (!ETAG.test(obj.etag)) throw new Error(`object ${obj.key} has no usable ETag ('${obj.etag}')`);
       const encodedKey = encodeObjectKey(obj.key);
       inBucket.add(encodedKey);
@@ -218,7 +220,23 @@ export async function backupMedia(runTs: string): Promise<Record<string, number>
         continue;
       }
       const plain = join(work, "object");
-      await media.downloadObject(obj.key, createWriteStream(plain, { mode: 0o600 }));
+      const sink = createWriteStream(plain, { mode: 0o600 });
+      try {
+        await media.downloadObject(obj.key, sink);
+      } catch (err) {
+        sink.destroy();
+        rmSync(plain, { force: true });
+        if (!isNotFound(err)) throw err;
+        // Deleted between the listing and the download: treated as deleted, not as a failed night.
+        // Its older copies (other ETags) were kept aside just above; none is left in current/.
+        inBucket.delete(encodedKey);
+        copies.delete(encodedKey);
+        if (existing.length > 0) stats.removed += 1;
+        stats.objects -= 1;
+        stats.bytes -= obj.size;
+        stats.vanished += 1;
+        continue;
+      }
       const got = statSync(plain).size;
       if (got !== obj.size) throw new Error(`object ${obj.key}: read ${got} bytes, the bucket lists ${obj.size}`);
       const name = `${encodedKey}${ETAG_SEPARATOR}${obj.etag}`;

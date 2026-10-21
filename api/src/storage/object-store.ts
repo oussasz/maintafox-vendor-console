@@ -134,6 +134,12 @@ export function createS3Client(config: {
   });
 }
 
+/**
+ * Key prefix of the start-up check's short-lived probe objects (api/src/tools/object-store-check.ts).
+ * Not tenant media: the nightly media copy skips it.
+ */
+export const CHECK_PROBE_PREFIX = "_maintafox-check/";
+
 /** HeadBucket/HeadObject answer "not found" without an S3 error code in the body. */
 export function isNotFound(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };

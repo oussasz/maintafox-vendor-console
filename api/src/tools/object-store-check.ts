@@ -21,9 +21,13 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
-import { createS3Client, loadObjectStoreConfig, TenantMediaObjectStore, type ObjectStoreConfig } from "../storage/object-store.js";
-
-const PROBE_PREFIX = "_maintafox-check/";
+import {
+  CHECK_PROBE_PREFIX as PROBE_PREFIX,
+  createS3Client,
+  loadObjectStoreConfig,
+  TenantMediaObjectStore,
+  type ObjectStoreConfig,
+} from "../storage/object-store.js";
 const PROBE_URL_TTL_SECONDS = 60;
 
 async function step<T>(name: string, run: () => Promise<T>): Promise<T> {
