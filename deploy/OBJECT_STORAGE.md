@@ -8,7 +8,7 @@ Why Garage and what it replaces: [`docs/deploy/OBJECT_STORAGE_DECISION.md`](../d
 |---|---|
 | `object-store` | Garage v2.4.1 (`dxflrs/garage`, pinned by digest in `docker-compose.yml`), one node, config `deploy/object-storage/garage.toml`. S3 API on `http://object-store:3900`, **inside the compose network only** (no port on the host). |
 | `object-store-check` | One-shot before the API starts (`api/src/tools/object-store-check.ts --via internal`). It checks that the bucket exists and that a presigned PUT and then a presigned GET give back the same bytes. If either fails, the API does not start. With `--via public` it does the same through the public route (§1.1). |
-| Public route | `https://media.maintafox.systems`, served by the `edge` nginx (`deploy/nginx-edge.conf`, rules in `deploy/nginx-media-proxy.conf`). Desktops and the console use only this address. It lets through **presigned GET and PUT only**, up to 32 MB per file; everything else gets 403. |
+| Public route | `https://media.maintafox.systems`, served by the `edge` nginx (`deploy/nginx-edge.conf`, rules in `deploy/nginx-media-proxy.conf`). Desktops and the console use only this address. It lets through **presigned GET and PUT only** (an Authorization header is cleared, odd raw paths get 400), up to 32 MB per file, and up to 1 GiB for release installers (`<env>/releases/`); everything else gets 403. Its access log records the path only, never the signed query. |
 | Volumes | `object_store_meta` (Garage metadata, SQLite, plus 2 snapshots) and `object_store_data` (data blocks). |
 | Nightly media copy | `backup` service, step `media` (`api/src/tools/media-backup.ts`). See §3. |
 
@@ -243,5 +243,11 @@ delete `sync_minio_data`.
 - **Largest file: 32 MB** (`client_max_body_size` in `deploy/nginx-media-proxy.conf`). The
   desktop's largest synced file is 25 MB (work order attachments, library documents). Raise the
   nginx value first if a desktop limit is ever raised.
+- **Release installers: 1 GiB** through the route, for keys under `<DEPLOYMENT_ENV>/releases/` only
+  (the release workflow's uploads). They are also in every nightly media copy: count them in the
+  disk budget.
+- **Garage logs failed requests with their full URL** (signature included). A failed request's
+  signature was invalid or the object did not exist; still, treat `docker compose logs
+  object-store` as confidential.
 - **The public address is part of every URL.** Changing `S3_PUBLIC_ENDPOINT` invalidates URLs
   already handed out (15 minutes at most; desktops ask again on their own, §4).

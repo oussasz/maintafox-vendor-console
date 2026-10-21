@@ -79,12 +79,14 @@ export function loadObjectStoreConfig(env: NodeJS.ProcessEnv = process.env): Obj
   if (missing.length > 0) {
     throw new ObjectStoreConfigError(`object storage is partly configured: missing ${missing.join(", ")}`);
   }
+  // An origin only: scheme, host, optional port. No path, user info, query or fragment.
+  const origin = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/;
   const endpoint = value("S3_ENDPOINT").replace(/\/$/, "");
-  if (!/^https?:\/\/[^/]+$/.test(endpoint)) {
+  if (!origin.test(endpoint)) {
     throw new ObjectStoreConfigError("S3_ENDPOINT must be an http(s) origin without a path, e.g. http://object-store:3900");
   }
   const publicEndpoint = value("S3_PUBLIC_ENDPOINT").replace(/\/$/, "");
-  if (!/^https?:\/\/[^/]+$/.test(publicEndpoint)) {
+  if (!origin.test(publicEndpoint)) {
     throw new ObjectStoreConfigError(
       "S3_PUBLIC_ENDPOINT must be an http(s) origin without a path, e.g. https://media.maintafox.systems",
     );
@@ -167,9 +169,15 @@ export function buildTenantMediaObjectKey(input: {
   return `${env}/media/${tenant}/${parentType}/${parentSync}/${sha}`;
 }
 
-export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string): boolean {
+/**
+ * True when `objectKey` is a media key of `tenantId`: env / media / tenant / ..., with no empty, "."
+ * or ".." segment (a proxy that normalises the path before routing must see the key the store
+ * stores). With `deploymentEnv`, the first segment must also be that environment.
+ */
+export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string, deploymentEnv?: string): boolean {
   const parts = objectKey.split("/");
-  // env / media / tenant / ...
+  if (parts.some((p) => p === "" || p === "." || p === "..")) return false;
+  if (deploymentEnv !== undefined && parts[0] !== deploymentEnv) return false;
   return parts.length >= 4 && parts[1] === "media" && parts[2] === tenantId;
 }
 

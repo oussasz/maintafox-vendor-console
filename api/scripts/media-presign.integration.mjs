@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { request as httpRequest } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 
 import {
@@ -132,6 +133,8 @@ for (const [extra, why] of [
   [{ S3_BUCKET: "" }, /object-store-check FAILED: object storage is partly configured: missing S3_BUCKET/],
   [{ S3_PUBLIC_ENDPOINT: "" }, /object-store-check FAILED: object storage is partly configured: missing S3_PUBLIC_ENDPOINT/],
   [{ S3_PUBLIC_ENDPOINT: "https://media.example.test/s3" }, /object-store-check FAILED: S3_PUBLIC_ENDPOINT must be an http\(s\) origin/],
+  [{ S3_PUBLIC_ENDPOINT: "https://user:pass@media.example.test" }, /object-store-check FAILED: S3_PUBLIC_ENDPOINT must be an http\(s\) origin/],
+  [{ S3_PUBLIC_ENDPOINT: "https://media.example.test?x=1" }, /object-store-check FAILED: S3_PUBLIC_ENDPOINT must be an http\(s\) origin/],
 ]) {
   checked = check(extra);
   assert.equal(checked.status, 1, `${JSON.stringify(extra)}: ${checked.stdout}`);
@@ -278,6 +281,72 @@ try {
     (err) => (err?.$metadata?.httpStatusCode ?? err?.$response?.statusCode) === 403,
     "credentialed request through the route must be refused",
   );
+  // ... also when the header-signed request carries presigned-looking query parameters: nginx
+  // clears the Authorization header, so the store never sees the key's signature.
+  for (const query of [{ "X-Amz-Signature": "x" }, { "X-Amz-Algorithm": "AWS4-HMAC-SHA256", "X-Amz-Signature": "x" }]) {
+    const disguised = new S3Client({
+      region,
+      endpoint: publicEndpoint,
+      forcePathStyle: true,
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+      requestChecksumCalculation: "WHEN_REQUIRED",
+      responseChecksumValidation: "WHEN_REQUIRED",
+    });
+    disguised.middlewareStack.add(
+      (next) => (args) => {
+        Object.assign(args.request.query, query);
+        return next(args);
+      },
+      { step: "build", name: "disguiseAsPresigned" },
+    );
+    await assert.rejects(
+      disguised.send(new ListObjectsV2Command({ Bucket: bucket })),
+      (err) => [400, 403].includes(err?.$metadata?.httpStatusCode ?? err?.$response?.statusCode),
+      `header-signed listing disguised with ${Object.keys(query).join("+")} must be refused`,
+    );
+  }
+
+  // Raw paths that nginx would route differently from the key the store keeps ("..", ".", "//",
+  // encoded "/" or ".") are refused before any location (sent raw: fetch would normalise them).
+  const rawStatus = (path) =>
+    new Promise((resolve, reject) => {
+      const u = new URL(publicEndpoint);
+      const req = httpRequest({ host: u.hostname, port: u.port, method: "PUT", path, headers: { "Content-Length": "1" } }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.on("error", reject);
+      req.end("x");
+    });
+  const presignedQuery = "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=x";
+  for (const path of [
+    `/${bucket}/ci/media/${devices.alpha.tenantId}/../../../ci/releases/a`,
+    `/${bucket}/ci/media/${devices.alpha.tenantId}/./x`,
+    `/${bucket}/ci/media//x`,
+    `/${bucket}/ci%2Freleases/a`,
+    `/${bucket}/ci/media/%2e%2e/releases/a`,
+  ]) {
+    assert.equal(await rawStatus(`${path}${presignedQuery}`), 400, `raw path ${path} through the route`);
+  }
+  // The API never signs such a key, nor one outside its environment, for a desktop.
+  for (const objectKey of [
+    `ci/media/${devices.alpha.tenantId}/../../../ci/releases/a`,
+    `x/media/${devices.alpha.tenantId}/../../../ci/releases/a`,
+    `ci/media/${devices.alpha.tenantId}/./x/y`,
+    `ci/media/${devices.alpha.tenantId}//x`,
+    `prod/media/${devices.alpha.tenantId}/work_order/wo-0001/${sha256(photo)}`,
+  ]) {
+    const asPut = await api.call("POST", "/api/v1/sync/media/presign-put", devices.alpha.token, {
+      parent_entity_type: "work_order",
+      parent_entity_sync_id: "wo-0001",
+      content_sha256: sha256(photo),
+      object_key: objectKey,
+    });
+    assert.equal(asPut.status, 403, `presign-put of ${objectKey}: ${JSON.stringify(asPut.json)}`);
+    const asGet = await api.call("POST", "/api/v1/sync/media/presign-get", devices.alpha.token, { object_key: objectKey });
+    assert.equal(asGet.status, 403, `presign-get of ${objectKey}: ${JSON.stringify(asGet.json)}`);
+  }
+
   // The object is still there.
   assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: put.json.object_key }))).ContentLength, photo.length);
 
