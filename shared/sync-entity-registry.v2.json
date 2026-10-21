@@ -992,6 +992,161 @@
       "entity_type": "unit_conversions",
       "scope": "tenant",
       "append_only": false
+    },
+    {
+      "entity_type": "reliability_cost_profiles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_studies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_assets",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_decisions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_record_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "currency_exchange_rates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_lots",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_valuation_periods",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_valuation_snapshot_lines",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "procurement_approval_limits",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_cost_estimates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_cost_settlements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_periods",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "weekly_schedules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "weekly_schedule_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "weekly_schedule_baseline_items",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "site_setting_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "site_settings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "qualification_overrides",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "qualification_requirements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_calendar_holidays",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "site_work_weeks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "schedule_class_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "team_schedule_assignments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_schedule_exceptions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "admin_recovery_acknowledgements",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "admin_recovery_notices",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "audit_chain_stubs",
+      "scope": "tenant",
+      "append_only": true
     }
   ]
 }
