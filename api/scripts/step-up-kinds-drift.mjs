@@ -8,7 +8,7 @@
  * names a Rust variant the enum does not have. Catalog kinds with `rust_variant: null` are the ones
  * the desktop has not added yet: listed, not failed (they must be added to the enum with the same
  * label; then the catalog entry names the variant).
- * CI runs it against the desktop repository's main branch (.github/workflows/ci.yml).
+ * CI runs it against the desktop repository (.github/workflows/ci.yml, contracts-drift).
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

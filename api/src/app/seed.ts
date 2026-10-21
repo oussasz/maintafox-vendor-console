@@ -22,7 +22,8 @@ export function createSeeder(db: Database) {
       return;
     }
     const hash = bcrypt.hashSync(SEED_ADMIN_PASSWORD, 12);
-    await db.run("INSERT INTO users (email, password_hash) VALUES (?, ?)", SEED_ADMIN_EMAIL, hash);
+    // The first operator is the owner: the one who manages every other operator (Phase 4.3).
+    await db.run("INSERT INTO users (email, password_hash, role) VALUES (?, ?, 'owner')", SEED_ADMIN_EMAIL, hash);
     console.info(`Seeded admin user: ${SEED_ADMIN_EMAIL}`);
   }
 

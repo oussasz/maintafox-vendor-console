@@ -39,12 +39,18 @@ import { registerAuditRoutes } from "./routes/audit.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBillingRoutes } from "./routes/billing.js";
 import { registerEditionsRoutes } from "./routes/editions.js";
+import { registerAdminRecoveryRoutes } from "./routes/admin-recovery.js";
 import { registerLicencesRoutes } from "./routes/licences.js";
 import { registerNotificationsRoutes } from "./routes/notifications.js";
+import { registerOperatorsRoutes } from "./routes/operators.js";
+import { registerConsoleRoutes } from "./routes/console.js";
 import { registerOpsRoutes } from "./routes/ops.js";
 import { registerReleasesRoutes } from "./routes/releases.js";
+import { registerReleaseCatalogRoutes } from "./routes/release-catalog.js";
+import { registerUpdatesRoutes } from "./routes/updates.js";
 import { registerSupportRoutes } from "./routes/support.js";
 import { registerSyncRoutes } from "./routes/sync.js";
+import { registerSyncOperationsRoutes } from "./routes/sync-operations.js";
 import { registerTenantsRoutes } from "./routes/tenants.js";
 import {
   loadPayloadCipher,
@@ -158,17 +164,23 @@ const ctx: ApiContext = {
   ...createTenantStore(db),
 };
 registerOpsRoutes(app, ctx);
+registerConsoleRoutes(app, ctx);
 registerAuthRoutes(app, ctx);
 registerEditionsRoutes(app, ctx);
 registerTenantsRoutes(app, ctx);
 registerReleasesRoutes(app, ctx);
+registerReleaseCatalogRoutes(app, ctx);
+registerUpdatesRoutes(app, ctx);
 registerLicencesRoutes(app, ctx);
+registerAdminRecoveryRoutes(app, ctx);
 registerBillingRoutes(app, ctx);
 registerAuditRoutes(app, ctx);
 registerSupportRoutes(app, ctx);
 registerSyncRoutes(app, ctx);
 registerActivationRoutes(app, ctx);
 registerNotificationsRoutes(app, ctx);
+registerOperatorsRoutes(app, ctx);
+registerSyncOperationsRoutes(app, ctx);
 
 const port = Number(process.env.PORT ?? 3000);
 

@@ -3,11 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
-  }),
-}));
+import "@/test/i18n";
+
 
 vi.mock("@/services/admin-permissions", async () => {
   const actual = await vi.importActual<typeof import("@/services/admin-permissions")>(
@@ -81,7 +78,7 @@ describe("auth-before-authz flow", () => {
   it("redirects to login and ends the session when permissions API returns 401", async () => {
     vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockRejectedValue(
-      new AuthenticationRequiredError("Authentication required", 401, "invalid_token"),
+      new AuthenticationRequiredError(401, "invalid_token"),
     );
     renderConsoleTree();
     expect(await screen.findByText("Login screen")).toBeInTheDocument();
@@ -108,7 +105,7 @@ describe("auth-before-authz flow", () => {
   it("shows retry panel (not Access Denied) on permissions load failure", async () => {
     vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockRejectedValue(
-      new PermissionsLoadError("Network error while loading permissions."),
+      new PermissionsLoadError("network"),
     );
     renderConsoleTree();
     expect(await screen.findByText(/Unable to verify permissions/i)).toBeInTheDocument();

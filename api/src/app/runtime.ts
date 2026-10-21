@@ -78,20 +78,6 @@ export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
 
-export function semverCompare(a?: string | null, b?: string | null): number {
-  if (!a || !b) return 0;
-  const pa = a.split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => Number.parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i += 1) {
-    const da = pa[i] ?? 0;
-    const dbv = pb[i] ?? 0;
-    if (da > dbv) return 1;
-    if (da < dbv) return -1;
-  }
-  return 0;
-}
-
 export type ForceUpdateMode = "off" | "required" | "emergency" | "inherit";
 
 /** Constant-time comparison of two secrets (webhook signature, scrape token). */

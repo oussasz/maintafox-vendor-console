@@ -17,8 +17,9 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      "@maintafox/contracts": ["./packages/contracts/src/index.ts"]
     }
   },
-  "include": ["src", "shared"]
+  "include": ["src", "shared", "packages/contracts/src"]
 }

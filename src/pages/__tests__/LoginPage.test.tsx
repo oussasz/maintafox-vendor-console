@@ -26,18 +26,22 @@ import {
   verifyRecoveryCode,
   verifyTotp,
 } from "@/services/vendor-auth-service";
+import { ThemeProvider } from "@/components/ui/ThemeProvider";
+
 import { LoginPage } from "../LoginPage";
 
 const CODES = Array.from({ length: 10 }, (_, i) => `ABCDE-${String(i).padStart(5, "2")}`);
 
 function renderLogin() {
   return render(
-    <MemoryRouter initialEntries={[{ pathname: "/login", state: { from: "/vendor-console/audit" } }]}>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/vendor-console/audit" element={<div>Audit page</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <ThemeProvider>
+      <MemoryRouter initialEntries={[{ pathname: "/login", state: { from: "/vendor-console/audit" } }]}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/vendor-console/audit" element={<div>Audit page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </ThemeProvider>,
   );
 }
 

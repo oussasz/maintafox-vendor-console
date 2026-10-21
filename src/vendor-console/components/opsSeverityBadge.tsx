@@ -1,4 +1,4 @@
-import type { SyncHealthSeverityV1 } from "@shared/ipc-types";
+import type { SyncHealthSeverityV1 } from "@maintafox/contracts";
 
 import { Badge } from "@/components/ui/badge";
 

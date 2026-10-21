@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { VendorAdminAuditRecordV1 } from "@shared/ipc-types";
+import type { VendorAdminAuditRecordV1 } from "@maintafox/contracts";
 
 /** Must match `vps::audit_support_hardening::audit_record_preimage`. */
 export function auditRecordPreimage(record: VendorAdminAuditRecordV1): string {
@@ -66,15 +66,10 @@ export const VendorAdminAuditRecordV1Schema = z.object({
   occurred_at_rfc3339: z.string(),
   actor_id: z.string().min(1),
   action_code: z.string().min(1),
-  action_category: z.enum([
-    "auth_session",
-    "entitlement",
-    "machine",
-    "sync_repair",
-    "rollout_intervention",
-    "platform_override",
-    "support_intervention",
-  ]),
+  // The desktop contract names 7 categories; the control API writes more (vendor sign-in,
+  // customers, operators, billing, rollout governance: shared/audit-action-categories.v1.json).
+  // A category the console does not know is shown as its code, never a reason to drop the ledger.
+  action_category: z.string().min(1),
   correlation_id: z.string().min(1),
   scope_tenant_id: z.string().nullable(),
   before_snapshot_sha256: z.string().nullable(),

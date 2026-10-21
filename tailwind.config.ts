@@ -2,6 +2,9 @@ import forms from "@tailwindcss/forms";
 import typography from "@tailwindcss/typography";
 import type { Config } from "tailwindcss";
 
+/** A palette colour from globals.css (`--c-<name>`, RGB channels) that keeps opacity modifiers working. */
+const c = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   darkMode: "class",
@@ -28,32 +31,57 @@ export default {
           foreground: "var(--muted-foreground)",
         },
         destructive: {
-          DEFAULT: "var(--destructive)",
+          DEFAULT: c("destructive"),
           foreground: "var(--destructive-foreground)",
         },
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
-        /* ── Maintafox brand tokens ─────────────────────────────────────── */
+        /* ── Maintafox palette: RGB channels from src/styles/globals.css, one set per theme ── */
         primary: {
-          DEFAULT: "#003d8f",
-          dark: "#002b6a",
-          light: "#4d7bc5",
-          bg: "#e8eef8",
+          DEFAULT: c("primary"),
+          dark: c("primary-dark"),
+          light: c("primary-light"),
+          bg: c("primary-bg"),
           foreground: "var(--primary-foreground)",
         },
         accent: {
-          DEFAULT: "#f0a500",
-          dark: "#c47f00",
+          DEFAULT: c("accent"),
+          dark: c("accent-dark"),
           foreground: "var(--accent-foreground)",
         },
-        status: {
-          success: "#198754",
-          danger: "#dc3545",
-          warning: "#ffc107",
-          info: "#0dcaf0",
-          neutral: "#6c757d",
+        /* Console redesign: navy sidebar, orange only for "needs attention", green for OK. */
+        navy: {
+          DEFAULT: c("navy"),
+          active: c("navy-active"),
+          text: c("navy-text"),
+          muted: c("navy-muted"),
         },
+        attention: {
+          DEFAULT: c("attention"),
+          bg: c("attention-bg"),
+          text: c("attention-text"),
+          strong: c("attention-strong"),
+        },
+        ok: {
+          DEFAULT: c("ok"),
+          bg: c("ok-bg"),
+          text: c("ok-text"),
+          border: c("ok-border"),
+        },
+        danger: {
+          DEFAULT: c("danger"),
+          bg: c("danger-bg"),
+          border: c("danger-border"),
+        },
+        status: {
+          success: c("status-success"),
+          danger: c("status-danger"),
+          warning: c("status-warning"),
+          info: c("status-info"),
+          neutral: c("status-neutral"),
+        },
+        overlay: c("overlay"),
         surface: {
           0: "var(--surface-0)",
           1: "var(--surface-1)",
@@ -72,7 +100,7 @@ export default {
       },
       fontFamily: {
         sans: [
-          "Inter",
+          '"IBM Plex Sans"',
           "ui-sans-serif",
           "system-ui",
           "-apple-system",

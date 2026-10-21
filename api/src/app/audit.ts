@@ -1,6 +1,7 @@
 /** Audit ledger append (hash chain), bound to the API database. */
 import { auditRecordPreimage, type AuditEntityRefs } from "../audit-chain.js";
 import type { Database } from "../db/database.js";
+import { isAuditActionCategory } from "./audit-categories.js";
 import { newId, sha256Hex } from "./runtime.js";
 
 export function createAuditAppender(db: Database) {
@@ -15,6 +16,10 @@ export function createAuditAppender(db: Database) {
     entity_refs?: AuditEntityRefs;
     payload?: unknown;
   }): Promise<string> {
+    if (!isAuditActionCategory(input.action_category)) {
+      // A route names a category the ledger cannot filter or show: fix the route or the catalog.
+      throw new Error(`audit category '${input.action_category}' is not in shared/audit-action-categories.v1.json`);
+    }
     // The hash chain needs a gap-free sequence: serialize appends (joins the caller's transaction).
     return db.tx(async () => {
       await db.lockXact("audit-chain", "append");

@@ -10,6 +10,7 @@
  * reported (ObjectStoreBucketMissingError), not silently recreated empty.
  */
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
@@ -267,6 +268,59 @@ export class TenantMediaObjectStore {
       hash.update(chunk);
     }
     return { byteSize, sha256: hash.digest("hex") };
+  }
+
+  /**
+   * Size, SHA-256 and BLAKE2b-512 of one object in one read (release artifacts: the SHA-256 is
+   * compared with the declared one, the BLAKE2b-512 is what the updater signature signs).
+   * Returns null when the object does not exist; throws `object_too_large` past `maxBytes`.
+   */
+  async readObjectDigests(
+    objectKey: string,
+    maxBytes: number,
+  ): Promise<{ byteSize: number; sha256: string; blake2b512: Buffer } | null> {
+    let out;
+    try {
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchKey") return null;
+      throw err;
+    }
+    if (!out.Body) return null;
+    const sha = createHash("sha256");
+    const blake = createHash("blake2b512");
+    let byteSize = 0;
+    for await (const chunk of out.Body as AsyncIterable<Uint8Array>) {
+      byteSize += chunk.length;
+      if (byteSize > maxBytes) {
+        (out.Body as { destroy?: () => void }).destroy?.();
+        throw new Error("object_too_large");
+      }
+      sha.update(chunk);
+      blake.update(chunk);
+    }
+    return { byteSize, sha256: sha.digest("hex"), blake2b512: blake.digest() };
+  }
+
+  /**
+   * Server-side copy inside the bucket (release artifacts: the verified, served copy of an upload).
+   * Single-request CopyObject: fine up to 5 GB (release artifacts are capped at 1 GB). Supported
+   * by MinIO and Garage. Returns false when the source does not exist.
+   */
+  async copyObject(sourceKey: string, destinationKey: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.config.bucket,
+          Key: destinationKey,
+          CopySource: `${this.config.bucket}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`,
+        }),
+      );
+      return true;
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchKey") return false;
+      throw err;
+    }
   }
 
   /** Streams one object's content into `writeTo` (off-site and local media backups). */

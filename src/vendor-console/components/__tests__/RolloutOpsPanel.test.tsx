@@ -24,9 +24,18 @@ import { getRolloutOverview, type RolloutOverviewV1 } from "@/services/vendor-op
 import { RolloutOpsPanel } from "../RolloutOpsPanel";
 import { renderWithConsole } from "./renderWithConsole";
 
-function overview(governance: "active" | "paused" | "recalled", recalled: string | null = null): RolloutOverviewV1 {
+type Impact = RolloutOverviewV1["impact"];
+const published: Pick<Impact, "release_id" | "release_version" | "release_channel" | "release_rollout_percent"> = {
+  release_id: "rel_1",
+  release_version: "2.1.0",
+  release_channel: "pilot",
+  release_rollout_percent: 25,
+};
+const nothingPublished: typeof published = { release_id: null, release_version: null, release_channel: null, release_rollout_percent: null };
+
+function overview(governance: "active" | "paused" | "recalled", recalled: string | null = null, release = published): RolloutOverviewV1 {
   return {
-    impact: { release_id: "rel_1", affected_tenants: 1, affected_machines: 2, entitlement_channel_ok: true, known_blockers: [] },
+    impact: { ...release, affected_tenants: 1, affected_machines: 2, entitlement_channel_ok: true, known_blockers: [] },
     cohort_stages: [
       {
         channel: "stable",
@@ -53,6 +62,19 @@ describe("RolloutOpsPanel governance", () => {
     vi.clearAllMocks();
   });
 
+  it("shows the latest published release as version, ring and percentage", async () => {
+    vi.mocked(getRolloutOverview).mockResolvedValue(overview("active"));
+    renderWithConsole(<RolloutOpsPanel />);
+    expect(await screen.findByText("rollouts.impact.release")).toBeInTheDocument();
+    expect(screen.queryByText("rel_1")).not.toBeInTheDocument();
+  });
+
+  it("says so when no release is published yet", async () => {
+    vi.mocked(getRolloutOverview).mockResolvedValue(overview("active", null, nothingPublished));
+    renderWithConsole(<RolloutOpsPanel />);
+    expect(await screen.findByText("rollouts.impact.noRelease")).toBeInTheDocument();
+  });
+
   it("says devices act only once the updater exists", async () => {
     vi.mocked(getRolloutOverview).mockResolvedValue(overview("active"));
     renderWithConsole(<RolloutOpsPanel />);
@@ -62,7 +84,7 @@ describe("RolloutOpsPanel governance", () => {
   it("pause uses the rollout_publish step-up and reloads the real state", async () => {
     vi.mocked(getRolloutOverview).mockResolvedValueOnce(overview("active")).mockResolvedValueOnce(overview("paused"));
     renderWithConsole(<RolloutOpsPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Pause stage" }));
+    await userEvent.click(await screen.findByRole("button", { name: "rollouts.cohorts.pause" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "crash reports");
     await userEvent.click(within(dialog).getByRole("button", { name: "rollouts.governance.pause.confirm" }));
@@ -81,7 +103,7 @@ describe("RolloutOpsPanel governance", () => {
   it("recall needs the version and the forced_rollback step-up", async () => {
     vi.mocked(getRolloutOverview).mockResolvedValueOnce(overview("paused")).mockResolvedValueOnce(overview("recalled", "2.1.0"));
     renderWithConsole(<RolloutOpsPanel />);
-    await userEvent.click(await screen.findByRole("button", { name: "Recall" }));
+    await userEvent.click(await screen.findByRole("button", { name: "rollouts.cohorts.recall" }));
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("operatorAction.reasonLabel"), "bad build");
     const confirm = within(dialog).getByRole("button", { name: "rollouts.governance.recall.confirm" });

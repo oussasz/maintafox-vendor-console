@@ -6,7 +6,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "api/dist/**", "node_modules/**", "api/node_modules/**", "coverage/**"] },
+  // .claude/: local agent worktrees of this repository (not part of it).
+  { ignores: ["dist/**", "api/dist/**", "node_modules/**", "api/node_modules/**", "coverage/**", ".claude/**", "e2e-report/**", "e2e-results/**"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -16,7 +17,7 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
-    files: ["api/**/*.{ts,mjs}", "*.config.{js,ts}"],
+    files: ["api/**/*.{ts,mjs}", "packages/*/scripts/**/*.mjs", "e2e/**/*.{ts,mjs}", "*.config.{js,ts}"],
     languageOptions: { globals: globals.node },
   },
 );

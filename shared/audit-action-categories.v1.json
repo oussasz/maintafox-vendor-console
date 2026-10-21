@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "description": "Categories of audit ledger records. The API refuses to write a record whose category is not listed here and filters the ledger by them; the console offers them as filters. in_desktop_contract: the category exists in the desktop's VendorAdminAuditActionCategoryV1 (shared/ipc-types.ts); the others are written by the control API only (vendor sign-in, customers, operators, billing, rollout governance). Append-only: never rename or remove an entry, records keep their category forever.",
+  "categories": [
+    { "category": "auth_session", "in_desktop_contract": true, "description": "Desktop sign-in and session events." },
+    { "category": "entitlement", "in_desktop_contract": true, "description": "Licence keys and machine slots." },
+    { "category": "machine", "in_desktop_contract": true, "description": "Machine trust changes." },
+    { "category": "sync_repair", "in_desktop_contract": true, "description": "Sync repair actions (full resynchronisation of a device)." },
+    { "category": "rollout_intervention", "in_desktop_contract": true, "description": "Forced-update policies of tenants and cohorts." },
+    { "category": "platform_override", "in_desktop_contract": true, "description": "Platform and offline-policy overrides, refused privileged actions." },
+    { "category": "support_intervention", "in_desktop_contract": true, "description": "Support tickets, interventions, diagnostic bundles." },
+    { "category": "vendor_auth", "in_desktop_contract": false, "description": "Console operator sign-in, authenticator, sessions, recovery codes." },
+    { "category": "tenant", "in_desktop_contract": false, "description": "Customers created, suspended, resumed, deleted." },
+    { "category": "operator", "in_desktop_contract": false, "description": "Console operators and their roles." },
+    { "category": "billing", "in_desktop_contract": false, "description": "Payments and SlickPay reconciliation." },
+    { "category": "rollout", "in_desktop_contract": false, "description": "Rollout cohort governance (pause, resume, recall)." },
+    { "category": "release", "in_desktop_contract": false, "description": "Desktop release catalog: uploads, publication, rollout percentage, recall, CI publisher keys." }
+  ]
+}

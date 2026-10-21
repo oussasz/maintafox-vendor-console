@@ -5,6 +5,7 @@
  */
 import { assertTenantOwnsObjectKey } from "../storage/object-store.js";
 import type { Database } from "../db/database.js";
+import { recordAcceptedChange } from "./attachment-archive.js";
 import { signCheckpointToken, verifyCheckpointToken } from "./checkpoint.js";
 import { newBatchId } from "./exchange-v1.js";
 import { PayloadCipher, responseAad } from "./payload-crypto.js";
@@ -202,6 +203,25 @@ export async function runSyncExchangeV2(
       };
     }
 
+    // An operator asked for a full resynchronisation of this device (routes/ops.ts): refuse its
+    // checkpoint so the desktop bootstraps again from a full snapshot (its unsent changes stay in
+    // its outbox and are sent afterwards). A device already bootstrapping sends no checkpoint.
+    if (requestSeq > 0) {
+      const resync = await db.get<{ id: number }>(
+        `SELECT id FROM sync_device_resync_request
+         WHERE tenant_id = $1 AND machine_fingerprint = $2 AND completed_at IS NULL`,
+        act.tenantId,
+        act.machineFingerprint,
+      );
+      if (resync) {
+        throw new SyncRequestError(
+          400,
+          "invalid_checkpoint_token",
+          "An operator asked for a full resynchronisation of this device; bootstrap again with a snapshot.",
+        );
+      }
+    }
+
     const highWaterBefore = await tenantStateHighWater(db, act.tenantId);
     if (requestSeq > highWaterBefore) {
       throw new SyncRequestError(
@@ -355,6 +375,8 @@ export async function runSyncExchangeV2(
         // The key was checked above under the tenant lock; reaching this means a broken invariant.
         throw new Error(`item idempotency_key ${item.idempotency_key} appeared concurrently`);
       }
+      // Archive of attachment deletes / forensic device log (adds rows only; before the state write).
+      await recordAcceptedChange(db, deps.cipher, act, ingress, serverSeq);
       await upsertEntityState(db, deps.cipher, serverSeq, ingress);
       acknowledged_items.push({
         idempotency_key: item.idempotency_key,

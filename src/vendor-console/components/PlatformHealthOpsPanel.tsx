@@ -10,16 +10,10 @@ import { getPlatformOverview, type PlatformOverviewV1 } from "@/services/vendor-
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsAlertsPanel } from "./OpsAlertsPanel";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
+import { errorText } from "@/lib/error-text";
 
-const SERVICE_LABEL: Record<string, string> = {
-  api: "API",
-  workers: "Workers",
-  postgresql: "PostgreSQL",
-  redis: "Redis",
-  object_storage: "Object storage",
-  admin_ui: "Admin UI",
-  backups: "Backups",
-};
+/** Services the platform overview reports (labels: vendorConsole `health.services.names.*`). */
+const KNOWN_SERVICES = new Set(["api", "workers", "postgresql", "redis", "object_storage", "admin_ui", "backups"]);
 
 export function PlatformHealthOpsPanel() {
   const { t } = useTranslation("vendorConsole");
@@ -36,7 +30,7 @@ export function PlatformHealthOpsPanel() {
     try {
       setOverview(await getPlatformOverview());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load platform telemetry.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -48,14 +42,11 @@ export function PlatformHealthOpsPanel() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("health.pageTitle", "Platform health & incidents")}</h1>
+        <h2 className="text-[17px] font-bold text-text-primary">{t("health.pageTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "health.pageBody",
-            "Unified telemetry across services, infrastructure pressure, and alert ownership. Drill-through stays tenant-safe.",
-          )}
+          {t("health.pageBody")}
         </p>
       </header>
 
@@ -63,16 +54,16 @@ export function PlatformHealthOpsPanel() {
         <ConsoleStatusBanner tone="error" role="alert">
           <p>{error}</p>
           <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => void loadOverview(true)}>
-            {t("health.retry", "Retry")}
+            {t("health.retry")}
           </Button>
         </ConsoleStatusBanner>
       ) : null}
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{t("health.services.title", "Service status")}</h2>
+          <h2 className="text-sm font-semibold">{t("health.services.title")}</h2>
           <Button type="button" size="sm" variant="outline" onClick={() => void loadOverview(true)}>
-            {refreshing ? t("health.refreshing", "Refreshing…") : t("health.refresh", "Refresh")}
+            {refreshing ? t("health.refreshing") : t("health.refresh")}
           </Button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -80,7 +71,7 @@ export function PlatformHealthOpsPanel() {
             overview.platform_services.map((s) => (
               <Card key={s.service}>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">{SERVICE_LABEL[s.service] ?? s.service}</CardTitle>
+                  <CardTitle className="text-sm">{KNOWN_SERVICES.has(s.service) ? t(`health.services.names.${s.service}`) : s.service}</CardTitle>
                   <CardDescription className="flex items-center gap-2">
                     <OpsSeverityBadge severity={s.severity} />
                   </CardDescription>
@@ -92,8 +83,8 @@ export function PlatformHealthOpsPanel() {
             <Card className="sm:col-span-2 lg:col-span-3">
               <CardContent className="py-6 text-center text-sm text-text-muted">
                 {loading
-                  ? t("health.loading", "Loading platform telemetry…")
-                  : t("health.services.empty", "No platform service telemetry available.")}
+                  ? t("health.loading")
+                  : t("health.services.empty")}
               </CardContent>
             </Card>
           )}
@@ -101,18 +92,18 @@ export function PlatformHealthOpsPanel() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold">{t("health.pressure.title", "Infrastructure pressure")}</h2>
+        <h2 className="text-sm font-semibold">{t("health.pressure.title")}</h2>
         <p className="text-xs text-text-secondary">
-          {t("health.pressure.hint", "Trend and threshold hints for operators; authoritative thresholds live server-side.")}
+          {t("health.pressure.hint")}
         </p>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[560px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("health.pressure.col.metric", "Metric")}</th>
-                <th className="px-3 py-2">{t("health.pressure.col.value", "Value")}</th>
-                <th className="px-3 py-2">{t("health.pressure.col.threshold", "Threshold hint")}</th>
-                <th className="px-3 py-2">{t("health.pressure.col.trend", "Trend")}</th>
+                <th className="px-3 py-2">{t("health.pressure.col.metric")}</th>
+                <th className="px-3 py-2">{t("health.pressure.col.value")}</th>
+                <th className="px-3 py-2">{t("health.pressure.col.threshold")}</th>
+                <th className="px-3 py-2">{t("health.pressure.col.trend")}</th>
               </tr>
             </thead>
             <tbody>
@@ -130,7 +121,7 @@ export function PlatformHealthOpsPanel() {
               ) : (
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={4} className="px-3 py-4 text-center text-sm text-text-muted">
-                    {t("health.pressure.empty", "No infrastructure pressure metrics available.")}
+                    {t("health.pressure.empty")}
                   </td>
                 </tr>
               )}
@@ -142,22 +133,19 @@ export function PlatformHealthOpsPanel() {
       <OpsAlertsPanel alerts={overview?.alerts ?? []} />
 
       <section className="rounded-lg border border-dashed border-surface-border bg-surface-1/50 p-4">
-        <h2 className="text-sm font-semibold">{t("health.drill.title", "Related operational views")}</h2>
+        <h2 className="text-sm font-semibold">{t("health.drill.title")}</h2>
         <p className="mt-1 text-xs text-text-secondary">
-          {t(
-            "health.drill.body",
-            "Tenant-safe incident drill-through links curated views in sync and rollout workspaces without exposing unrelated customer data.",
-          )}
+          {t("health.drill.body")}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {can("sync.operate") ? (
             <Button variant="outline" size="sm" asChild>
-              <Link to="/vendor-console/sync">{t("health.drill.sync", "Open sync health")}</Link>
+              <Link to="/vendor-console/sync">{t("health.drill.sync")}</Link>
             </Button>
           ) : null}
           {can("rollout.manage") ? (
             <Button variant="outline" size="sm" asChild>
-              <Link to="/vendor-console/rollouts">{t("health.drill.rollouts", "Open rollouts")}</Link>
+              <Link to="/vendor-console/rollouts">{t("health.drill.rollouts")}</Link>
             </Button>
           ) : null}
         </div>

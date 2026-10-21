@@ -65,7 +65,11 @@ export const SyncOverviewV1Schema = z.object({
 });
 
 export const RolloutImpactPreviewV1Schema = z.object({
-  release_id: z.string().min(1),
+  /** Latest published, not recalled release (null until one is published). */
+  release_id: z.string().min(1).nullable(),
+  release_version: z.string().min(1).nullable(),
+  release_channel: z.string().min(1).nullable(),
+  release_rollout_percent: z.number().int().min(0).max(100).nullable(),
   affected_tenants: z.number().nonnegative(),
   affected_machines: z.number().nonnegative(),
   entitlement_channel_ok: z.boolean(),
@@ -133,8 +137,8 @@ export const IncidentDrillThroughRefsV1Schema = z
     sync_batch_id: z.string().optional(),
     rollout_release_id: z.string().optional(),
     correlation_id: z.string().optional(),
-  })
-  .strict();
+  });
+// (Not strict: extra references a newer server sends are dropped, not an error.)
 
 /** Client guard mirroring Rust `tenant_safe_drill_through`. */
 export function tenantSafeDrillThrough(refs: z.infer<typeof IncidentDrillThroughRefsV1Schema>): boolean {
@@ -178,20 +182,3 @@ export function worstSeverity(a: SyncHealthSeverityV1, b: SyncHealthSeverityV1):
 }
 
 /** Mirrors Rust `repair_action_allowed` (UX hint; server enforces). */
-export function repairActionAllowed(
-  item: z.infer<typeof RepairQueueItemV1Schema>,
-  action: z.infer<typeof RepairQueueActionV1Schema>,
-): boolean {
-  const deadLetter = item.queue_kind.includes("dead") || item.queue_kind === "dead_letter";
-  switch (action) {
-    case "escalate":
-      return item.severity === "warn" || item.severity === "critical";
-    case "replay":
-    case "requeue":
-      return true;
-    case "acknowledge":
-      return item.severity !== "critical" || deadLetter;
-    default:
-      return false;
-  }
-}

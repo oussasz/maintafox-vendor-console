@@ -6,10 +6,17 @@ import type express from "express";
 
 import type { ApiContext } from "../app/context.js";
 import { METRICS_SCRAPE_TOKEN, SEED_BEHAVIOR } from "../app/config.js";
-import { getMediaStore } from "../app/media.js";
 import { observabilityWindow, percentile, workerState } from "../app/observability.js";
 import { safeEqualUtf8, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { openOperatorScope } from "../app/scope.js";
+import {
+  BACKUP_MAX_AGE_HOURS,
+  DB_LATENCY_MS,
+  loadBackupStatus,
+  probeDatabase,
+  probeObjectStorage,
+  RESTORE_DRILL_MAX_AGE_DAYS,
+} from "../ops/platform-probes.js";
 import { PROMETHEUS_CONTENT_TYPE, renderPrometheus, type MetricFamily } from "../ops/prometheus.js";
 import {
   collectSyncHealth,
@@ -19,23 +26,8 @@ import {
   type SyncHealthSnapshot,
 } from "../ops/sync-health.js";
 
-/** A nightly backup older than this is late (24 h schedule + 2 h margin). */
-const BACKUP_MAX_AGE_HOURS = 26;
-/** The restore drill runs monthly; older than this it was missed. */
-const RESTORE_DRILL_MAX_AGE_DAYS = 35;
-/** Database round trip (SELECT 1) thresholds, milliseconds. */
-const DB_LATENCY_MS = { warn: 100, critical: 1000 };
 /** API 5xx share of requests since start, percent (SLO availability 99.9 %). */
 const API_5XX_PERCENT = { warn: 0.1, critical: 1 };
-
-type BackupStatus = {
-  kind: "nightly" | "restore_drill";
-  last_status: "succeeded" | "failed";
-  last_finished_at: Date;
-  last_success_at: Date | null;
-  last_offsite_upload_at: Date | null;
-  last_offsite_status: string;
-};
 
 function ageHours(at: Date | null, nowMs: number): number | null {
   return at ? (nowMs - at.getTime()) / 3600_000 : null;
@@ -123,45 +115,6 @@ function syncOverview(snap: SyncHealthSnapshot) {
 
 export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, authMiddleware } = ctx;
-
-  async function loadBackupStatus(): Promise<BackupStatus[]> {
-    return db.all<BackupStatus>(
-      `SELECT DISTINCT ON (kind) kind,
-              status AS last_status,
-              finished_at AS last_finished_at,
-              MAX(finished_at) FILTER (WHERE status = 'succeeded') OVER (PARTITION BY kind) AS last_success_at,
-              MAX(finished_at) FILTER (WHERE offsite_status = 'uploaded') OVER (PARTITION BY kind) AS last_offsite_upload_at,
-              offsite_status AS last_offsite_status
-       FROM backup_runs
-       ORDER BY kind, finished_at DESC`,
-    );
-  }
-
-  async function probeDatabase(): Promise<{ latency_ms: number; size_bytes: number; connections: number }> {
-    const started = process.hrtime.bigint();
-    await db.query("SELECT 1");
-    const latency_ms = Number(process.hrtime.bigint() - started) / 1e6;
-    const row = await db.get<{ size_bytes: number; connections: number }>(
-      `SELECT pg_database_size(current_database()) AS size_bytes,
-              (SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database()) AS connections`,
-    );
-    return { latency_ms: Math.round(latency_ms * 10) / 10, size_bytes: row?.size_bytes ?? 0, connections: row?.connections ?? 0 };
-  }
-
-  async function probeObjectStorage(): Promise<{ severity: Severity; detail: string }> {
-    const media = getMediaStore();
-    if (!media) return { severity: "critical", detail: "object storage is not configured (S3_* settings missing)" };
-    const started = Date.now();
-    try {
-      await media.headBucket();
-      return { severity: "info", detail: `bucket ${media.config.bucket} reachable (${Date.now() - started} ms)` };
-    } catch (err) {
-      return {
-        severity: "critical",
-        detail: `bucket ${media.config.bucket} unreachable: ${err instanceof Error ? err.name || err.message : String(err)}`,
-      };
-    }
-  }
 
   app.get("/health", async (_req, res) => {
     // All API data is in Postgres: report unhealthy (503) when it cannot be reached, so the
@@ -311,9 +264,18 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
         )
       ).map((r) => [`${r.channel}::${r.cohort_label}`, r]),
     );
+    // The newest published, not recalled release of the catalog (routes/release-catalog.ts); null
+    // while nothing is published.
+    const latestRelease = await db.get<{ release_id: string; version: string; channel: string; rollout_percent: number }>(
+      `SELECT release_id, version, channel, rollout_percent FROM app_releases
+        WHERE channel IS NOT NULL AND recalled_at IS NULL
+        ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1`,
+    );
     const impact = {
-      // The release catalog (master plan Phase 5.3) replaces this identifier.
-      release_id: process.env.ROLLOUT_RELEASE_ID ?? `rel_desktop_${new Date().toISOString().slice(0, 10).replace(/-/g, ".")}`,
+      release_id: latestRelease?.release_id ?? null,
+      release_version: latestRelease?.version ?? null,
+      release_channel: latestRelease?.channel ?? null,
+      release_rollout_percent: latestRelease?.rollout_percent ?? null,
       affected_tenants: tenants.length,
       affected_machines: totalMachines,
       entitlement_channel_ok: mismatches.c === 0,
@@ -359,8 +321,8 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       groups.set(key, existing);
     }
 
-    // Only what the server measures. Download and signature-verification events are reported by
-    // the desktop updater, which does not exist yet (Phase 5): those buckets are not invented.
+    // Only what the server measures (heartbeats, policy changes); download and install outcomes are
+    // not reported by devices, so no bucket is invented for them.
     const since = new Date(Date.now() - 24 * 3600_000).toISOString();
     const heartbeats = await db.get<{ c: number; last: string | null }>(
       `SELECT COUNT(*) AS c, MAX(last_seen_at) AS last FROM machine_activations
@@ -421,7 +383,7 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
     let dbService: { severity: Severity; detail: string };
     let dbSizeBytes: number | null = null;
     try {
-      const probe = await probeDatabase();
+      const probe = await probeDatabase(db);
       dbSizeBytes = probe.size_bytes;
       dbService = {
         severity: probe.latency_ms >= DB_LATENCY_MS.critical ? "critical" : probe.latency_ms >= DB_LATENCY_MS.warn ? "warn" : "info",
@@ -441,7 +403,7 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
         }
       : { severity: "info" as Severity, detail: "sync retention has not run since this API process started" };
 
-    const backups = await loadBackupStatus();
+    const backups = await loadBackupStatus(db);
     const nightly = backups.find((b) => b.kind === "nightly");
     const drill = backups.find((b) => b.kind === "restore_drill");
     const nightlyAge = ageHours(nightly?.last_success_at ?? null, nowMs);
@@ -471,7 +433,8 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
       backupNotes.push(drillAge === null ? "no successful restore drill recorded" : `last restore drill ${Math.round(drillAge / 24)} days ago`);
     }
 
-    const objectStorage = await probeObjectStorage();
+    const storage = await probeObjectStorage();
+    const objectStorage = { severity: storage.severity, detail: storage.detail };
     const platformServices = [
       {
         service: "api",
@@ -582,7 +545,7 @@ export function registerOpsRoutes(app: express.Express, ctx: ApiContext): void {
   app.get("/api/v1/ops/metrics", metricsAuth, async (_req, res) => {
     const nowMs = Date.now();
     const snap = await collectSyncHealth(db);
-    const backups = await loadBackupStatus();
+    const backups = await loadBackupStatus(db);
     const sizeRow = await db.get<{ size_bytes: number }>("SELECT pg_database_size(current_database()) AS size_bytes");
     const sevValue = (s: Severity) => (s === "critical" ? 2 : s === "warn" ? 1 : 0);
     const perTenant = (name: string, help: string, pick: (t: SyncHealthSnapshot["tenants"][number]) => number): MetricFamily => ({

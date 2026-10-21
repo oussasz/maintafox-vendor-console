@@ -66,6 +66,15 @@ export async function runSyncSnapshotV2(
   if (!has_more) {
     // The snapshot is complete: its users no longer need user_snapshot_required.
     await confirmDeviceUsers(db, { tenantId: act.tenantId, machineFingerprint: act.machineFingerprint, userSyncIds: users });
+    if (body.scope === "all") {
+      // A full snapshot completes an operator-requested resynchronisation (exchange-v2.ts).
+      await db.run(
+        `UPDATE sync_device_resync_request SET completed_at = now()
+         WHERE tenant_id = $1 AND machine_fingerprint = $2 AND completed_at IS NULL`,
+        act.tenantId,
+        act.machineFingerprint,
+      );
+    }
   }
 
   const response: SyncSnapshotResponseV2 = {
