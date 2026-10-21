@@ -185,11 +185,20 @@ mv "$base_dir/$ts.partial" "$base_dir/$ts"
 
 step=media
 log "media copy: tenant media bucket -> $BACKUP_DIR/media"
-media_json=$(node "$MFX_API_DIR/dist/tools/media-backup.js" backup --run-ts "$ts")
-media_field() {
-  printf '%s' "$media_json" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"
-}
-media_summary="Media: $(media_field objects) objects ($(media_field bytes) bytes) in the bucket, $(media_field copied) newly copied into the backups; $(media_field removed) deleted and $(media_field superseded) overwritten objects kept $MEDIA_BACKUP_REMOVED_RETENTION_DAYS days."
+# A failed media copy (object store down, ...) must not cost the database its retention, its
+# SHA256SUMS entry and its off-site copy: it is recorded, the database steps go on, and the run is
+# marked failed at the end.
+media_failed=
+if media_json=$(node "$MFX_API_DIR/dist/tools/media-backup.js" backup --run-ts "$ts"); then
+  media_field() {
+    printf '%s' "$media_json" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"
+  }
+  media_summary="Media: $(media_field objects) objects ($(media_field bytes) bytes) in the bucket, $(media_field copied) newly copied into the backups; $(media_field removed) deleted and $(media_field superseded) overwritten objects kept $MEDIA_BACKUP_REMOVED_RETENTION_DAYS days."
+else
+  media_failed=$?
+  media_summary="MEDIA COPY FAILED (exit $media_failed): no media copied tonight; the database backup went on."
+  log "media copy failed (exit $media_failed); continuing with the database steps"
+fi
 status=succeeded
 if [ "$encrypt" = yes ]; then
   at_rest="encrypted at rest (age)"
@@ -271,9 +280,19 @@ else
   offsite_tool push-file --file "$dump_dir/$sums_name" --key "pg_dump/$PGDATABASE-$ts.dump.sha256"
   offsite_tool push-dir --dir "$base_dir/$ts" --key-prefix "base/$ts"
   offsite_tool push-dir --dir "$MFX_WAL_ARCHIVE_DIR" --key-prefix wal
-  offsite_tool push-media
   offsite_tool push-file --file "$BACKUP_ENV_FILE" --key "env/$ts.env"
+  if [ -z "$media_failed" ]; then
+    offsite_tool push-media
+    summary="$summary Off-site copy uploaded (age-encrypted)."
+  else
+    summary="$summary Off-site copy uploaded (age-encrypted) without media (the media copy failed)."
+  fi
   offsite=uploaded
-  summary="$summary Off-site copy uploaded (age-encrypted)."
+fi
+if [ -n "$media_failed" ]; then
+  # Everything else is stored; the run is still a failure so the dashboard and alerts show it.
+  status=failed
+  step=media
+  exit "$media_failed"
 fi
 step=done

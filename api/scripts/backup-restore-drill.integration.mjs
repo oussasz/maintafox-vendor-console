@@ -371,6 +371,9 @@ async function main() {
     const bundleKey = "ci/support/tenant_1/bundle x+y";
     await putMedia(photoKey, photo);
     await putMedia(bundleKey, bundle);
+    // A probe object of the start-up check (an API restart at backup time): not media, never copied.
+    // It stays in the bucket for both runs below, so every media count proves it is skipped.
+    await putMedia("_maintafox-check/2026-10-21T02-30-00-000Z-probe", randomBytes(4096));
 
     // A. The previous release: plaintext backups (the dump is restore-verified before it is stored).
     let env = backupEnv(cluster, backupDir, workDir);
@@ -601,6 +604,24 @@ async function main() {
     run("sh", [join(BACKUP_SCRIPTS, "restore-physical.sh"), fwd(baseDir), fwd(keyless.dataDir), walRestore], { ...env, ...restoreKey });
     clusters.push(keyless);
     assert.throws(() => keyless.start(), /is encrypted: set AGE_IDENTITY_FILE \(the owner's private key file\) in the server environment/);
+
+    // G. The object store is down at backup time: the database is still backed up and listed for
+    // the pull (the media copy failing must not cost the dump), and the run is recorded as failed.
+    const dumpsBefore = readdirSync(join(backupDir, "pg_dump")).filter((f) => f.endsWith(".dump.age")).length;
+    const storeDown = run("sh", [join(BACKUP_SCRIPTS, "backup.sh")], { ...env, S3_ENDPOINT: "http://127.0.0.1:9" }, { allowFail: true });
+    assert.notEqual(storeDown.status, 0, "a failed media copy fails the run");
+    assert.match(storeDown.stderr, /media copy failed \(exit \d+\); continuing with the database steps/);
+    const dumpsAfter = readdirSync(join(backupDir, "pg_dump")).filter((f) => f.endsWith(".dump.age"));
+    assert.equal(dumpsAfter.length, dumpsBefore + 1, "the dump of the failed run is stored");
+    const sumsAfter = readFileSync(join(backupDir, "SHA256SUMS"), "utf8");
+    for (const d of dumpsAfter) assert.ok(sumsAfter.includes(`backups/pg_dump/${d}`), `${d} listed in SHA256SUMS`);
+    const [downRun] = await cluster.query("SELECT status, dump_file, detail FROM backup_runs WHERE kind = 'nightly' ORDER BY started_at DESC LIMIT 1");
+    assert.equal(downRun.status, "failed");
+    assert.match(downRun.detail, /^failed at step 'media' \(exit \d+\)\. /);
+    assert.match(downRun.detail, /restored into a scratch database and verified/);
+    assert.match(downRun.detail, /MEDIA COPY FAILED \(exit \d+\): no media copied tonight; the database backup went on\./);
+    assert.ok(dumpsAfter.includes(downRun.dump_file), "the failed run records its stored dump");
+    assert.deepEqual(readdirSync(workDir), [], "work directory emptied after the failed run");
 
     console.log(
       "backup-restore-drill: OK (plaintext -> encrypted migration, verify-before-store, encrypted at rest, " +
