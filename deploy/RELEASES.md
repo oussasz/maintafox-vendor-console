@@ -135,12 +135,10 @@ with the updater key.
 Object storage: releases use the existing media bucket under `<DEPLOYMENT_ENV>/releases/<version>/...`
 (uploads) and `<DEPLOYMENT_ENV>/release-artifacts/<version>/...` (verified copies, downloads).
 Presigned URLs must be reachable from GitHub Actions (upload) and from customers' desktops
-(download), so they need the public object-storage endpoint (branch `claude/media-public-endpoint`,
-`S3_PUBLIC_ENDPOINT` + the `media.maintafox.systems` nginx route). **That route caps a request at
-32 MB, but an installer is larger: raise `client_max_body_size` for release objects (for example a
-`location` matching `/<bucket>/<env>/releases/` with 1 GB) when both branches are deployed.** Until
-the public endpoint is deployed, the upload step of the release workflow fails (the URL points to
-the internal `http://object-store:3900`); nothing is registered half-way.
+(download), so they are signed for the public object-storage endpoint (`S3_PUBLIC_ENDPOINT`, the
+`media.maintafox.systems` nginx route, deploy/OBJECT_STORAGE.md §1.1). That route caps media
+uploads at 32 MB and lets uploads under `<bucket>/<DEPLOYMENT_ENV>/releases/` through up to 1 GiB
+(`deploy/nginx-media-proxy.conf`); downloads have no size cap.
 
 ## Release workflow key (one-time setup)
 
