@@ -42,7 +42,7 @@ change it.
   check it in CI against this file.
 
 Seeded from the desktop `SYNC_ENTITY_*` constants (63 types) and appended since, generated from
-the desktop registry with its `scripts/sync-allowlist-append.mjs` (228 types in October 2026).
+the desktop registry with its `scripts/sync-allowlist-append.mjs` (229 types in October 2026).
 Eight are `user`-scoped: `user_dismissals`, `notifications`, `notification_acknowledgements`,
 `notification_preferences`, `report_schedules`, `saved_activity_filters`,
 `user_dashboard_layouts` and `user_analytics_dashboard_layouts`; every other type is `tenant`.

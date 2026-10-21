@@ -1142,6 +1142,11 @@
       "entity_type": "admin_recovery_notices",
       "scope": "tenant",
       "append_only": true
+    },
+    {
+      "entity_type": "audit_chain_stubs",
+      "scope": "tenant",
+      "append_only": true
     }
   ]
 }
