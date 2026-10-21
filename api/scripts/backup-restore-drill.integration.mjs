@@ -487,7 +487,7 @@ async function main() {
 
     // Media after the encrypted run: the current photo, and the overwritten photo + the deleted
     // bundle kept aside (both encrypted on the way, the plaintext copies are gone).
-    assert.match(encRun.detail, /Media: 1 objects \(\d+ bytes\) in the bucket, 1 newly copied into the backups; 1 deleted and 1 overwritten objects kept 30 days\./);
+    assert.match(encRun.detail, /Media: 1 objects \(\d+ bytes\) in the bucket, 1 newly copied into the backups; 1 deleted and 1 overwritten objects kept 30 days; 0 deleted during the copy\./);
     const mediaCurrent = files.filter((f) => f.startsWith("media/current/"));
     const mediaRemoved = files.filter((f) => f.startsWith("media/removed/"));
     assert.equal(mediaCurrent.length, 1, mediaCurrent.join(", "));

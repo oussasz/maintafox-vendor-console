@@ -140,6 +140,12 @@ export function createS3Client(config: {
  */
 export const CHECK_PROBE_PREFIX = "_maintafox-check/";
 
+/** The object is missing (GET of a deleted key), not the bucket: a missing bucket is never "vanished". */
+export function isNoSuchKey(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "NoSuchKey" || (e?.$metadata?.httpStatusCode === 404 && e?.name !== "NoSuchBucket");
+}
+
 /** HeadBucket/HeadObject answer "not found" without an S3 error code in the body. */
 export function isNotFound(err: unknown): boolean {
   const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };

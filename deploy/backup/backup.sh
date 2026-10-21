@@ -193,13 +193,12 @@ if media_json=$(node "$MFX_API_DIR/dist/tools/media-backup.js" backup --run-ts "
   media_field() {
     printf '%s' "$media_json" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"
   }
-  media_summary="Media: $(media_field objects) objects ($(media_field bytes) bytes) in the bucket, $(media_field copied) newly copied into the backups; $(media_field removed) deleted and $(media_field superseded) overwritten objects kept $MEDIA_BACKUP_REMOVED_RETENTION_DAYS days."
+  media_summary="Media: $(media_field objects) objects ($(media_field bytes) bytes) in the bucket, $(media_field copied) newly copied into the backups; $(media_field removed) deleted and $(media_field superseded) overwritten objects kept $MEDIA_BACKUP_REMOVED_RETENTION_DAYS days; $(media_field vanished) deleted during the copy."
 else
   media_failed=$?
   media_summary="MEDIA COPY FAILED (exit $media_failed): no media copied tonight; the database backup went on."
   log "media copy failed (exit $media_failed); continuing with the database steps"
 fi
-status=succeeded
 if [ "$encrypt" = yes ]; then
   at_rest="encrypted at rest (age)"
 else
@@ -291,8 +290,9 @@ else
 fi
 if [ -n "$media_failed" ]; then
   # Everything else is stored; the run is still a failure so the dashboard and alerts show it.
-  status=failed
   step=media
   exit "$media_failed"
 fi
+# Only here, after every step: a run that stops anywhere earlier stays recorded as failed.
+status=succeeded
 step=done
