@@ -4,8 +4,13 @@
  * specific to it beyond what plain S3 requires.
  *
  * Configuration (all of them, no defaults; none of them set = object storage not configured):
- *   S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET,
+ *   S3_ENDPOINT, S3_PUBLIC_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET,
  *   S3_FORCE_PATH_STYLE (true|false), DEPLOYMENT_ENV (first segment of every object key).
+ * Two endpoints: S3_ENDPOINT is how this server reaches the store (inside the compose network,
+ * http://object-store:3900); S3_PUBLIC_ENDPOINT is the origin presigned URLs are signed for, the
+ * one desktops and the console reach (https://media.maintafox.systems, nginx in front of the
+ * store, deploy/OBJECT_STORAGE.md). SigV4 signs the Host header, so the proxy must hand the store
+ * the Host the client sent, unchanged.
  * The bucket is created by the object store's own setup, never by this code: a missing bucket is
  * reported (ObjectStoreBucketMissingError), not silently recreated empty.
  */
@@ -25,6 +30,8 @@ import { pipeline } from "node:stream/promises";
 
 export type ObjectStoreConfig = {
   endpoint: string;
+  /** Origin every presigned URL is signed for (reached by desktops and the console). */
+  publicEndpoint: string;
   region: string;
   accessKeyId: string;
   secretAccessKey: string;
@@ -47,7 +54,7 @@ export type ObjectListing = { key: string; size: number; etag: string };
 export const PRESIGNED_URL_TTL_SECONDS = 900;
 
 const CREDENTIAL_VARS = ["S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY"] as const;
-const REQUIRED_VARS = [...CREDENTIAL_VARS, "S3_REGION", "S3_BUCKET", "S3_FORCE_PATH_STYLE", "DEPLOYMENT_ENV"] as const;
+const REQUIRED_VARS = [...CREDENTIAL_VARS, "S3_PUBLIC_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_FORCE_PATH_STYLE", "DEPLOYMENT_ENV"] as const;
 
 export class ObjectStoreConfigError extends Error {
   override name = "ObjectStoreConfigError";
@@ -72,9 +79,17 @@ export function loadObjectStoreConfig(env: NodeJS.ProcessEnv = process.env): Obj
   if (missing.length > 0) {
     throw new ObjectStoreConfigError(`object storage is partly configured: missing ${missing.join(", ")}`);
   }
+  // An origin only: scheme, host, optional port. No path, user info, query or fragment.
+  const origin = /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/;
   const endpoint = value("S3_ENDPOINT").replace(/\/$/, "");
-  if (!/^https?:\/\/[^/]+$/.test(endpoint)) {
+  if (!origin.test(endpoint)) {
     throw new ObjectStoreConfigError("S3_ENDPOINT must be an http(s) origin without a path, e.g. http://object-store:3900");
+  }
+  const publicEndpoint = value("S3_PUBLIC_ENDPOINT").replace(/\/$/, "");
+  if (!origin.test(publicEndpoint)) {
+    throw new ObjectStoreConfigError(
+      "S3_PUBLIC_ENDPOINT must be an http(s) origin without a path, e.g. https://media.maintafox.systems",
+    );
   }
   const forcePathStyle = value("S3_FORCE_PATH_STYLE").toLowerCase();
   if (forcePathStyle !== "true" && forcePathStyle !== "false") {
@@ -86,6 +101,7 @@ export function loadObjectStoreConfig(env: NodeJS.ProcessEnv = process.env): Obj
   }
   return {
     endpoint,
+    publicEndpoint,
     region: value("S3_REGION"),
     accessKeyId: value("S3_ACCESS_KEY"),
     secretAccessKey: value("S3_SECRET_KEY"),
@@ -165,20 +181,29 @@ export function buildTenantMediaObjectKey(input: {
   return `${env}/media/${tenant}/${parentType}/${parentSync}/${sha}`;
 }
 
+/**
+ * True when `objectKey` is a media key of `tenantId`: env / media / tenant / ..., with no empty, "."
+ * or ".." segment (a proxy that normalises the path before routing must see the key the store
+ * stores). The env segment is NOT compared with DEPLOYMENT_ENV: desktops build their keys with
+ * their own environment (MAINTAFOX_DEPLOYMENT_ENV, default "dev"), and existing objects carry it.
+ */
 export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string): boolean {
   const parts = objectKey.split("/");
-  // env / media / tenant / ...
+  if (parts.some((p) => p === "" || p === "." || p === "..")) return false;
   return parts.length >= 4 && parts[1] === "media" && parts[2] === tenantId;
 }
 
 export class TenantMediaObjectStore {
   readonly config: ObjectStoreConfig;
   private readonly client: S3Client;
+  /** Signs presigned URLs only (never sends a request): its endpoint is the public origin. */
+  private readonly signer: S3Client;
   private bucketChecked = false;
 
   constructor(config: ObjectStoreConfig) {
     this.config = config;
     this.client = createS3Client(config);
+    this.signer = createS3Client({ ...config, endpoint: config.publicEndpoint });
   }
 
   /** null when object storage is not configured at all; throws ObjectStoreConfigError when partly. */
@@ -211,14 +236,14 @@ export class TenantMediaObjectStore {
   async presignPut(objectKey: string, expiresInSeconds = PRESIGNED_URL_TTL_SECONDS): Promise<PresignResult> {
     await this.assertBucket();
     const cmd = new PutObjectCommand({ Bucket: this.config.bucket, Key: objectKey });
-    const url = await getSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
+    const url = await getSignedUrl(this.signer, cmd, { expiresIn: expiresInSeconds });
     return { url, method: "PUT", bucket: this.config.bucket, object_key: objectKey, expires_in_seconds: expiresInSeconds };
   }
 
   async presignGet(objectKey: string, expiresInSeconds = PRESIGNED_URL_TTL_SECONDS): Promise<PresignResult> {
     await this.assertBucket();
     const cmd = new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey });
-    const url = await getSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
+    const url = await getSignedUrl(this.signer, cmd, { expiresIn: expiresInSeconds });
     return { url, method: "GET", bucket: this.config.bucket, object_key: objectKey, expires_in_seconds: expiresInSeconds };
   }
 

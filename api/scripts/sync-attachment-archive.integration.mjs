@@ -16,7 +16,8 @@
  * - every accepted change of site_settings / site_setting_events / permit_types is kept with its
  *   sending device in sync_forensic_change_log, which retention never compacts.
  *
- * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY, TEST_S3_REGION (an S3-compatible server) add
+ * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY, TEST_S3_REGION, TEST_S3_PUBLIC_ENDPOINT
+ * (an S3-compatible server and the nginx media route in front of it) add
  * the byte-identical file check (upload → delete → restore → download the same bytes).
  */
 import assert from "node:assert/strict";
@@ -61,12 +62,14 @@ const s3 = {
   accessKey: process.env.TEST_S3_ACCESS_KEY?.trim(),
   secretKey: process.env.TEST_S3_SECRET_KEY?.trim(),
   region: process.env.TEST_S3_REGION?.trim(),
+  // Presigned URLs are signed for the public media route (nginx in front of the store), as in production.
+  publicEndpoint: process.env.TEST_S3_PUBLIC_ENDPOINT?.trim(),
   bucket: `mfx-archive-test-${randomBytes(4).toString("hex")}`,
 };
-const withObjectStore = Boolean(s3.endpoint && s3.accessKey && s3.secretKey && s3.region);
+const withObjectStore = Boolean(s3.endpoint && s3.accessKey && s3.secretKey && s3.region && s3.publicEndpoint);
 // CI's object-storage job sets REQUIRE_S3=1: there the byte-identical check must run, never skip.
 if (process.env.REQUIRE_S3 === "1" && !withObjectStore) {
-  console.error("REQUIRE_S3=1 but TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION are not all set.");
+  console.error("REQUIRE_S3=1 but TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION / TEST_S3_PUBLIC_ENDPOINT are not all set.");
   process.exit(1);
 }
 // The API never creates its bucket (the object store's own setup does, deploy/OBJECT_STORAGE.md).
@@ -83,6 +86,7 @@ const api = await startControlApi({
   extraEnv: withObjectStore
     ? {
         S3_ENDPOINT: s3.endpoint,
+        S3_PUBLIC_ENDPOINT: s3.publicEndpoint,
         S3_ACCESS_KEY: s3.accessKey,
         S3_SECRET_KEY: s3.secretKey,
         S3_REGION: s3.region,

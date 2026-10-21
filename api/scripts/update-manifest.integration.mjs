@@ -6,7 +6,8 @@
  *   manifest exactly as the Tauri updater does -> floor, pause, recall, rollback -> audit.
  *
  * Needs TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION (CI: the Garage
- * image pinned in docker-compose.yml). Refuses to run without them; it never pretends to pass.
+ * image pinned in docker-compose.yml) and TEST_S3_PUBLIC_ENDPOINT (the nginx media route in front of
+ * it). Refuses to run without them; it never pretends to pass.
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
@@ -22,8 +23,12 @@ const endpoint = process.env.TEST_S3_ENDPOINT?.trim();
 const accessKey = process.env.TEST_S3_ACCESS_KEY?.trim();
 const secretKey = process.env.TEST_S3_SECRET_KEY?.trim();
 const region = process.env.TEST_S3_REGION?.trim();
-if (!endpoint || !accessKey || !secretKey || !region) {
-  console.error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION are required (an S3-compatible test server).");
+// Presigned URLs are signed for the public media route (nginx in front of the store), as in production.
+const publicEndpoint = process.env.TEST_S3_PUBLIC_ENDPOINT?.trim();
+if (!endpoint || !accessKey || !secretKey || !region || !publicEndpoint) {
+  console.error(
+    "TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION / TEST_S3_PUBLIC_ENDPOINT are required (an S3-compatible test server and the nginx media route in front of it).",
+  );
   process.exit(1);
 }
 
@@ -69,6 +74,7 @@ const api = await startControlApi({
   port: 33247,
   extraEnv: {
     S3_ENDPOINT: endpoint,
+    S3_PUBLIC_ENDPOINT: publicEndpoint,
     S3_ACCESS_KEY: accessKey,
     S3_SECRET_KEY: secretKey,
     S3_REGION: region,

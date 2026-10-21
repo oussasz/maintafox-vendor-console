@@ -7,7 +7,8 @@ Why Garage and what it replaces: [`docs/deploy/OBJECT_STORAGE_DECISION.md`](../d
 | Piece | What it is |
 |---|---|
 | `object-store` | Garage v2.4.1 (`dxflrs/garage`, pinned by digest in `docker-compose.yml`), one node, config `deploy/object-storage/garage.toml`. S3 API on `http://object-store:3900`, **inside the compose network only** (no port on the host). |
-| `object-store-check` | One-shot before the API starts (`api/src/tools/object-store-check.ts`). It checks that the bucket exists and that a presigned PUT and then a presigned GET give back the same bytes. If either fails, the API does not start. |
+| `object-store-check` | One-shot before the API starts (`api/src/tools/object-store-check.ts --via internal`). It checks that the bucket exists and that a presigned PUT and then a presigned GET give back the same bytes. If either fails, the API does not start. With `--via public` it does the same through the public route (§1.1). |
+| Public route | `https://media.maintafox.systems`, served by the `edge` nginx (`deploy/nginx-edge.conf`, rules in `deploy/nginx-media-proxy.conf`). Desktops and the console use only this address. It lets through **presigned GET and PUT only** (an Authorization header is cleared, odd raw paths get 400), up to 32 MB per file, and up to 1 GiB for release installers (`<env>/releases/`); everything else gets 403. Its access log records the path only, never the signed query. |
 | Volumes | `object_store_meta` (Garage metadata, SQLite, plus 2 snapshots) and `object_store_data` (data blocks). |
 | Nightly media copy | `backup` service, step `media` (`api/src/tools/media-backup.ts`). See §3. |
 
@@ -15,7 +16,8 @@ Settings in `.env`. All are required and none has a default.
 
 | Variable | Value |
 |---|---|
-| `S3_ENDPOINT` | `http://object-store:3900` |
+| `S3_ENDPOINT` | `http://object-store:3900` (how the server reaches Garage) |
+| `S3_PUBLIC_ENDPOINT` | `https://media.maintafox.systems` (the address written in every presigned URL; §1.1) |
 | `S3_REGION` | `garage` (must equal `s3_region` in `garage.toml`) |
 | `S3_ACCESS_KEY` | `GK` + `openssl rand -hex 12` |
 | `S3_SECRET_KEY` | `openssl rand -hex 32` |
@@ -28,6 +30,39 @@ Settings in `.env`. All are required and none has a default.
 Garage creates the key and the bucket from these values on its **first** start. On every later
 start it checks them and **refuses to start** if `S3_ACCESS_KEY` or `S3_SECRET_KEY` changed. To
 rotate the key, first create the new key with the `garage key` commands, then change `.env`.
+
+### 1.1 Public media address (one time, then after any DNS or certificate change)
+
+Why: a presigned URL contains the address it was signed for, and the signature covers that
+address. Desktops are outside the server, so the URLs must carry a public address
+(`S3_PUBLIC_ENDPOINT`), and nginx must hand the request to Garage without changing the address.
+
+1. **DNS.** At the domain registrar, add an **A** record `media` → the server's public IP (the same
+   IP as `api`). Check from any computer: `nslookup media.maintafox.systems`.
+2. **Certificate.** The existing certificate gets the new name added (same command as
+   `VPS-COMMANDS.md` §8, with `media` added; certbot asks to expand the certificate, answer yes):
+
+   ```bash
+   certbot certonly --webroot -w /opt/maintafox-vendor-console/deploy/certbot-webroot      -d console.maintafox.systems -d api.maintafox.systems -d media.maintafox.systems
+   certbot certificates        # "Domains:" now lists the three names
+   ```
+
+   This needs the new release's edge running (it answers the certbot challenge for `media`). Until
+   the certificate is expanded, `https://media.maintafox.systems` shows a certificate error, and
+   desktops cannot upload or download media; nothing else is affected.
+3. **Settings.** `S3_PUBLIC_ENDPOINT=https://media.maintafox.systems` in `.env`. The API, the check
+   and the backup refuse to start without it.
+4. **Start and check.**
+
+   ```bash
+   docker compose up -d
+   docker compose run --rm object-store-check node dist/tools/object-store-check.js --via public
+   ```
+
+   The last line must be `{"ok":true,"via":"public",...,"presigned_url_origin":"https://media.maintafox.systems",...}`.
+   If it says `FAILED`, it names the step: a DNS or certificate problem shows up as a `fetch failed`
+   on `presigned PUT to https://media.maintafox.systems`; a `403 SignatureDoesNotMatch` means
+   something between the desktop and Garage changed the address (a second proxy, a CDN).
 
 ## 2. Day to day
 
@@ -92,8 +127,11 @@ Garage serves the bucket. The sequence below makes sure no such URL is still val
 The API is stopped, and then we wait the full URL lifetime (15 minutes, `PRESIGNED_URL_TTL_SECONDS`)
 before the last copy. After the restart, every URL a desktop receives is new. A desktop whose upload
 or download failed during the window has to ask for a fresh URL (`presign-put` / `presign-get`) and
-retry. **Not verified from here:** whether the desktop app retries this way on its own. If it does
-not, the affected media upload again only when the desktop next syncs that record.
+retry. Checked in the desktop code (`maintafox-desktop`, `src-tauri/src/sync/transport/worker.rs`,
+2026-10-13): it does this on its own. A failed media upload (403 included) stays pending and is
+retried at every sync with a **fresh** URL, up to 25 attempts; a failed download is retried with a
+fresh URL after 30 s, doubling up to 1 h. URLs are never kept. One exception: a **diagnostic
+bundle** upload is not retried; the user sees "Support bundle upload failed" and sends it again.
 
 Commands, from the checkout directory on the VPS (`M` is a shortcut):
 
@@ -202,8 +240,15 @@ delete `sync_minio_data`.
 - **One copy on one disk.** Garage runs with `replication_factor = 1`. Protection against losing
   the disk comes from the nightly encrypted copy and the on-premise pull, not from Garage.
 - **No versioning.** A change and its undo within the same day are not kept (§3).
-- **Presigned URLs carry the endpoint the API is configured with** (`http://object-store:3900`,
-  internal). This was already true with MinIO (`http://minio:9000`): a desktop **outside the
-  server** cannot reach such a URL, and nginx does not route to the object store. Making media
-  upload work from desktops needs a public S3 endpoint: a separate signing endpoint setting plus
-  an nginx/TLS route. That change was not made here, and it is listed as a follow-up.
+- **Largest file: 32 MB** (`client_max_body_size` in `deploy/nginx-media-proxy.conf`). The
+  desktop's largest synced file is 25 MB (work order attachments, library documents). Raise the
+  nginx value first if a desktop limit is ever raised.
+- **Release installers: 1 GiB** through the route, for keys under `<DEPLOYMENT_ENV>/releases/` only
+  (the release workflow's uploads). They are also in every nightly media copy: count them in the
+  disk budget.
+- **Some logs hold full signed URLs.** Garage logs failed requests with their full URL, and the
+  edge's error log does the same on a refused upload (413) or a store error; the edge access log
+  records the path only. Treat `docker compose logs object-store` and `docker compose logs edge`
+  as confidential.
+- **The public address is part of every URL.** Changing `S3_PUBLIC_ENDPOINT` invalidates URLs
+  already handed out (15 minutes at most; desktops ask again on their own, §4).

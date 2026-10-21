@@ -87,6 +87,8 @@ async function main() {
       BACKUP_OFFSITE_S3_FORCE_PATH_STYLE: "true",
       BACKUP_AGE_RECIPIENT: recipient,
       S3_ENDPOINT: endpoint,
+      // Signs no URL; required by the shared settings loader (api/src/storage/object-store.ts).
+      S3_PUBLIC_ENDPOINT: endpoint,
       S3_ACCESS_KEY: accessKey,
       S3_SECRET_KEY: secretKey,
       S3_REGION: region,
