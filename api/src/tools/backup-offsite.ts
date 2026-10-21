@@ -20,19 +20,17 @@
  * _ACCESS_KEY, _SECRET_KEY, _PREFIX, _FORCE_PATH_STYLE (true|false), BACKUP_AGE_RECIPIENT.
  * push-media also needs the media bucket settings the API uses (S3_ENDPOINT, S3_ACCESS_KEY, ...).
  */
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { closeSync, createReadStream, createWriteStream, mkdtempSync, openSync, readSync, readdirSync, rmSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 
-import { TenantMediaObjectStore } from "../storage/object-store.js";
+import { CHECK_PROBE_PREFIX, createS3Client, isNoSuchKey, TenantMediaObjectStore } from "../storage/object-store.js";
+import { isAgeFile, runAge, sha256File } from "./age-cli.js";
 
 const ENCRYPTED_SUFFIX = ".age";
-const AGE_HEADER = "age-encryption.org/v1\n";
 
 export type OffsiteConfig = {
   endpoint: string;
@@ -89,49 +87,11 @@ export function assertRelativeKey(key: string): string {
   return k;
 }
 
-function runAge(args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("age", args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", (err) => reject(new Error(`cannot run age: ${err.message}`)));
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`age exited with ${code}: ${stderr.trim()}`));
-    });
-  });
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  await pipeline(createReadStream(path), hash);
-  return hash.digest("hex");
-}
-
-/** The file starts with the age v1 header (it was encrypted before it reached this tool). */
-export function isAgeFile(path: string): boolean {
-  const fd = openSync(path, "r");
-  try {
-    const head = Buffer.alloc(AGE_HEADER.length);
-    const n = readSync(fd, head, 0, head.length, 0);
-    return n === head.length && head.toString("latin1") === AGE_HEADER;
-  } finally {
-    closeSync(fd);
-  }
-}
-
 export class OffsiteStore {
   private readonly client: S3Client;
 
   constructor(readonly config: OffsiteConfig) {
-    this.client = new S3Client({
-      region: config.region,
-      endpoint: config.endpoint,
-      forcePathStyle: config.forcePathStyle,
-      credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
-    });
+    this.client = createS3Client(config);
   }
 
   remoteKey(key: string): string {
@@ -241,11 +201,17 @@ export async function pushDirectory(store: OffsiteStore, dir: string, keyPrefix:
 }
 
 /** Copies every media object that is not off-site yet (media keys are content-addressed). */
-export async function pushMedia(store: OffsiteStore, media: TenantMediaObjectStore): Promise<{ uploaded: number; already: number }> {
+export async function pushMedia(
+  store: OffsiteStore,
+  media: TenantMediaObjectStore,
+): Promise<{ uploaded: number; already: number; vanished: number }> {
   const present = await store.listRelativeKeys("media");
   let uploaded = 0;
   let already = 0;
+  let vanished = 0;
   for (const objectKey of await media.listObjectKeys()) {
+    // The start-up check's probe objects are not media and live only seconds.
+    if (objectKey.startsWith(CHECK_PROBE_PREFIX)) continue;
     const key = `media/${assertRelativeKey(objectKey)}`;
     if (present.has(key)) {
       already += 1;
@@ -254,14 +220,23 @@ export async function pushMedia(store: OffsiteStore, media: TenantMediaObjectSto
     const work = mkdtempSync(join(tmpdir(), "mfx-media-"));
     try {
       const plain = join(work, "object");
-      await media.downloadObject(objectKey, createWriteStream(plain));
+      const sink = createWriteStream(plain);
+      try {
+        await media.downloadObject(objectKey, sink);
+      } catch (err) {
+        sink.destroy();
+        if (!isNoSuchKey(err)) throw err;
+        // Deleted between the listing and the download: nothing to copy.
+        vanished += 1;
+        continue;
+      }
       await store.pushFile(plain, key);
     } finally {
       rmSync(work, { recursive: true, force: true });
     }
     uploaded += 1;
   }
-  return { uploaded, already };
+  return { uploaded, already, vanished };
 }
 
 function argValue(argv: string[], name: string): string {

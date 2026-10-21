@@ -47,7 +47,8 @@ export const STANDARD_RUNBOOKS: ReadonlyArray<{ runbook_id: string; title: strin
       "Platform health shows the database size, sync log rows and the backup status from backup_runs.",
       "On the server: df -h, docker system df, and du -sh of the backup_data and pg_wal_archive volumes.",
       "Shorten BACKUP_LOCAL_RETENTION_DAYS or SYNC_INGRESS_RETENTION_DAYS only once the on-premise copy is pulled every night (deploy/backup-pull/README.md).",
-      "Never run docker image prune -a: the MinIO images cannot be pulled again (deploy/CI.md)."
+      "Media are stored twice (Garage + the encrypted copy in /backups/media): keep free space of at least 3x the media size (deploy/OBJECT_STORAGE.md).",
+      "Until the MinIO rollback window has ended, never run docker image prune -a: the old MinIO image cannot be pulled again (deploy/OBJECT_STORAGE.md §5)."
     ]
   },
   {

@@ -5,13 +5,14 @@
  *   checked by the server) -> draft -> publish to rings with a rollout % -> devices ask the
  *   manifest exactly as the Tauri updater does -> floor, pause, recall, rollback -> audit.
  *
- * Needs TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY (CI: Adobe S3Mock). Refuses to
- * run without them; it never pretends to pass.
+ * Needs TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION (CI: the Garage
+ * image pinned in docker-compose.yml). Refuses to run without them; it never pretends to pass.
  */
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import pg from "pg";
 
 import { startControlApi } from "./lib/control-api.mjs";
@@ -20,8 +21,9 @@ import { TAURI_VECTOR, testUpdaterKey } from "./lib/test-updater-signature.mjs";
 const endpoint = process.env.TEST_S3_ENDPOINT?.trim();
 const accessKey = process.env.TEST_S3_ACCESS_KEY?.trim();
 const secretKey = process.env.TEST_S3_SECRET_KEY?.trim();
-if (!endpoint || !accessKey || !secretKey) {
-  console.error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY are required (an S3-compatible test server).");
+const region = process.env.TEST_S3_REGION?.trim();
+if (!endpoint || !accessKey || !secretKey || !region) {
+  console.error("TEST_S3_ENDPOINT / TEST_S3_ACCESS_KEY / TEST_S3_SECRET_KEY / TEST_S3_REGION are required (an S3-compatible test server).");
   process.exit(1);
 }
 
@@ -58,13 +60,19 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const updater = testUpdaterKey();
 const otherKey = testUpdaterKey();
 
+// The API never creates its bucket (the object store's own setup does, deploy/OBJECT_STORAGE.md).
+const bucket = `mfx-releases-${randomBytes(3).toString("hex")}`;
+await new S3Client({ endpoint, region, forcePathStyle: true, credentials: { accessKeyId: accessKey, secretAccessKey: secretKey } }).send(
+  new CreateBucketCommand({ Bucket: bucket }),
+);
 const api = await startControlApi({
   port: 33247,
   extraEnv: {
     S3_ENDPOINT: endpoint,
     S3_ACCESS_KEY: accessKey,
     S3_SECRET_KEY: secretKey,
-    S3_BUCKET: `mfx-releases-${randomBytes(3).toString("hex")}`,
+    S3_REGION: region,
+    S3_BUCKET: bucket,
     S3_FORCE_PATH_STYLE: "true",
     DEPLOYMENT_ENV: "ci",
     RELEASE_UPDATER_PUBLIC_KEY: updater.publicKeyBase64,

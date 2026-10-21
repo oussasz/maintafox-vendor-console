@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { deviceRateLimiter, parsePagination, resolveActorId, sendValidationError, type ActivationAuthContext } from "../app/http.js";
-import { getMediaStore } from "../app/media.js";
+import { getMediaStore, sendObjectStoreError } from "../app/media.js";
 import { newId, structuredLog } from "../app/runtime.js";
 import { AUDIT_RECORD_COLUMNS, verifyAuditChain, type AuditRecordRow } from "../audit-chain.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
@@ -381,7 +381,13 @@ export function registerSupportRoutes(app: express.Express, ctx: ApiContext): vo
       res.status(409).json({ error: "bundle_not_uploaded", status: bundle.status });
       return;
     }
-    const signed = await media.presignGet(bundle.object_key);
+    let signed;
+    try {
+      signed = await media.presignGet(bundle.object_key);
+    } catch (err) {
+      sendObjectStoreError(res, "diagnostic_bundle_download_failed", err, { bundle_id: bundle.bundle_id });
+      return;
+    }
     const auditRecordId = await appendAuditRecord({
       actor_id: resolveActorId(req),
       action_code: "diagnostic_bundle_download",
@@ -555,6 +561,14 @@ export function registerSupportRoutes(app: express.Express, ctx: ApiContext): vo
       return;
     }
     const input = parsed.data;
+    // The store must be usable before a bundle is recorded (no pending row for an upload that
+    // cannot happen).
+    try {
+      await media.assertBucket();
+    } catch (err) {
+      sendObjectStoreError(res, "diagnostic_bundle_declare_failed", err, { tenant_id: act.tenantId });
+      return;
+    }
     const bundleId = newId("bundle");
     // Not under {env}/media/: device media keys and bundle keys never overlap.
     const objectKey = `${media.config.deploymentEnv}/support/${act.tenantId}/${bundleId}`;
@@ -624,7 +638,10 @@ export function registerSupportRoutes(app: express.Express, ctx: ApiContext): vo
       digest = await media.readObjectDigest(bundle.object_key, DIAGNOSTIC_BUNDLE_MAX_BYTES);
     } catch (err) {
       if (err instanceof Error && err.message === "object_too_large") digest = { byteSize: DIAGNOSTIC_BUNDLE_MAX_BYTES + 1, sha256: "" };
-      else throw err;
+      else {
+        sendObjectStoreError(res, "diagnostic_bundle_complete_failed", err, { bundle_id: bundle.bundle_id });
+        return;
+      }
     }
     if (!digest) {
       res.status(409).json({ error: "bundle_not_uploaded", message: "No object was uploaded to the presigned URL." });

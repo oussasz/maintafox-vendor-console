@@ -1,14 +1,26 @@
+/**
+ * Tenant media object store: any S3-compatible server reached through the AWS SDK. Production runs
+ * Garage (docs/deploy/OBJECT_STORAGE_DECISION.md, deploy/OBJECT_STORAGE.md); nothing here is
+ * specific to it beyond what plain S3 requires.
+ *
+ * Configuration (all of them, no defaults; none of them set = object storage not configured):
+ *   S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION, S3_BUCKET,
+ *   S3_FORCE_PATH_STYLE (true|false), DEPLOYMENT_ENV (first segment of every object key).
+ * The bucket is created by the object store's own setup, never by this code: a missing bucket is
+ * reported (ObjectStoreBucketMissingError), not silently recreated empty.
+ */
 import {
   CopyObjectCommand,
-  CreateBucketCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHash } from "node:crypto";
+import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 export type ObjectStoreConfig = {
@@ -29,24 +41,99 @@ export type PresignResult = {
   expires_in_seconds: number;
 };
 
-function loadConfigFromEnv(): ObjectStoreConfig | null {
-  const endpoint = process.env["S3_ENDPOINT"]?.trim() || process.env["MINIO_ENDPOINT"]?.trim();
-  const accessKeyId =
-    process.env["S3_ACCESS_KEY"]?.trim() || process.env["MINIO_ROOT_USER"]?.trim();
-  const secretAccessKey =
-    process.env["S3_SECRET_KEY"]?.trim() || process.env["MINIO_ROOT_PASSWORD"]?.trim();
-  if (!endpoint || !accessKeyId || !secretAccessKey) {
-    return null;
+export type ObjectListing = { key: string; size: number; etag: string };
+
+/** Lifetime of every presigned URL handed to desktops and the console (15 minutes). */
+export const PRESIGNED_URL_TTL_SECONDS = 900;
+
+const CREDENTIAL_VARS = ["S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY"] as const;
+const REQUIRED_VARS = [...CREDENTIAL_VARS, "S3_REGION", "S3_BUCKET", "S3_FORCE_PATH_STYLE", "DEPLOYMENT_ENV"] as const;
+
+export class ObjectStoreConfigError extends Error {
+  override name = "ObjectStoreConfigError";
+}
+
+/** The configured bucket does not exist on the object store (its setup did not run or was lost). */
+export class ObjectStoreBucketMissingError extends Error {
+  override name = "ObjectStoreBucketMissingError";
+  constructor(readonly bucket: string) {
+    super(`bucket '${bucket}' does not exist on the object store (see deploy/OBJECT_STORAGE.md)`);
+  }
+}
+
+/**
+ * Reads the S3_* settings. Returns null when none of endpoint/access key/secret key is set (object
+ * storage deliberately not configured); throws when the settings are only partly there or invalid.
+ */
+export function loadObjectStoreConfig(env: NodeJS.ProcessEnv = process.env): ObjectStoreConfig | null {
+  const value = (name: string) => env[name]?.trim() ?? "";
+  if (CREDENTIAL_VARS.every((name) => value(name) === "")) return null;
+  const missing = REQUIRED_VARS.filter((name) => value(name) === "");
+  if (missing.length > 0) {
+    throw new ObjectStoreConfigError(`object storage is partly configured: missing ${missing.join(", ")}`);
+  }
+  const endpoint = value("S3_ENDPOINT").replace(/\/$/, "");
+  if (!/^https?:\/\/[^/]+$/.test(endpoint)) {
+    throw new ObjectStoreConfigError("S3_ENDPOINT must be an http(s) origin without a path, e.g. http://object-store:3900");
+  }
+  const forcePathStyle = value("S3_FORCE_PATH_STYLE").toLowerCase();
+  if (forcePathStyle !== "true" && forcePathStyle !== "false") {
+    throw new ObjectStoreConfigError("S3_FORCE_PATH_STYLE must be 'true' or 'false'");
+  }
+  const deploymentEnv = value("DEPLOYMENT_ENV");
+  if (!/^[a-z0-9-]+$/.test(deploymentEnv)) {
+    throw new ObjectStoreConfigError("DEPLOYMENT_ENV must be lowercase letters, digits or '-' (it prefixes every object key)");
   }
   return {
-    endpoint: endpoint.replace(/\/$/, ""),
-    region: process.env["S3_REGION"]?.trim() || "us-east-1",
-    accessKeyId,
-    secretAccessKey,
-    bucket: process.env["S3_BUCKET"]?.trim() || "maintafox-tenant-media",
-    forcePathStyle: (process.env["S3_FORCE_PATH_STYLE"] ?? "true").toLowerCase() !== "false",
-    deploymentEnv: process.env["DEPLOYMENT_ENV"]?.trim() || "dev",
+    endpoint,
+    region: value("S3_REGION"),
+    accessKeyId: value("S3_ACCESS_KEY"),
+    secretAccessKey: value("S3_SECRET_KEY"),
+    bucket: value("S3_BUCKET"),
+    forcePathStyle: forcePathStyle === "true",
+    deploymentEnv,
   };
+}
+
+/**
+ * S3 client for an S3-compatible server. Checksums only when an operation requires them: with the
+ * SDK default ("when supported") every presigned PUT URL carries `x-amz-checksum-crc32=AAAAAA==`,
+ * the CRC32 of an EMPTY body, which a server that verifies checksums (Garage does) rejects for any
+ * real upload. Integrity of uploads is checked by our own SHA-256 comparisons instead.
+ */
+export function createS3Client(config: {
+  endpoint: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  forcePathStyle: boolean;
+}): S3Client {
+  return new S3Client({
+    region: config.region,
+    endpoint: config.endpoint,
+    forcePathStyle: config.forcePathStyle,
+    credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
+  });
+}
+
+/**
+ * Key prefix of the start-up check's short-lived probe objects (api/src/tools/object-store-check.ts).
+ * Not tenant media: the nightly media copy skips it.
+ */
+export const CHECK_PROBE_PREFIX = "_maintafox-check/";
+
+/** The object is missing (GET of a deleted key), not the bucket: a missing bucket is never "vanished". */
+export function isNoSuchKey(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "NoSuchKey" || (e?.$metadata?.httpStatusCode === 404 && e?.name !== "NoSuchBucket");
+}
+
+/** HeadBucket/HeadObject answer "not found" without an S3 error code in the body. */
+export function isNotFound(err: unknown): boolean {
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e?.name === "NotFound" || e?.name === "NoSuchKey" || e?.name === "NoSuchBucket" || e?.$metadata?.httpStatusCode === 404;
 }
 
 /**
@@ -73,7 +160,8 @@ export function buildTenantMediaObjectKey(input: {
   if (!parentType || !parentSync || parentType.includes("..") || parentSync.includes("..")) {
     throw new Error("invalid parent path segments");
   }
-  const env = input.deploymentEnv.trim() || "dev";
+  const env = input.deploymentEnv.trim();
+  if (!env) throw new Error("deployment env is required for object keys");
   return `${env}/media/${tenant}/${parentType}/${parentSync}/${sha}`;
 }
 
@@ -86,72 +174,85 @@ export function assertTenantOwnsObjectKey(tenantId: string, objectKey: string): 
 export class TenantMediaObjectStore {
   readonly config: ObjectStoreConfig;
   private readonly client: S3Client;
-  private bucketReady = false;
+  private bucketChecked = false;
 
   constructor(config: ObjectStoreConfig) {
     this.config = config;
-    this.client = new S3Client({
-      region: config.region,
-      endpoint: config.endpoint,
-      forcePathStyle: config.forcePathStyle,
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
-    });
+    this.client = createS3Client(config);
   }
 
-  static fromEnv(): TenantMediaObjectStore | null {
-    const cfg = loadConfigFromEnv();
+  /** null when object storage is not configured at all; throws ObjectStoreConfigError when partly. */
+  static fromEnv(env: NodeJS.ProcessEnv = process.env): TenantMediaObjectStore | null {
+    const cfg = loadObjectStoreConfig(env);
     if (!cfg) return null;
     return new TenantMediaObjectStore(cfg);
   }
 
-  async ensureBucket(): Promise<void> {
-    if (this.bucketReady) return;
+  /**
+   * The bucket exists (checked once per process, then trusted). Throws
+   * ObjectStoreBucketMissingError when it does not, the provider's error when the store fails.
+   */
+  async assertBucket(): Promise<void> {
+    if (this.bucketChecked) return;
+    await this.headBucket();
+    this.bucketChecked = true;
+  }
+
+  /** Health probe: the bucket answers HEAD (no creation, no caching). */
+  async headBucket(): Promise<void> {
     try {
       await this.client.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
-    } catch {
-      await this.client.send(new CreateBucketCommand({ Bucket: this.config.bucket }));
+    } catch (err) {
+      if (isNotFound(err)) throw new ObjectStoreBucketMissingError(this.config.bucket);
+      throw err;
     }
-    this.bucketReady = true;
   }
 
-  async presignPut(objectKey: string, expiresInSeconds = 900): Promise<PresignResult> {
-    await this.ensureBucket();
-    const cmd = new PutObjectCommand({
-      Bucket: this.config.bucket,
-      Key: objectKey,
-    });
+  async presignPut(objectKey: string, expiresInSeconds = PRESIGNED_URL_TTL_SECONDS): Promise<PresignResult> {
+    await this.assertBucket();
+    const cmd = new PutObjectCommand({ Bucket: this.config.bucket, Key: objectKey });
     const url = await getSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
-    return {
-      url,
-      method: "PUT",
-      bucket: this.config.bucket,
-      object_key: objectKey,
-      expires_in_seconds: expiresInSeconds,
-    };
+    return { url, method: "PUT", bucket: this.config.bucket, object_key: objectKey, expires_in_seconds: expiresInSeconds };
   }
 
-  /** Health probe: the bucket answers HEAD (no creation). Throws with the provider's error. */
-  async headBucket(): Promise<void> {
-    await this.client.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
+  async presignGet(objectKey: string, expiresInSeconds = PRESIGNED_URL_TTL_SECONDS): Promise<PresignResult> {
+    await this.assertBucket();
+    const cmd = new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey });
+    const url = await getSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
+    return { url, method: "GET", bucket: this.config.bucket, object_key: objectKey, expires_in_seconds: expiresInSeconds };
   }
 
-  /** Every object key in the bucket under `prefix` (paged; used by the off-site media backup). */
-  async listObjectKeys(prefix = ""): Promise<string[]> {
-    const keys: string[] = [];
+  /** Every object under `prefix` with its size and ETag (paged). */
+  async listObjects(prefix = ""): Promise<ObjectListing[]> {
+    const out: ObjectListing[] = [];
     let token: string | undefined;
     do {
       const page = await this.client.send(
         new ListObjectsV2Command({ Bucket: this.config.bucket, Prefix: prefix, ContinuationToken: token }),
       );
       for (const obj of page.Contents ?? []) {
-        if (obj.Key) keys.push(obj.Key);
+        if (!obj.Key) continue;
+        out.push({ key: obj.Key, size: obj.Size ?? 0, etag: (obj.ETag ?? "").replace(/"/g, "") });
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
-    return keys;
+    return out;
+  }
+
+  /** Every object key in the bucket under `prefix` (used by the off-site media backup). */
+  async listObjectKeys(prefix = ""): Promise<string[]> {
+    return (await this.listObjects(prefix)).map((o) => o.key);
+  }
+
+  /** Size and ETag of one object, or null when it does not exist. */
+  async headObject(objectKey: string): Promise<{ size: number; etag: string } | null> {
+    try {
+      const out = await this.client.send(new HeadObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
+      return { size: out.ContentLength ?? 0, etag: (out.ETag ?? "").replace(/"/g, "") };
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
   }
 
   /**
@@ -163,7 +264,7 @@ export class TenantMediaObjectStore {
     try {
       out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
     } catch (err) {
-      if ((err as { name?: string }).name === "NoSuchKey") return null;
+      if (isNotFound(err)) return null;
       throw err;
     }
     if (!out.Body) return null;
@@ -233,26 +334,27 @@ export class TenantMediaObjectStore {
     }
   }
 
-  /** Streams one object's content into `writeTo` (used by the off-site media backup). */
+  /** Streams one object's content into `writeTo` (off-site and local media backups). */
   async downloadObject(objectKey: string, writeTo: NodeJS.WritableStream): Promise<void> {
     const out = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey }));
     if (!out.Body) throw new Error(`object ${objectKey} has no body`);
     await pipeline(out.Body as NodeJS.ReadableStream, writeTo);
   }
 
-  async presignGet(objectKey: string, expiresInSeconds = 900): Promise<PresignResult> {
-    await this.ensureBucket();
-    const cmd = new GetObjectCommand({
-      Bucket: this.config.bucket,
-      Key: objectKey,
-    });
-    const url = await getSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
-    return {
-      url,
-      method: "GET",
-      bucket: this.config.bucket,
-      object_key: objectKey,
-      expires_in_seconds: expiresInSeconds,
-    };
+  /**
+   * Writes one object (media restore, migration, store self-check). `byteLength` is the exact body
+   * length; `contentType` is kept as given (the migration preserves the source's).
+   */
+  async putObject(objectKey: string, body: Readable | Buffer, byteLength: number, contentType?: string): Promise<{ etag: string }> {
+    const out = await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.config.bucket,
+        Key: objectKey,
+        Body: body,
+        ContentLength: byteLength,
+        ...(contentType ? { ContentType: contentType } : {}),
+      }),
+    );
+    return { etag: (out.ETag ?? "").replace(/"/g, "") };
   }
 }

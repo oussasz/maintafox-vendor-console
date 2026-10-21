@@ -24,6 +24,8 @@
     "test:ops-metrics": "pnpm run build && node scripts/ops-metrics.integration.mjs",
     "test:support": "pnpm run build && node scripts/support.integration.mjs",
     "test:support-bundles": "pnpm run build && node scripts/support-bundles.integration.mjs",
+    "test:media-presign": "pnpm run build && node scripts/media-presign.integration.mjs",
+    "test:object-store-migrate": "pnpm run build && node scripts/object-store-migrate.integration.mjs",
     "test:update-manifest": "pnpm run build && node scripts/update-manifest.integration.mjs",
     "test:notification-email": "pnpm run build && node scripts/notification-email.integration.mjs",
     "test:vendor-auth": "pnpm run build && node scripts/vendor-auth.integration.mjs",
