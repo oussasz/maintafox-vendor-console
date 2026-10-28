@@ -60,5 +60,8 @@ export const SyncSnapshotBodyV2 = z
     page_size: z.number().int().min(1).max(SYNC_SNAPSHOT_MAX_PAGE_SIZE),
     scope: z.enum(["all", "user"]),
     current_user_sync_ids: UserSyncIds,
+    // Optional (desktops send none = desktop); the mobile app sends "mobile". Checked against the
+    // activation's class by routes/sync.ts.
+    device_class: z.enum(["desktop", "mobile"]).optional(),
   })
   .strict();

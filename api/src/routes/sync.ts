@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { SYNC_MAX_OUTBOX_BATCH } from "../app/config.js";
+import { deviceClassMismatchBody, requestedDeviceClass, type DeviceClass } from "../app/device-class.js";
 import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } from "../app/http.js";
 import { getMediaStore, sendObjectStoreError } from "../app/media.js";
 import { structuredLog } from "../app/runtime.js";
@@ -64,6 +65,30 @@ function sendSyncRequestError(res: express.Response, err: SyncRequestError): voi
   res.status(err.status).json({ error: err.code, message: err.message });
 }
 
+/**
+ * Re-checks the device class on every sync request: the class a request carries (absent = desktop,
+ * which every desktop released before the mobile app is) must be the class of the activation behind
+ * the bearer token. Returns false after answering 409 device_class_mismatch.
+ */
+function deviceClassMatches(
+  res: express.Response,
+  act: ActivationAuthContext,
+  sent: DeviceClass | undefined,
+  route: string,
+): boolean {
+  const requested = requestedDeviceClass(sent);
+  if (requested === act.deviceClass) return true;
+  structuredLog("sync_device_class_mismatch", {
+    tenant_id: act.tenantId,
+    machine_fingerprint: act.machineFingerprint,
+    route,
+    device_class: act.deviceClass,
+    requested_device_class: requested,
+  });
+  res.status(409).json(deviceClassMismatchBody(act.deviceClass, requested));
+  return false;
+}
+
 export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, syncConfig, syncEntityRegistry, payloadCipher, activationAuthMiddleware } = ctx;
 
@@ -87,6 +112,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
           res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
           return;
         }
+        if (!deviceClassMatches(res, act, parsed.data.device_class, "exchange_v2")) return;
         const outcome = await runSyncExchangeV2(
           db,
           { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret, cipher: payloadCipher },
@@ -104,6 +130,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
         return;
       }
+      if (!deviceClassMatches(res, act, parsed.data.device_class, "exchange_v1")) return;
       res.json(await runSyncExchangeV1(db, { registry: syncEntityRegistry, cipher: payloadCipher }, syncAct, parsed.data, structuredLog));
     } catch (e) {
       if (e instanceof SyncRequestError) {
@@ -137,6 +164,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
       return;
     }
+    if (!deviceClassMatches(res, act, parsed.data.device_class, "snapshot_v2")) return;
     try {
       const response = await runSyncSnapshotV2(
         db,
