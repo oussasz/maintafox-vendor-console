@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
+import { MaxMobileDevicesSchema, slotLimitFor, type DeviceClass } from "../app/device-class.js";
 import { parsePagination, resolveActorId, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey, structuredLog } from "../app/runtime.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
@@ -13,6 +14,8 @@ import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 const UpdateLicenseBody = z
   .object({
     max_machines: z.number().int().min(1).max(1000).optional(),
+    // Phones of the mobile field app (migration 019); 0 = mobile not licensed.
+    max_mobile_devices: MaxMobileDevicesSchema.optional(),
     expires_at: z.string().datetime().nullable().optional(),
     update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
     operator_rationale: z.string().trim().min(8).max(512).optional(),
@@ -23,6 +26,9 @@ const UpdateLicenseBody = z
 const CreateLicenseBody = z.object({
   tenant_id: z.string().min(3),
   max_machines: z.number().int().min(1).max(1000).default(1),
+  // Phones of the mobile field app (migration 019). Omitted = 0 = mobile not licensed, the same as
+  // the column default: how many phones a licence includes is set by the operator, never assumed.
+  max_mobile_devices: MaxMobileDevicesSchema.default(0),
   expires_at: z.string().datetime().optional().nullable(),
   update_channel: z.enum(["stable", "pilot", "internal"]).optional(),
   operator_reason_code: z.string().trim().min(2).max(64).optional().nullable(),
@@ -46,6 +52,7 @@ const RebindBody = z.object({
 type MachineActivationRow = {
   id: string;
   license_id: string;
+  device_class: DeviceClass;
   revoked_at: string | null;
   revocation_kind: string | null;
 };
@@ -78,11 +85,12 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       const key = randomLicenseKey();
       const actor = Number.parseInt(String((req as express.Request & { userId?: string }).userId ?? "0"), 10) || null;
       await db.run(`INSERT INTO license_keys
-          (id, tenant_id, license_key, max_machines, update_channel, issued_by_user_id, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`, id,
+          (id, tenant_id, license_key, max_machines, max_mobile_devices, update_channel, issued_by_user_id, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id,
         input.tenant_id,
         key,
         input.max_machines,
+        input.max_mobile_devices,
         input.update_channel ?? tenant.update_channel,
         actor,
         input.expires_at ?? null);
@@ -101,6 +109,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
         payload: {
           update_channel: input.update_channel ?? tenant.update_channel,
           max_machines: input.max_machines,
+          max_mobile_devices: input.max_mobile_devices,
           expires_at: input.expires_at ?? null,
           operator_rationale: input.operator_rationale ?? null,
         },
@@ -114,6 +123,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
           tenant_display_name: tenant.display_name,
           license_key: key,
           max_machines: input.max_machines,
+          max_mobile_devices: input.max_mobile_devices,
           update_channel: input.update_channel ?? tenant.update_channel,
           expires_at: input.expires_at ?? null,
           revoked_at: null,
@@ -131,13 +141,13 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     let rows: Array<Record<string, unknown>>;
     if (cursor) {
       const [cursorCreatedAt, cursorId] = cursor.split("|");
-      rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
+      rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, max_mobile_devices, expires_at, revoked_at, revoked_reason, created_at, update_channel
            FROM license_keys
            WHERE tenant_id = ? AND ((created_at < ?) OR (created_at = ? AND id < ?))
            ORDER BY created_at DESC, id DESC
            LIMIT ?`, tenantId, cursorCreatedAt, cursorCreatedAt, cursorId ?? "", pageSize) as Array<Record<string, unknown>>;
     } else {
-      rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel
+      rows = await db.all(`SELECT id, tenant_id, license_key, max_machines, max_mobile_devices, expires_at, revoked_at, revoked_reason, created_at, update_channel
            FROM license_keys
            WHERE tenant_id = ?
            ORDER BY created_at DESC, id DESC
@@ -162,12 +172,13 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       sendValidationError(res, parsed, "body");
       return;
     }
-    const row = await db.get(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as
+    const row = await db.get(`SELECT id, tenant_id, license_key, max_machines, max_mobile_devices, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as
       | {
           id: string;
           tenant_id: string;
           license_key: string;
           max_machines: number;
+          max_mobile_devices: number;
           expires_at: string | null;
           revoked_at: string | null;
           revoked_reason: string | null;
@@ -185,12 +196,21 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     }
     const input = parsed.data;
     const nextMax = input.max_machines ?? row.max_machines;
+    const nextMaxMobile = input.max_mobile_devices ?? row.max_mobile_devices;
     const nextExpires =
       input.expires_at === undefined ? row.expires_at : input.expires_at === null ? null : input.expires_at;
     const nextChannel = input.update_channel ?? row.update_channel;
     await db.tx(async () => {
-      await db.run(`UPDATE license_keys SET max_machines = ?, expires_at = ?, update_channel = ? WHERE id = ?`, nextMax, nextExpires, nextChannel, licenseId);
-      // Term, slots and channel are what the customer paid for: every change is in the ledger.
+      await db.run(
+        `UPDATE license_keys SET max_machines = ?, max_mobile_devices = ?, expires_at = ?, update_channel = ? WHERE id = ?`,
+        nextMax,
+        nextMaxMobile,
+        nextExpires,
+        nextChannel,
+        licenseId,
+      );
+      // Term, slots (desktop and mobile) and channel are what the customer paid for: every change is
+      // in the ledger.
       await appendAuditRecord({
         actor_id: resolveActorId(req),
         action_code: "license_update",
@@ -200,13 +220,18 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
         reason_code: req.header("X-Operator-Reason")?.trim() || null,
         entity_refs: { tenant_id: row.tenant_id, entitlement_id: licenseId },
         payload: {
-          from: { max_machines: row.max_machines, expires_at: row.expires_at, update_channel: row.update_channel },
-          to: { max_machines: nextMax, expires_at: nextExpires, update_channel: nextChannel },
+          from: {
+            max_machines: row.max_machines,
+            max_mobile_devices: row.max_mobile_devices,
+            expires_at: row.expires_at,
+            update_channel: row.update_channel,
+          },
+          to: { max_machines: nextMax, max_mobile_devices: nextMaxMobile, expires_at: nextExpires, update_channel: nextChannel },
           operator_rationale: input.operator_rationale ?? null,
         },
       });
     });
-    const out = await db.get(`SELECT id, tenant_id, license_key, max_machines, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as Record<string, unknown>;
+    const out = await db.get(`SELECT id, tenant_id, license_key, max_machines, max_mobile_devices, expires_at, revoked_at, revoked_reason, created_at, update_channel FROM license_keys WHERE id = ?`, licenseId) as Record<string, unknown>;
     res.json(out);
   });
 
@@ -245,7 +270,7 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
   });
 
   async function loadMachineActivation(tenantId: string, machineFingerprint: string): Promise<MachineActivationRow | undefined> {
-    return await db.get(`SELECT id, license_id, revoked_at, revocation_kind
+    return await db.get(`SELECT id, license_id, revoked_at, revocation_kind, device_class
          FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`, tenantId, machineFingerprint) as MachineActivationRow | undefined;
   }
 
@@ -322,13 +347,28 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       if (row.revocation_kind !== "machine") {
         return { status: 409, body: { error: "license_revoked", message: "The licence itself is revoked; issue a new licence." } };
       }
-      const lic = await db.get("SELECT max_machines, revoked_at FROM license_keys WHERE id = ?", row.license_id) as { max_machines: number; revoked_at: string | null } | undefined;
+      const lic = await db.get("SELECT max_machines, max_mobile_devices, revoked_at FROM license_keys WHERE id = ?", row.license_id) as
+        | { max_machines: number; max_mobile_devices: number; revoked_at: string | null }
+        | undefined;
       if (!lic || lic.revoked_at) {
         return { status: 409, body: { error: "license_revoked" } };
       }
+      // The device comes back on a slot of its own class.
+      if (row.device_class === "mobile" && lic.max_mobile_devices <= 0) {
+        return { status: 409, body: { error: "mobile_not_licensed", device_class: "mobile", max_mobile_devices: 0 } };
+      }
       await db.lockXact("license-slots", row.license_id);
-      if (await countActiveActivations(row.license_id) >= lic.max_machines) {
-        return { status: 409, body: { error: "slot_limit_reached", max_machines: lic.max_machines } };
+      const limit = slotLimitFor(lic, row.device_class);
+      if (await countActiveActivations(row.license_id, row.device_class) >= limit) {
+        return {
+          status: 409,
+          body: {
+            error: "slot_limit_reached",
+            device_class: row.device_class,
+            limit,
+            [row.device_class === "mobile" ? "max_mobile_devices" : "max_machines"]: limit,
+          },
+        };
       }
       await db.run("UPDATE machine_activations SET revoked_at = NULL, revocation_kind = NULL WHERE id = ?", row.id);
       structuredLog("machine_activation_reinstated", { tenant_id: tenantId, machine_fingerprint: machineFingerprint });
@@ -376,7 +416,8 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
         body: {
           ok: true,
           released_at: now,
-          active_slots: await countActiveActivations(row.license_id),
+          device_class: row.device_class,
+          active_slots: await countActiveActivations(row.license_id, row.device_class),
           audit_record_id: guard.auditRecordId,
         },
       };

@@ -42,7 +42,9 @@ export function observeActivationOutcome(
     | "license_revoked"
     | "license_expired"
     | "slot_limit_reached"
-    | "activation_revoked",
+    | "activation_revoked"
+    | "device_class_mismatch"
+    | "mobile_not_licensed",
 ): void {
   if (reason === "ok") {
     observabilityWindow.activation_success_total += 1;

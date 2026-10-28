@@ -14,6 +14,8 @@
 
 import { z } from "zod";
 
+import type { DeviceClass } from "./app/device-class.js";
+
 export const SYSTEM_EDITION_IDS = ["core", "professional", "enterprise", "development"] as const;
 /** @deprecated Prefer SYSTEM_EDITION_IDS; kept for seed / round-trip scripts. */
 export const EDITION_IDS = SYSTEM_EDITION_IDS;
@@ -146,8 +148,13 @@ export function featureFlagsJsonForEdition(): string {
   return "{}";
 }
 
-export function policyJsonForEdition(): string {
-  return JSON.stringify({ grace_allowed_modules: GRACE_ALLOWED_MODULES });
+/**
+ * Signed envelope policy. `device_class` (migration 019) tells the device which class the licence
+ * activated it as; it is inside the signed payload, so the device can trust it. Desktops read only
+ * `grace_allowed_modules` and ignore the other keys.
+ */
+export function policyJsonForEdition(deviceClass: DeviceClass): string {
+  return JSON.stringify({ grace_allowed_modules: GRACE_ALLOWED_MODULES, device_class: deviceClass });
 }
 
 export type EditionCatalogEntry = {

@@ -7,6 +7,15 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { JWT_SECRET } from "../app/config.js";
+import {
+  deviceClassMismatchBody,
+  DeviceClassSchema,
+  MOBILE_NOT_LICENSED_BODY,
+  requestedDeviceClass,
+  slotLimitField,
+  slotLimitFor,
+  type DeviceClass,
+} from "../app/device-class.js";
 import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { observeActivationOutcome } from "../app/observability.js";
 import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
@@ -22,6 +31,8 @@ const ActivationClaimBody = z.object({
   machine_fingerprint: z.string().min(8).max(256),
   machine_label: z.string().max(128).optional(),
   app_version: z.string().max(32).optional(),
+  // "desktop" (absent: every desktop released before the mobile app) or "mobile" (the field app).
+  device_class: DeviceClassSchema.optional(),
 }).strict();
 
 // Policy refresh body. Desktops older than this field send "{}"; app_version has the claim body's
@@ -31,8 +42,10 @@ const ActivationClaimBody = z.object({
 // validated here: resolveForceUpdatePolicy treats an empty or unparsable version exactly like a
 // missing one (blocked under "required"), so no string can loosen the policy, and a legitimate
 // desktop with an odd version string still gets its refresh (with the old, blocked answer).
+// device_class: same meaning as on claim (absent = desktop); it must match the activation's class.
 const PolicyRefreshBody = z.object({
   app_version: z.string().max(32).optional(),
+  device_class: DeviceClassSchema.optional(),
 });
 
 type ActivationLicenseRow = {
@@ -40,6 +53,7 @@ type ActivationLicenseRow = {
   tenant_id: string;
   license_key: string;
   max_machines: number;
+  max_mobile_devices: number;
   update_channel: string;
   rollout_cohort: string;
   edition: string;
@@ -85,7 +99,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
   const { db, activationAuthMiddleware, countActiveActivations } = ctx;
 
   async function loadLicenseForActivation(licenseKey: string): Promise<ActivationLicenseRow | undefined> {
-    return await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+    return await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.max_mobile_devices, l.expires_at, l.revoked_at,
                 l.update_channel, t.rollout_cohort,
                 COALESCE(t.edition, 'core') AS edition,
                 COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
@@ -117,6 +131,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
 
   async function buildEntitlementEnvelopeForLicense(
     lic: ActivationLicenseRow,
+    deviceClass: DeviceClass,
     opts?: { bumpLineage?: boolean; persistLineage?: boolean },
   ): Promise<EntitlementEnvelopePayload> {
     // Soft phase: always issue lineage 1 with null previous so desktop apply does not
@@ -138,7 +153,9 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         lineageVersion: 1,
         previousEnvelopeId: null,
         channel: lic.update_channel,
-        machineSlots: lic.max_machines,
+        // The slots of the device's own class; the class itself is signed inside policy_json.
+        machineSlots: slotLimitFor(lic, deviceClass),
+        deviceClass,
         validUntil,
         offlineGraceUntil,
       });
@@ -147,13 +164,14 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
 
   async function buildActivationSummary(
     lic: ActivationLicenseRow,
-    input: z.infer<typeof ActivationClaimBody>,
+    input: { machine_fingerprint: string; machine_label?: string },
+    deviceClass: DeviceClass,
     resolvedPolicy: ReturnType<typeof resolveForceUpdatePolicy>,
     opts?: { includeEnvelope?: boolean; bumpLineage?: boolean; persistLineage?: boolean },
   ): Promise<Record<string, unknown>> {
     const edition = await editionExists(db, lic.edition) ? lic.edition : parseEditionId(lic.edition, "core");
     const includeEnvelope = opts?.includeEnvelope === true;
-    const envelope = await buildEntitlementEnvelopeForLicense(lic, {
+    const envelope = await buildEntitlementEnvelopeForLicense(lic, deviceClass, {
       bumpLineage: opts?.bumpLineage,
       persistLineage: opts?.persistLineage,
     });
@@ -169,8 +187,11 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       license_tier: edition,
       update_channel: lic.update_channel,
       expires_at: lic.expires_at,
-      device_limit: lic.max_machines,
-      activated_device_count: await countActiveActivations(lic.id),
+      // The device's class and the slots of that class (desktops: max_machines, phones:
+      // max_mobile_devices). Older desktops ignore device_class.
+      device_class: deviceClass,
+      device_limit: slotLimitFor(lic, deviceClass),
+      activated_device_count: await countActiveActivations(lic.id, deviceClass),
       machine_label: input.machine_label ?? null,
       is_initialized: lic.is_initialized === 1,
       has_demo_data: lic.has_demo_data === 1,
@@ -217,7 +238,9 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     lic: ActivationLicenseRow | undefined,
     input: z.infer<typeof ActivationClaimBody>,
     opts: { reserveSlot: boolean },
-  ): Promise<{ ok: true; lic: ActivationLicenseRow } | { ok: false; failure: ActivationValidateFailure }> {
+  ): Promise<
+    { ok: true; lic: ActivationLicenseRow; deviceClass: DeviceClass } | { ok: false; failure: ActivationValidateFailure }
+  > {
     if (!lic || lic.is_active !== 1) {
       return {
         ok: false,
@@ -237,7 +260,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       };
     }
 
-    const existing = await db.get(`SELECT id, machine_fingerprint, license_id, revoked_at, revocation_kind
+    const existing = await db.get(`SELECT id, machine_fingerprint, license_id, revoked_at, revocation_kind, device_class
          FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`, lic.tenant_id, input.machine_fingerprint) as
       | {
           id: string;
@@ -245,8 +268,10 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           license_id: string;
           revoked_at: string | null;
           revocation_kind: string | null;
+          device_class: DeviceClass;
         }
       | undefined;
+    const deviceClass = requestedDeviceClass(input.device_class);
 
     // An operator-revoked machine stays revoked until an operator reinstates it: presenting the
     // licence key again (preview or claim) must not undo the revocation.
@@ -264,17 +289,40 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       };
     }
 
+    // A fingerprint keeps the class it was first activated with (released or licence-revoked rows
+    // included, since a claim reuses the row): a desktop cannot become a phone or the reverse.
+    if (existing && existing.device_class !== deviceClass) {
+      return {
+        ok: false,
+        failure: {
+          status: 409,
+          body: deviceClassMismatchBody(existing.device_class, deviceClass),
+          reason: "device_class_mismatch",
+        },
+      };
+    }
+
+    // Phones need mobile devices on the licence (0 until a vendor operator sets a count), even a
+    // phone that already holds a slot.
+    if (deviceClass === "mobile" && lic.max_mobile_devices <= 0) {
+      return {
+        ok: false,
+        failure: { status: 403, body: { ...MOBILE_NOT_LICENSED_BODY }, reason: "mobile_not_licensed" },
+      };
+    }
+
     // A device already holds a slot only while it is active on this same licence; a revoked device or
-    // one bound to another licence needs a free slot like a new one.
+    // one bound to another licence needs a free slot of its class like a new one.
     const holdsSlot = existing != null && existing.revoked_at == null && existing.license_id === lic.id;
     if (!holdsSlot) {
-      const activeCount = await countActiveActivations(lic.id);
-      if (activeCount >= lic.max_machines) {
+      const limit = slotLimitFor(lic, deviceClass);
+      const activeCount = await countActiveActivations(lic.id, deviceClass);
+      if (activeCount >= limit) {
         return {
           ok: false,
           failure: {
             status: 409,
-            body: { error: "slot_limit_reached", max_machines: lic.max_machines },
+            body: { error: "slot_limit_reached", device_class: deviceClass, limit, [slotLimitField(deviceClass)]: limit },
             reason: "slot_limit_reached",
           },
         };
@@ -283,7 +331,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       // Preview: existing fingerprint is fine; slot already held.
     }
 
-    return { ok: true, lic };
+    return { ok: true, lic, deviceClass };
   }
 
   app.post("/api/v1/activation/preview", activationRateLimiter, licenceKeyTenantScopeMiddleware(db), async (req, res) => {
@@ -319,9 +367,10 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       tenant_id: validated.lic.tenant_id,
       license_id: validated.lic.id,
       machine_fingerprint: input.machine_fingerprint,
+      device_class: validated.deviceClass,
       duration_ms: Date.now() - startedAt,
     });
-    res.json(await buildActivationSummary(validated.lic, input, resolvedPolicy));
+    res.json(await buildActivationSummary(validated.lic, input, validated.deviceClass, resolvedPolicy));
   });
 
   app.post("/api/v1/activation/claim", activationRateLimiter, licenceKeyTenantScopeMiddleware(db), async (req, res) => {
@@ -362,7 +411,8 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         machineFingerprint: input.machine_fingerprint,
       });
 
-      // Operator-revoked machines were already refused by validateLicenseForActivation.
+      // Operator-revoked machines and a class change were already refused by
+      // validateLicenseForActivation, so an existing row keeps its device_class.
       const existing = await db.get<{ id: string; machine_fingerprint: string }>(
         "SELECT id, machine_fingerprint FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
         validated.lic.tenant_id,
@@ -387,12 +437,14 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       } else {
         await db.run(
           `INSERT INTO machine_activations
-            (id, tenant_id, license_id, machine_fingerprint, machine_label, app_version, activation_token, activated_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, tenant_id, license_id, machine_fingerprint, device_class, machine_label, app_version, activation_token,
+             activated_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           newId("act"),
           validated.lic.tenant_id,
           validated.lic.id,
           input.machine_fingerprint,
+          validated.deviceClass,
           input.machine_label ?? null,
           input.app_version ?? null,
           activationToken,
@@ -409,6 +461,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         status: claim.failure.status,
         duration_ms: Date.now() - startedAt,
         machine_fingerprint: input.machine_fingerprint,
+        device_class: requestedDeviceClass(input.device_class),
         ...(claim.failure.reason !== "license_not_found"
           ? { tenant_id: lic?.tenant_id, license_id: lic?.id }
           : {}),
@@ -424,17 +477,18 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       tenant_id: validated.lic.tenant_id,
       license_id: validated.lic.id,
       machine_fingerprint: input.machine_fingerprint,
+      device_class: validated.deviceClass,
       policy_source: resolvedPolicy.policy_source,
       force_update_required: resolvedPolicy.force_update_required,
       duration_ms: Date.now() - startedAt,
     });
     res.json({
-      ...(await buildActivationSummary(validated.lic, input, resolvedPolicy, {
+      ...(await buildActivationSummary(validated.lic, input, validated.deviceClass, resolvedPolicy, {
         includeEnvelope: true,
         persistLineage: true,
       })),
       // Count after write so activated_device_count includes this device.
-      activated_device_count: await countActiveActivations(validated.lic.id),
+      activated_device_count: await countActiveActivations(validated.lic.id, validated.deviceClass),
       activation_token: activationToken,
     });
   });
@@ -456,7 +510,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       res.status(400).json({ error: "invalid_body", details: parsedBody.error.flatten() });
       return;
     }
-    const licRow = await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.expires_at, l.revoked_at,
+    const licRow = await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.max_mobile_devices, l.expires_at, l.revoked_at,
                 l.update_channel, t.rollout_cohort,
                 COALESCE(t.edition, 'core') AS edition,
                 COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
@@ -481,14 +535,29 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       res.status(403).json({ error: "license_expired" });
       return;
     }
+    // The class the device says it is must be the class it was activated with (absent = desktop).
+    const requestedClass = requestedDeviceClass(parsedBody.data.device_class);
+    if (requestedClass !== activation.deviceClass) {
+      structuredLog("activation_policy_refresh_failed", {
+        reason: "device_class_mismatch",
+        status: 409,
+        tenant_id: activation.tenantId,
+        machine_fingerprint: activation.machineFingerprint,
+        device_class: activation.deviceClass,
+        requested_device_class: requestedClass,
+      });
+      res.status(409).json(deviceClassMismatchBody(activation.deviceClass, requestedClass));
+      return;
+    }
+    if (activation.deviceClass === "mobile" && licRow.max_mobile_devices <= 0) {
+      res.status(403).json({ ...MOBILE_NOT_LICENSED_BODY });
+      return;
+    }
     // The PC's running version (absent on older desktops -> same answer as before: blocked under
     // "required").
     const resolvedPolicy = await resolveActivationPolicy(licRow, parsedBody.data.app_version);
-    const syntheticInput = {
-      license_key: licRow.license_key,
-      machine_fingerprint: activation.machineFingerprint,
-    };
-    const summary = await buildActivationSummary(licRow, syntheticInput, resolvedPolicy, {
+    const syntheticInput = { machine_fingerprint: activation.machineFingerprint };
+    const summary = await buildActivationSummary(licRow, syntheticInput, activation.deviceClass, resolvedPolicy, {
       includeEnvelope: true,
       bumpLineage: true,
     });
@@ -522,7 +591,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     }
     res.json({
       ...summary,
-      activated_device_count: await countActiveActivations(licRow.id),
+      activated_device_count: await countActiveActivations(licRow.id, activation.deviceClass),
       // Always present: the desktop stores it as its bearer token (rotated when ageing).
       activation_token: activationToken,
     });

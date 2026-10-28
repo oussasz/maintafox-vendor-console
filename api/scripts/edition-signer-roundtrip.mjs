@@ -41,6 +41,7 @@ const envelope = buildSignedEntitlementEnvelope({
   previousEnvelopeId: null,
   channel: "stable",
   machineSlots: 2,
+  deviceClass: "desktop",
   issuedAt: "2026-07-26T10:00:00.000Z",
   validFrom: "2026-07-26T10:00:00.000Z",
   validUntil: "2099-01-01T00:00:00.000Z",
@@ -71,5 +72,39 @@ assert.equal(verify(null, tampered, publicKey, Buffer.from(signature, "hex")), f
 
 assert.ok(canonicalPayload(unsigned).includes('"previous_envelope_id":null'));
 assert.ok(canonicalPayload(unsigned).includes('"capabilities_json":'));
+
+// The device class is signed inside policy_json (migration 019); desktops read only
+// grace_allowed_modules from it.
+assert.equal(JSON.parse(envelope.policy_json).device_class, "desktop");
+assert.ok(Array.isArray(JSON.parse(envelope.policy_json).grace_allowed_modules));
+const reclassed = Buffer.from(
+  canonicalPayload({ ...unsigned, policy_json: unsigned.policy_json.replace('"device_class":"desktop"', '"device_class":"mobile"') }),
+  "utf8",
+);
+assert.equal(verify(null, reclassed, publicKey, Buffer.from(signature, "hex")), false, "a re-classed envelope must not verify");
+const mobileEnvelope = buildSignedEntitlementEnvelope({
+  edition: "core",
+  lineageVersion: 1,
+  channel: "stable",
+  machineSlots: 3,
+  deviceClass: "mobile",
+  validUntil: "2099-01-01T00:00:00.000Z",
+  offlineGraceUntil: "2099-01-04T00:00:00.000Z",
+});
+assert.equal(JSON.parse(mobileEnvelope.policy_json).device_class, "mobile");
+assert.equal(mobileEnvelope.machine_slots, 3);
+assert.throws(
+  () =>
+    buildSignedEntitlementEnvelope({
+      edition: "core",
+      lineageVersion: 1,
+      channel: "stable",
+      machineSlots: 1,
+      validUntil: "2099-01-01T00:00:00.000Z",
+      offlineGraceUntil: "2099-01-04T00:00:00.000Z",
+    }),
+  /deviceClass must be one of/,
+  "an envelope without a device class is refused",
+);
 
 console.log("edition-signer round-trip ok (Ed25519)");

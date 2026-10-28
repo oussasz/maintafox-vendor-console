@@ -747,7 +747,8 @@ export function registerBillingRoutes(app: express.Express, ctx: ApiContext): vo
       licences: await Promise.all(
         licences.map(async (l) => ({
           ...l,
-          active_machines: await countActiveActivations(l.id),
+          // Desktops only: compared with max_machines (phones have their own max_mobile_devices).
+          active_machines: await countActiveActivations(l.id, "desktop"),
           days_left: l.revoked_at ? null : daysLeft(l.expires_at),
         })),
       ),

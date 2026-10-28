@@ -8,6 +8,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 
 import { CONSOLE_CORS_ORIGINS, DESKTOP_APP_ORIGINS, isDeviceRoute } from "./config.js";
+import type { DeviceClass } from "./device-class.js";
 
 /**
  * Admin/console routes: only CORS_ORIGIN (credentialed). Device routes additionally accept
@@ -164,6 +165,8 @@ export type ActivationAuthContext = {
   tenantId: string;
   licenseId: string;
   machineFingerprint: string;
+  /** Class the device was activated with (machine_activations.device_class, migration 019). */
+  deviceClass: DeviceClass;
   /** Raw bearer token (echoed by policy-refresh for desktop claim schema). */
   token: string;
   /** Token issue time, seconds since epoch. */

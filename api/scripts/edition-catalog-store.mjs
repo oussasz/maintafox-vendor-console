@@ -101,6 +101,7 @@ const envelope = buildSignedEntitlementEnvelope({
   lineageVersion: 1,
   channel: "stable",
   machineSlots: 1,
+  deviceClass: "desktop",
   validUntil: "2099-01-01T00:00:00.000Z",
   offlineGraceUntil: "2099-01-04T00:00:00.000Z",
 });

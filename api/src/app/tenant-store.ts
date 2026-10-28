@@ -2,6 +2,7 @@
 import { EditionCatalogError, editionExists } from "../edition-catalog-store.js";
 import type { EditionId } from "../edition-catalog.js";
 import type { Database } from "../db/database.js";
+import type { DeviceClass } from "./device-class.js";
 import { structuredLog } from "./runtime.js";
 
 export function createTenantStore(db: Database) {
@@ -116,8 +117,13 @@ export function createTenantStore(db: Database) {
       | undefined;
   }
 
-  async function countActiveActivations(licenseId: string): Promise<number> {
-    const row = await db.get("SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND revoked_at IS NULL", licenseId) as { count: number };
+  /** Active (not revoked / released) activations of one device class on a licence: its used slots. */
+  async function countActiveActivations(licenseId: string, deviceClass: DeviceClass): Promise<number> {
+    const row = await db.get(
+      "SELECT COUNT(*) as count FROM machine_activations WHERE license_id = ? AND device_class = ? AND revoked_at IS NULL",
+      licenseId,
+      deviceClass,
+    ) as { count: number };
     return row.count;
   }
 
