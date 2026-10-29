@@ -13,7 +13,7 @@ import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import type { DeviceClass } from "./device-class.js";
-import { DEVICE_WIPE_REQUIRED_BODY } from "./mobile-enrolment.js";
+import { DEVICE_WIPE_REQUIRED_BODY, WIPE_UPLOAD_WINDOW_HOURS } from "./mobile-enrolment.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
@@ -92,7 +92,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     // The token is verified: from here on only this tenant's rows are visible.
     const scope = tenantScope(claims.tenantId);
     const row = await db.runInScope(scope, () => db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
-                a.policy_refresh_requested_at, a.device_class, a.revocation_kind, a.wiped_at,
+                a.policy_refresh_requested_at, a.device_class, a.revocation_kind, a.wiped_at, a.revoke_reason,
                 l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
                 t.is_active AS tenant_is_active
          FROM machine_activations a
@@ -108,6 +108,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
           device_class: DeviceClass;
           revocation_kind: string | null;
           wiped_at: string | null;
+          revoke_reason: string | null;
           license_revoked_at: string | null;
           license_expires_at: string | null;
           tenant_is_active: number;
@@ -145,11 +146,13 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       return;
     }
     // A phone removed by its customer's administrator (routes/mobile-enrolment.ts) keeps two routes
-    // until it confirms its wipe: the final upload of its pending work (sync exchange, push only)
-    // and the wipe confirmation. Everything else answers device_wipe_required.
+    // until it confirms its wipe, for WIPE_UPLOAD_WINDOW_HOURS: the final upload of its pending
+    // work (sync exchange, push only) and the wipe confirmation. Everything else answers
+    // device_wipe_required. A phone reported lost, or one past the window, is simply revoked.
     let wipeOnly = false;
     if (row.revoked_at) {
-      if (row.revocation_kind !== "tenant_admin" || row.wiped_at) {
+      const windowOpen = Date.now() - new Date(row.revoked_at).getTime() < WIPE_UPLOAD_WINDOW_HOURS * 3_600_000;
+      if (row.revocation_kind !== "tenant_admin" || row.wiped_at || row.revoke_reason === "lost" || !windowOpen) {
         deny(403, "activation_revoked");
         return;
       }

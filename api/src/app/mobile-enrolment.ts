@@ -19,6 +19,14 @@ import { runAsSystem, tenantScope } from "./scope.js";
 /** An enrolment can be used for this long after it is issued. */
 export const ENROLMENT_TTL_SECONDS = 15 * 60;
 
+/**
+ * How long a removed phone may still upload its pending work (push only) before it is cut off
+ * entirely: the longest offline lock an administrator can set on phones (decision register
+ * 2026-10-23: 24 to 168 hours), so a phone that was offline when it was removed does not lose its
+ * field work. A phone reported lost gets no upload at all.
+ */
+export const WIPE_UPLOAD_WINDOW_HOURS = 168;
+
 /** QR token: 32 random bytes, base64url (43 characters). */
 const TOKEN_BYTES = 32;
 
@@ -91,6 +99,9 @@ export const ActorBody = z
   })
   .strict();
 
+/** Desktop -> server: revoke one phone. `lost`: the phone is lost or stolen, no final upload. */
+export const RevokeDeviceBody = ActorBody.extend({ lost: z.boolean().optional() }).strict();
+
 /** Desktop -> server: a disabled user's phones are all revoked. */
 export const RevokePersonBody = ActorBody.extend({ person_sync_id: SyncId }).strict();
 
@@ -126,6 +137,12 @@ export const ENROLMENT_INVALID_BODY = {
 export const DEVICE_WIPE_REQUIRED_BODY = {
   error: "device_wipe_required",
   message: "This phone was removed by your administrator. Pending work is uploaded, then the phone's data is erased.",
+} as const;
+
+/** 409 when a removed phone presents an enrolment before it confirmed its wipe. */
+export const WIPE_PENDING_BODY = {
+  error: "wipe_pending",
+  message: "This phone was removed and has not erased its data yet. Open the app online so it can finish, then enrol it again.",
 } as const;
 
 /** 409 when an enrolled, active phone presents another enrolment. */

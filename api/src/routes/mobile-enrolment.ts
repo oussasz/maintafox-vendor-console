@@ -24,6 +24,7 @@ import {
   IssueEnrolmentBody,
   newEnrolmentCode,
   newEnrolmentToken,
+  RevokeDeviceBody,
   RevokePersonBody,
 } from "../app/mobile-enrolment.js";
 import { newId, structuredLog } from "../app/runtime.js";
@@ -44,9 +45,12 @@ type MobileDeviceRow = {
   app_version: string | null;
   revoked_at: string | null;
   revoked_by_label: string | null;
+  revoke_reason: string | null;
 };
 
 type RevokedPhone = { id: string; machine_fingerprint: string; license_id: string };
+
+type RevokeReason = "admin" | "user_disabled" | "lost";
 
 /** How many times issuing retries when a new secret collides with an existing one. */
 const ISSUE_ATTEMPTS = 3;
@@ -149,11 +153,12 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
         };
       }
       const replaced = await db.all<{ id: string }>(
-        `UPDATE mobile_enrolments SET cancelled_at = ?, cancelled_by_label = ?
+        `UPDATE mobile_enrolments SET cancelled_at = ?, cancelled_by_label = ?, cancelled_by_sync_id = ?
          WHERE tenant_id = ? AND person_sync_id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL AND expires_at > ?
          RETURNING id`,
         issuedAt.toISOString(),
         input.issued_by_label,
+        input.issued_by_sync_id,
         act.tenantId,
         input.person_sync_id,
         issuedAt.toISOString(),
@@ -300,8 +305,9 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       const before = enrolmentStatus(row);
       if (before !== "pending") return { status: before, changed: false, licenseId: row.license_id };
       await db.run(
-        "UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ? WHERE id = ?",
+        "UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ?, cancelled_by_sync_id = ? WHERE id = ?",
         parsed.data.actor_label,
+        parsed.data.actor_sync_id,
         enrolmentId,
       );
       return { status: "cancelled" as const, changed: true, licenseId: row.license_id };
@@ -334,7 +340,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
     const rows = await db.all<MobileDeviceRow>(
       `SELECT a.id, a.machine_fingerprint, a.machine_label, a.person_sync_id, a.person_label, a.site_sync_id,
               a.site_label, a.enrolled_by_label, a.enrolled_at, a.activated_at, a.last_seen_at, a.app_version,
-              a.revoked_at, a.revoked_by_label, c.last_exchange_at
+              a.revoked_at, a.revoked_by_label, a.revoke_reason, c.last_exchange_at
        FROM machine_activations a
        LEFT JOIN sync_device_checkpoint c
          ON c.tenant_id = a.tenant_id AND c.machine_fingerprint = a.machine_fingerprint
@@ -365,6 +371,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
         last_seen_at: isoOrNull(r.last_seen_at),
         app_version: r.app_version,
         status: r.revoked_at ? "wipe_pending" : "active",
+        lost: r.revoke_reason === "lost",
         revoked_at: isoOrNull(r.revoked_at),
         revoked_by_label: r.revoked_by_label,
       })),
@@ -373,16 +380,47 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
 
   /**
    * Revokes phones: the slot is free at once; at its next contact the phone uploads its pending
-   * work (push only) and wipes itself (activationAuthMiddleware wipeOnly). Phones already revoked
-   * are left as they are. A person's open enrolments are cancelled with their phones.
+   * work (push only) and wipes itself (activationAuthMiddleware wipeOnly), unless it is reported
+   * lost (no upload). Phones already revoked are left as they are.
+   *
+   * For a person (account disabled), their open enrolments are cancelled FIRST, each under its own
+   * lock, then the licence slots are locked before their phones are read: a redeem in flight for
+   * that person either finished before (its phone is found and revoked) or finds its enrolment
+   * cancelled. Lock order as in redeem: enrolment, licence slots, device.
    */
   async function revokePhones(
     act: ActivationAuthContext,
     where: { deviceId: string } | { personSyncId: string },
     actor: { actor_sync_id: string; actor_label: string },
-    reason: "admin" | "user_disabled",
+    reason: RevokeReason,
   ): Promise<{ revoked: RevokedPhone[]; cancelledEnrolments: string[] }> {
     return db.tx(async () => {
+      const cancelledEnrolments: string[] = [];
+      if ("personSyncId" in where) {
+        const open = await db.all<{ id: string }>(
+          `SELECT id FROM mobile_enrolments
+           WHERE tenant_id = ? AND person_sync_id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL
+           ORDER BY id`,
+          act.tenantId,
+          where.personSyncId,
+        );
+        for (const e of open) {
+          await db.lockXact("mobile-enrolment", e.id);
+          const cancelled = await db.run(
+            `UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ?, cancelled_by_sync_id = ?
+             WHERE id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL`,
+            actor.actor_label,
+            actor.actor_sync_id,
+            e.id,
+          );
+          if (cancelled.changes > 0) cancelledEnrolments.push(e.id);
+        }
+        const licences = await db.all<{ id: string }>(
+          "SELECT id FROM license_keys WHERE tenant_id = ? ORDER BY id",
+          act.tenantId,
+        );
+        for (const l of licences) await db.lockXact("license-slots", l.id);
+      }
       const candidates =
         "deviceId" in where
           ? await db.all<RevokedPhone>(
@@ -405,26 +443,17 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
         await db.lockXact("activation-device", `${act.tenantId}:${c.machine_fingerprint}`);
         const changed = await db.run(
           `UPDATE machine_activations
-           SET revoked_at = now(), revocation_kind = 'tenant_admin', revoked_by_label = ?, revoke_reason = ?, wiped_at = NULL
+           SET revoked_at = now(), revocation_kind = 'tenant_admin', revoked_by_label = ?, revoked_by_sync_id = ?,
+               revoke_reason = ?, wiped_at = NULL
            WHERE id = ? AND revoked_at IS NULL`,
           actor.actor_label,
+          actor.actor_sync_id,
           reason,
           c.id,
         );
         if (changed.changes > 0) revoked.push(c);
       }
-      const cancelled =
-        "personSyncId" in where
-          ? await db.all<{ id: string }>(
-              `UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ?
-               WHERE tenant_id = ? AND person_sync_id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL
-               RETURNING id`,
-              actor.actor_label,
-              act.tenantId,
-              where.personSyncId,
-            )
-          : [];
-      return { revoked, cancelledEnrolments: cancelled.map((r) => r.id) };
+      return { revoked, cancelledEnrolments };
     });
   }
 
@@ -432,7 +461,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
     act: ActivationAuthContext,
     result: { revoked: RevokedPhone[]; cancelledEnrolments: string[] },
     actorSyncId: string,
-    reason: "admin" | "user_disabled",
+    reason: RevokeReason,
   ): Promise<void> {
     for (const r of result.revoked) {
       structuredLog("mobile_device_revoked", { tenant_id: act.tenantId, device_id: r.id, reason });
@@ -460,11 +489,13 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
   app.post("/api/v1/mobile-devices/:deviceId/revoke", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = requireDesktop(req, res);
     if (!act) return;
-    const parsed = ActorBody.safeParse(req.body);
+    const parsed = RevokeDeviceBody.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed, "body");
       return;
     }
+    const { lost, ...actor } = parsed.data;
+    const reason: RevokeReason = lost ? "lost" : "admin";
     const exists = await db.get<{ id: string }>(
       "SELECT id FROM machine_activations WHERE id = ? AND tenant_id = ? AND device_class = 'mobile'",
       req.params.deviceId,
@@ -474,8 +505,8 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       res.status(404).json({ error: "device_not_found" });
       return;
     }
-    const result = await revokePhones(act, { deviceId: exists.id }, parsed.data, "admin");
-    await auditRevocations(act, result, parsed.data.actor_sync_id, "admin");
+    const result = await revokePhones(act, { deviceId: exists.id }, actor, reason);
+    await auditRevocations(act, result, actor.actor_sync_id, reason);
     res.json({ device_id: exists.id, revoked_now: result.revoked.length > 0 });
   });
 
@@ -515,6 +546,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
     const row = await db.get<{ id: string }>(
       `UPDATE machine_activations SET wiped_at = now()
        WHERE tenant_id = ? AND license_id = ? AND machine_fingerprint = ? AND wiped_at IS NULL
+         AND revoked_at IS NOT NULL AND revocation_kind = 'tenant_admin'
        RETURNING id`,
       act.tenantId,
       act.licenseId,

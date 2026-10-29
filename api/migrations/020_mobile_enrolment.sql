@@ -26,6 +26,7 @@ CREATE TABLE mobile_enrolments (
   expires_at TIMESTAMPTZ NOT NULL,
   cancelled_at TIMESTAMPTZ NULL,
   cancelled_by_label TEXT NULL,
+  cancelled_by_sync_id TEXT NULL,
   redeemed_at TIMESTAMPTZ NULL,
   activation_id TEXT NULL REFERENCES machine_activations(id) ON DELETE SET NULL,
   CONSTRAINT mobile_enrolments_expiry_check CHECK (expires_at > issued_at),
@@ -60,11 +61,15 @@ ALTER TABLE machine_activations ADD COLUMN site_label TEXT NULL;
 ALTER TABLE machine_activations ADD COLUMN enrolled_by_label TEXT NULL;
 ALTER TABLE machine_activations ADD COLUMN enrolled_at TIMESTAMPTZ NULL;
 ALTER TABLE machine_activations ADD COLUMN revoked_by_label TEXT NULL;
+ALTER TABLE machine_activations ADD COLUMN revoked_by_sync_id TEXT NULL;
+-- admin: removed by an administrator; user_disabled: its person's account was disabled; lost: the
+-- phone is lost or stolen, so it gets no final upload.
 ALTER TABLE machine_activations ADD COLUMN revoke_reason TEXT NULL
-  CONSTRAINT machine_activations_revoke_reason_check CHECK (revoke_reason IN ('admin', 'user_disabled'));
--- Revoked by the customer's administrator: the slot is free at once (revoked_at is set), but the
--- phone may still upload its pending work (push only, nothing sent back) and then wipes itself and
--- confirms (wiped_at). The token stops working for everything else.
+  CONSTRAINT machine_activations_revoke_reason_check CHECK (revoke_reason IN ('admin', 'user_disabled', 'lost'));
+-- Revoked by the customer's administrator: the slot is free at once (revoked_at is set). Unless the
+-- phone was reported lost, it may still upload its pending work for a limited time (push only,
+-- nothing sent back), then wipes itself and confirms (wiped_at). The token stops working for
+-- everything else.
 ALTER TABLE machine_activations ADD COLUMN wiped_at TIMESTAMPTZ NULL;
 ALTER TABLE machine_activations DROP CONSTRAINT machine_activations_revocation_kind_check;
 ALTER TABLE machine_activations ADD CONSTRAINT machine_activations_revocation_kind_check

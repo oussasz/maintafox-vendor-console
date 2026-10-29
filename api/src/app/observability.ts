@@ -47,7 +47,8 @@ export function observeActivationOutcome(
     | "mobile_not_licensed"
     | "mobile_enrolment_required"
     | "enrolment_invalid"
-    | "already_enrolled",
+    | "already_enrolled"
+    | "wipe_pending",
 ): void {
   if (reason === "ok") {
     observabilityWindow.activation_success_total += 1;

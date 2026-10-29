@@ -235,6 +235,12 @@ try {
   });
   assert.equal(desktopPush.status, 200, desktopPush.text);
 
+  // An exchange answered before the phone is removed, whose answer was lost: the phone retries it.
+  const beforeRevoke = v2();
+  const firstAnswer = await exchange(tokenP1, beforeRevoke);
+  assert.equal(firstAnswer.status, 200, firstAnswer.text);
+  assert.ok(firstAnswer.json.inbound_items.length > 0, "the desktop's change reached the phone while it was enrolled");
+
   const revoke = await api.call("POST", `/api/v1/mobile-devices/${d1.device_id}/revoke`, a.desk, actor);
   assert.equal(revoke.status, 200, revoke.text);
   assert.equal(revoke.json.revoked_now, true);
@@ -269,6 +275,13 @@ try {
   assert.deepEqual(finalUpload.json.conflict_items, []);
   assert.deepEqual(finalUpload.json.user_snapshot_required, []);
   assert.equal(finalUpload.json.has_more, false);
+  const replay = await exchange(tokenP1, beforeRevoke);
+  assert.equal(replay.status, 200, replay.text);
+  assert.deepEqual(replay.json.inbound_items, [], "a replayed answer sends nothing back to a removed phone");
+  assert.deepEqual(replay.json.conflict_items, []);
+  assert.deepEqual(replay.json.user_snapshot_required, []);
+  const [revokedRow] = await api.su("SELECT revoked_by_sync_id, revoke_reason FROM machine_activations WHERE id = $1", [d1.device_id]);
+  assert.deepEqual(revokedRow, { revoked_by_sync_id: "user-admin", revoke_reason: "admin" });
 
   const wiped = await api.call("POST", "/api/v1/mobile-device/wipe-confirmed", tokenP1, {});
   assert.equal(wiped.status, 200, wiped.text);
@@ -293,10 +306,27 @@ try {
   // ── A wiped phone can be enrolled again ─────────────────────────────────────────────────────
   const e7 = await issue(a.desk, 7);
   assert.equal(e7.status, 201, e7.text);
+  // ...but not one still waiting to erase its previous person's data.
+  const notWiped = await redeem({ token: e7.json.token }, "fp-phone-3");
+  assert.equal(notWiped.status, 409, notWiped.text);
+  assert.equal(notWiped.json.error, "wipe_pending");
   const reEnrolled = await redeem({ token: e7.json.token }, "fp-phone-1");
   assert.equal(reEnrolled.status, 200, reEnrolled.text);
   assert.equal(reEnrolled.json.enrolment.person_sync_id, "user-7");
   assert.equal((await refresh(reEnrolled.json.activation_token)).status, 200);
+
+  // ── The final upload is limited in time; a lost phone gets none ─────────────────────────────
+  await api.su("UPDATE machine_activations SET revoked_at = now() - interval '169 hours' WHERE machine_fingerprint = 'fp-phone-3'");
+  const late = await exchange(tokenP3, v2());
+  assert.equal(late.status, 403, late.text);
+  assert.equal(late.json.error, "activation_revoked", "past the upload window the phone is simply revoked");
+  const lostRevoke = await api.call("POST", `/api/v1/mobile-devices/${(await status(a.desk, e7.json.enrolment_id)).json.device_id}/revoke`, a.desk, { ...actor, lost: true });
+  assert.equal(lostRevoke.status, 200, lostRevoke.text);
+  for (const r of [await refresh(reEnrolled.json.activation_token), await exchange(reEnrolled.json.activation_token, v2())]) {
+    assert.equal(r.status, 403, r.text);
+    assert.equal(r.json.error, "activation_revoked", "a lost phone uploads nothing");
+  }
+  assert.equal((await list(a.desk)).json.devices.find((d) => d.person_sync_id === "user-7").lost, true);
 
   // ── Audit ledger ────────────────────────────────────────────────────────────────────────────
   const audits = await api.su(
@@ -307,7 +337,7 @@ try {
   assert.equal(counts.mobile_enrolment_issued, 7, JSON.stringify(counts));
   assert.equal(counts.mobile_enrolment_redeemed, 3, JSON.stringify(counts));
   assert.equal(counts.mobile_enrolment_cancelled, 2, JSON.stringify(counts));
-  assert.equal(counts.mobile_device_revoked, 2, JSON.stringify(counts));
+  assert.equal(counts.mobile_device_revoked, 3, JSON.stringify(counts));
   assert.equal(counts.mobile_device_wiped, 1, JSON.stringify(counts));
 
   // ── Schema constraints ──────────────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } 
 import { observeActivationOutcome } from "../app/observability.js";
 import {
   ALREADY_ENROLLED_BODY,
+  WIPE_PENDING_BODY,
   appendEnrolmentAudit,
   ENROLMENT_INVALID_BODY,
   enrolmentSecretTenantScopeMiddleware,
@@ -116,6 +117,9 @@ const LICENSE_SELECT = `SELECT l.id, l.tenant_id, l.license_key, l.max_machines,
                 COALESCE(t.has_demo_data, 0) AS has_demo_data
          FROM license_keys l
          JOIN tenants t ON t.id = l.tenant_id`;
+
+/** Thrown inside the redeem transaction to roll it back when its enrolment was closed meanwhile. */
+class EnrolmentNoLongerOpen extends Error {}
 
 type ActivationValidateFailure = { status: number; body: Record<string, unknown>; reason: string };
 
@@ -584,8 +588,16 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
 
         // A phone that is enrolled and active must be removed first: an enrolment never moves a
         // working phone to another person.
-        const current = await db.get<{ id: string; revoked_at: string | null; device_class: DeviceClass }>(
-          "SELECT id, revoked_at, device_class FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?",
+        const current = await db.get<{
+          id: string;
+          revoked_at: string | null;
+          device_class: DeviceClass;
+          revocation_kind: string | null;
+          revoke_reason: string | null;
+          wiped_at: string | null;
+        }>(
+          `SELECT id, revoked_at, device_class, revocation_kind, revoke_reason, wiped_at
+           FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
           enrolment.tenant_id,
           input.machine_fingerprint,
         );
@@ -593,6 +605,13 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           return {
             ok: false as const,
             failure: { status: 409, body: { ...ALREADY_ENROLLED_BODY }, reason: "already_enrolled" },
+          };
+        }
+        // A removed phone still holding its previous person's data must finish its wipe first.
+        if (current?.revocation_kind === "tenant_admin" && current.wiped_at == null && current.revoke_reason !== "lost") {
+          return {
+            ok: false as const,
+            failure: { status: 409, body: { ...WIPE_PENDING_BODY }, reason: "wipe_pending" },
           };
         }
         const validated = await validateLicenseForActivation(
@@ -615,7 +634,8 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           await db.run(
             `UPDATE machine_activations
              SET license_id = ?, machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?,
-                 revoked_at = NULL, revocation_kind = NULL, revoked_by_label = NULL, revoke_reason = NULL,
+                 revoked_at = NULL, revocation_kind = NULL, revoked_by_label = NULL, revoked_by_sync_id = NULL,
+                 revoke_reason = NULL,
                  wiped_at = NULL, policy_refresh_requested_at = NULL,
                  enrolment_id = ?, person_sync_id = ?, person_label = ?, site_sync_id = ?, site_label = ?,
                  enrolled_by_label = ?, enrolled_at = ?
@@ -659,13 +679,20 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
             nowIso,
           );
         }
-        await db.run(
-          "UPDATE mobile_enrolments SET redeemed_at = ?, activation_id = ? WHERE id = ?",
+        // Spent only while still open: a cancel that won the race leaves it untouched, and this
+        // refusal rolls the phone's activation above back.
+        const spent = await db.run(
+          `UPDATE mobile_enrolments SET redeemed_at = ?, activation_id = ?
+           WHERE id = ? AND redeemed_at IS NULL AND cancelled_at IS NULL AND expires_at > now()`,
           nowIso,
           activationId,
           enrolment.id,
         );
+        if (spent.changes !== 1) throw new EnrolmentNoLongerOpen();
         return { ok: true as const, validated, resolvedPolicy, activationToken, enrolment, activationId };
+      }).catch((e: unknown) => {
+        if (e instanceof EnrolmentNoLongerOpen) return { ok: false as const, failure: invalid };
+        throw e;
       });
       if (!outcome.ok) {
         refuse(outcome.failure);

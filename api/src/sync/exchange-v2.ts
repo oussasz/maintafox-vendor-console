@@ -202,8 +202,24 @@ export async function runSyncExchangeV2(
         protocol_version: "v2",
         server_batch_id: stored.server_batch_id,
       });
+      const replayed = JSON.parse(deps.cipher.open(stored.response_json, storedResponseAad)) as SyncExchangeResponseV2;
+      // A phone removed since that first answer gets its acknowledgements again, but nothing that
+      // first answer sent back (it may hold inbound rows, conflicting values or user snapshots).
       return {
-        response: JSON.parse(deps.cipher.open(stored.response_json, storedResponseAad)) as SyncExchangeResponseV2,
+        response: pushOnly
+          ? {
+              ...replayed,
+              checkpoint_token: signCheckpointToken(deps.checkpointSecret, {
+                tenantId: act.tenantId,
+                machineFingerprint: act.machineFingerprint,
+                seq: requestSeq,
+              }),
+              inbound_items: [],
+              conflict_items: [],
+              user_snapshot_required: [],
+              has_more: false,
+            }
+          : replayed,
         replayed: true,
       };
     }
