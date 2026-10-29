@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Outlet } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { usePermissions } from "@/hooks/use-permissions";
 import { UnauthorizedPage } from "@/pages/UnauthorizedPage";
+import type { PermissionsLoadError } from "@/services/admin-permissions";
 
 interface PermissionRouteProps {
   permission?: string;
@@ -12,16 +14,17 @@ interface PermissionRouteProps {
   fallback?: ReactNode;
 }
 
-function PermissionsLoadErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+function PermissionsLoadErrorPanel({ error, onRetry }: { error: PermissionsLoadError | null; onRetry: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full items-center justify-center px-4">
       <div className="max-w-md space-y-4 text-center">
-        <h1 className="text-xl font-semibold text-text-primary">Unable to verify permissions</h1>
+        <h1 className="text-xl font-semibold text-text-primary">{t("permissions.loadError.title")}</h1>
         <p className="text-sm text-text-secondary" role="alert">
-          {message}
+          {t(`permissions.loadError.${error?.kind ?? "invalid"}`, { status: error?.status ?? "" })}
         </p>
         <Button type="button" onClick={onRetry}>
-          Retry
+          {t("action.retry")}
         </Button>
       </div>
     </div>
@@ -46,10 +49,7 @@ export function PermissionRoute({ permission, anyOf, allOf, fallback }: Permissi
 
   if (sessionStatus === "error") {
     return (
-      <PermissionsLoadErrorPanel
-        message={loadError ?? "Failed to load permissions."}
-        onRetry={() => void refresh()}
-      />
+      <PermissionsLoadErrorPanel error={loadError} onRetry={() => void refresh()} />
     );
   }
 

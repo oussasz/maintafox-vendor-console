@@ -1,0 +1,14 @@
+{
+  "name": "@maintafox/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Contracts shared with the Maintafox desktop: types generated from the desktop's shared/ipc-types.ts, checked for drift in CI.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "node scripts/extract-desktop-types.mjs",
+    "check": "node scripts/extract-desktop-types.mjs --check"
+  }
+}

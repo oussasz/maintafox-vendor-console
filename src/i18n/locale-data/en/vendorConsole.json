@@ -5,18 +5,27 @@
     "tenantSearchPlaceholder": "Tenant / machine / correlation id…",
     "tenantSearchAria": "Operational search context",
     "degradedBanner": "Degraded: verify queue health and object storage.",
-    "hostHint": "console.maintafox.systems"
+    "hostHint": "console.maintafox.systems",
+    "consoleName": "Vendor console"
   },
   "nav": {
     "aria": "Vendor console sections",
     "overview": "Overview",
     "customers": "Customers",
     "entitlements": "Entitlements",
+    "editions": "Editions",
     "machines": "Machines",
     "sync": "Sync operations",
     "rollouts": "Rollouts",
-    "health": "Platform health",
-    "audit": "Audit & evidence"
+    "health": "System health",
+    "audit": "Audit & evidence",
+    "operators": "Operators",
+    "billing": "Billing",
+    "licences": "Licences & editions",
+    "devices": "Devices",
+    "updates": "Updates",
+    "support": "Support",
+    "settings": "Settings & team"
   },
   "home": {
     "title": "Control plane overview",
@@ -33,7 +42,10 @@
     "ops": {
       "openAlerts": "Open alerts",
       "worst": "Worst: {{s}}",
-      "dlq": "DLQ (aggregate)"
+      "dlq": "DLQ (aggregate)",
+      "refreshing": "Refreshing…",
+      "refresh": "Refresh",
+      "empty": "No active ops alerts."
     },
     "drill": {
       "customers": "Open customers",
@@ -45,13 +57,6 @@
       "opsHealth": "Platform health & alerts",
       "opsSync": "Sync diagnostics",
       "opsRollouts": "Rollout control"
-    },
-    "stepUpLab": {
-      "title": "Step-up (operator lab)",
-      "body": "Dangerous actions require fresh step-up. Server endpoints must re-validate; this is UX only.",
-      "trigger": "Trigger step-up",
-      "fresh": "Step-up window active",
-      "stale": "No active step-up window"
     }
   },
   "section": {
@@ -88,7 +93,92 @@
     "previewAudit": "Preview audit payload",
     "submit": "Submit (VPS)",
     "pageTitle": "Entitlements",
-    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
+    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes.",
+    "listTitle": "Entitlement keys",
+    "listHint": "Find and inspect key records quickly. Every row opens full key metadata and lifecycle actions.",
+    "addKey": "Add/Issue key",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "tenant": "Tenant",
+    "noTenants": "No tenants available",
+    "search": "Search keys",
+    "searchPlaceholder": "Search by key, id, tenant",
+    "stateFilter": "State filter",
+    "sortBy": "Sort by",
+    "sortDirection": "Sort direction",
+    "loading": "Loading entitlement keys…",
+    "noLicenses": "No keys have been issued for this tenant.",
+    "noLicensesHint": "Use Add/Issue key in the toolbar above to create the first key for this tenant.",
+    "noMatches": "No keys match the current filters.",
+    "editKey": "Update entitlement key",
+    "editHint": "Change slot limit, channel, or expiry. Operator rationale is required for audit.",
+    "confirmRevokeTitle": "Revoke entitlement key?",
+    "confirmRevokeBody": "This revokes key {{id}} and blocks new activations. Existing activations are invalidated per policy. This action is retained for audit.",
+    "issueHint": "Issue a new entitlement key for the selected tenant. This action creates a real key in the control-plane API.",
+    "validation": {
+      "maxMachines": "Slot limit must be a number between 1 and 1000.",
+      "maxMobileDevices": "Mobile devices must be a whole number between 0 and 1000.",
+      "expiryInvalid": "Expiry must be a valid date/time.",
+      "expiryPast": "Expiry date cannot be in the past.",
+      "reasonCode": "Reason code must be at least 2 characters.",
+      "rationale": "Operator rationale must be at least 8 characters."
+    },
+    "mobileSlotsHint": "0 = the field app cannot be activated on this licence.",
+    "packetNote": "Share securely with customer onboarding contact only.",
+    "packetExported": "Onboarding packet exported for {{id}}.",
+    "selectTenantFirst": "Select a tenant first.",
+    "selectKeyFirst": "Select a key row first.",
+    "alreadyRevoked": "This key is already revoked.",
+    "selectTenantHint": "Select a tenant to issue or manage entitlement keys.",
+    "state": {
+      "all": "All",
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "col": {
+      "issuedAt": "Issued at",
+      "expiry": "Expiry",
+      "slots": "Slot limit",
+      "mobileSlots": "Mobile devices (phones)",
+      "keyId": "Key ID",
+      "licenseKey": "License key",
+      "issued": "Issued",
+      "state": "State",
+      "slotsShort": "Slots",
+      "actions": "Actions",
+      "channel": "Channel"
+    },
+    "retryTenants": "Retry tenant load",
+    "retryKeys": "Retry key load",
+    "editKeyTitle": "Edit key",
+    "revokedNotEditable": "Revoked keys cannot be edited",
+    "revokeKey": "Revoke key",
+    "expiryOptional": "Expiry (optional)",
+    "rationale": "Operator rationale",
+    "completeBeforeSaving": "Complete the following before saving:",
+    "updated": "Key {{id}} was updated.",
+    "revokeReason": "Revoke reason (kept in the audit log)",
+    "revokeReasonPh": "e.g. key rotation, security review",
+    "revoked": "Key {{id}} was revoked.",
+    "revoking": "Revoking…",
+    "noTenantSelected": "No tenant selected",
+    "expiryHint": "Pre-filled with about 30 days from now. Clear the field for no expiry.",
+    "reasonCodeOptional": "Operator reason code (optional)",
+    "rationalePh": "Explain why this key is being issued.",
+    "completeBeforeIssuing": "Complete the following before issuing:",
+    "issued": "Key {{id}} was issued.",
+    "issuing": "Issuing…",
+    "issueKey": "Issue key",
+    "detailTitle": "Entitlement key detail",
+    "detailBody": "Review key metadata, export onboarding material, or revoke. Use the Actions column of the list to edit or revoke.",
+    "selectKeyDetail": "Select a key row to view details.",
+    "handoffHint": "Use the copy or export actions below to hand the key safely to the customer’s onboarding contact.",
+    "copied": "Activation key copied for {{id}}.",
+    "copying": "Copying…",
+    "copyKey": "Copy activation key",
+    "exportPacket": "Export onboarding packet",
+    "actionsHint": "Edit or revoke keys from the Actions column of the list. A revoked key stays in the audit trail."
   },
   "customers": {
     "title": "Customers",
@@ -106,7 +196,8 @@
       "edition": "Edition",
       "cohort": "Cohort",
       "channel": "Channel",
-      "actions": "Actions"
+      "actions": "Actions",
+      "created": "Created"
     },
     "bulk": {
       "title": "Bulk channel reassignment (dry-run)",
@@ -117,6 +208,155 @@
       "channelMismatch": "License channel and rollout channel differ — resolve before apply.",
       "dryRun": "Dry run (no mutations)",
       "buildPreview": "Build request payload"
+    },
+    "deleteTypeSlug": "Type the customer slug \"{{slug}}\" to confirm",
+    "deleteReason": "Reason (kept in the audit log)",
+    "suspended": "Suspended",
+    "suspendTenant": "Suspend customer",
+    "resumeTenant": "Lift suspension",
+    "suspendDone": "\"{{name}}\" is suspended: its devices are refused from their next request.",
+    "resumeDone": "\"{{name}}\" is active again: its devices resume at their next licence check.",
+    "suspendDialog": {
+      "title": "Suspend this customer?",
+      "body": "Every device of \"{{name}}\" is refused from its next request. Licences, machines and data are kept; you can lift the suspension at any time.",
+      "confirm": "Suspend"
+    },
+    "resumeDialog": {
+      "title": "Lift the suspension?",
+      "body": "Devices of \"{{name}}\" may sync again; each fetches a fresh policy at its next licence check.",
+      "confirm": "Lift suspension"
+    },
+    "addCompany": "Add customer/company",
+    "refreshing": "Refreshing…",
+    "refreshTenants": "Refresh",
+    "listTitle": "Customer list",
+    "listHint": "Search, filter, sort, and select a customer before editing tenant-level settings.",
+    "searchLabel": "Search customers",
+    "searchPlaceholder": "Search by slug, company, id, cohort",
+    "channelFilter": "Channel filter",
+    "filterAllChannels": "All channels",
+    "sortBy": "Sort by",
+    "sortDirection": "Sort direction",
+    "sortAsc": "Ascending",
+    "sortDesc": "Descending",
+    "retry": "Retry",
+    "loading": "Loading customers…",
+    "empty": "No customers found.",
+    "addFirstCompany": "Add first customer/company",
+    "noResults": "No customers match the current filters.",
+    "clearFilters": "Clear filters",
+    "editTenant": "Edit tenant",
+    "deleteTenant": "Delete tenant",
+    "selectTenantFirst": "Select a customer row to view tenant metadata and policies.",
+    "tenantName": "Tenant display name",
+    "tenantChannel": "Tenant update channel",
+    "editCompany": "Edit customer/company",
+    "editDescription": "Update tenant metadata. Slug changes must stay unique across all customers.",
+    "addDescription": "Create a new customer company. Fields are validated before sending to the control-plane API.",
+    "companyName": "Company name",
+    "savingTenant": "Saving…",
+    "creatingTenant": "Creating…",
+    "saveChanges": "Save changes",
+    "confirmDeleteTitle": "Delete customer?",
+    "confirmDeleteBody": "This permanently deletes \"{{name}}\" ({{slug}}) and all associated license keys and activations. This cannot be undone.",
+    "deletingTenant": "Deleting…",
+    "confirmDelete": "Delete permanently",
+    "validation": {
+      "slugRequired": "Slug is required.",
+      "slugFormat": "Use lowercase letters, numbers, and dashes only.",
+      "slugLength": "Slug must be between 3 and 64 characters.",
+      "nameRequired": "Company name is required.",
+      "nameLength": "Company name must be between 2 and 120 characters.",
+      "cohortRequired": "Rollout cohort is required.",
+      "cohortLength": "Rollout cohort must be 64 characters or fewer."
+    },
+    "updatedDone": "Customer “{{name}}” was updated.",
+    "addedDone": "Customer “{{name}}” was added.",
+    "deletedDone": "Customer “{{name}}” was deleted.",
+    "policy": {
+      "title": "Force-update governance",
+      "body": "Enforce minimum desktop versions per tenant or cohort. Emergency mode blocks operations until clients update.",
+      "loading": "Loading policy details…",
+      "retry": "Retry policy load",
+      "selectTenant": "Select a tenant to manage update governance.",
+      "auditReason": "Audit reason (kept in the audit log)",
+      "tenantOverride": "Tenant override ({{slug}})",
+      "minVersion": "Minimum app version",
+      "minVersionHint": "MAJOR.MINOR.PATCH, e.g. 1.8.0 (\"2\", \"2.0\" and \"v2.0.0\" also work). A pre-release build such as 0.4.0-dev counts as below 0.4.0. Leaving it empty keeps the current minimum version; \"Remove minimum version\" takes it off.",
+      "mode": "Mode",
+      "modes": {
+        "inherit": "Inherit the cohort policy",
+        "off": "Off",
+        "required": "Required (version gate)",
+        "emergency": "Emergency (blocks until updated)"
+      },
+      "userReason": "Reason shown with the update prompt",
+      "needReason": "Enter an audit reason above to enable these actions (your authenticator code is asked when you apply).",
+      "applyTenant": "Apply tenant policy",
+      "applyCohort": "Apply cohort policy",
+      "rollbackTenant": "Roll back tenant policy",
+      "rollbackCohort": "Roll back cohort policy",
+      "cohortBaseline": "Cohort baseline ({{channel}} / {{cohort}})",
+      "removeFloor": "Remove minimum version",
+      "floorRemoved": "Minimum version {{floor}} removed. Rolling back restores it.",
+      "removeFloorDialog": {
+        "title": "Remove the minimum version?",
+        "tenantTarget": "Removes the minimum version {{floor}} from the rule of customer {{name}}. The mode and the message shown to users stay as they are.",
+        "cohortTarget": "Removes the minimum version {{floor}} from the rule of rollout group {{cohort}} on channel {{channel}}: it covers every customer of this group that follows the group rule. The mode and the message shown to users stay as they are.",
+        "effect": {
+          "emergency": "Emergency mode stays on: every PC this rule covers stays blocked, whatever its version, until the mode is changed.",
+          "required": "Under \"Required\", a rule without a minimum version asks every PC to update, so it cannot be removed now. Switch the mode to Off first, then remove the minimum version.",
+          "off": "The mode is Off, so nothing changes for PCs now.",
+          "inherit": "This customer follows its rollout group's rule, so nothing changes for PCs now."
+        },
+        "rollbackNote": "The rule before the change is kept: rolling back restores {{floor}}.",
+        "confirm": "Remove minimum version"
+      }
+    },
+    "completeBeforeAdding": "Complete the following before adding this customer:",
+    "status": {
+      "active": "Active",
+      "expires_soon": "Expires soon",
+      "expired": "Licence ended",
+      "not_activated": "Not activated",
+      "no_licence": "No licence",
+      "suspended": "Suspended",
+      "unknown": "Unknown"
+    },
+    "table": {
+      "search": "Search",
+      "searchPh": "Name or code",
+      "col": {
+        "customer": "Customer",
+        "edition": "Edition",
+        "devices": "Devices",
+        "licenceUntil": "Licence until",
+        "status": "Status",
+        "open": "Open"
+      },
+      "seats": "{{used}} / {{seats}}",
+      "noEndDate": "No end date",
+      "ended": "Ended {{date}}",
+      "open": "Open",
+      "openNamed": "Open {{name}}",
+      "emptyTitle": "No customers yet",
+      "emptyBody": "Add your first customer, then give them a licence key to activate their computers.",
+      "noMatch": "No customer matches this search."
+    },
+    "page": {
+      "subtitle": "Everyone using Maintafox, where they stand, and what to do next.",
+      "filter": "Show customers by status",
+      "all": "All"
+    },
+    "form": {
+      "newBody": "The customer gets a code used in their licence key. You can give them a licence right after.",
+      "slugHint": "Lowercase letters, numbers and dashes, e.g. acme-industries. It cannot be reused by another customer.",
+      "cohortHint": "Customers in the same group receive app updates together (stable-main unless you test with some).",
+      "channels": {
+        "stable": "Stable (recommended)",
+        "pilot": "Pilot (updates earlier)",
+        "internal": "Internal (our own tests)"
+      }
     }
   },
   "editions": {
@@ -125,7 +365,49 @@
     "enterprise": "Enterprise",
     "development": "Development",
     "modulesTitle": "Edition modules",
-    "modulesHint": "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope."
+    "modulesHint": "Read-only capability preset for this tenant. Desktop enforces module capabilities from the signed license envelope.",
+    "pageTitle": "Editions",
+    "pageBody": "Manage license presets and module capability maps. Tenants pick an edition; newly issued keys stamp the current map.",
+    "create": "New edition",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "reissueBanner": "Changes apply to keys issued after save. Re-issue a license (or re-activate) to refresh already-activated machines.",
+    "empty": "No editions in catalog.",
+    "system": "System",
+    "custom": "Custom",
+    "columns": {
+      "id": "Id",
+      "label": "Label",
+      "type": "Type",
+      "modules": "Enabled modules",
+      "version": "Version",
+      "actions": "Actions"
+    },
+    "createTitle": "Create edition",
+    "editTitle": "Edit edition",
+    "editorHint": "Send the full module map on save. System edition ids cannot be renamed or deleted.",
+    "fields": {
+      "id": "Edition id",
+      "label": "Label",
+      "cloneFrom": "Start from"
+    },
+    "groups": {
+      "operations": "Operations",
+      "planning": "Planning",
+      "compliance": "Compliance",
+      "analytics": "Analytics",
+      "control": "Control plane"
+    },
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "created": "Edition {{id}} created.",
+    "updated": "Edition {{id}} saved. Re-issue keys to refresh activated machines.",
+    "deleted": "Edition {{id}} deleted.",
+    "deleteTitle": "Delete edition",
+    "deleteBody": "Delete {{id}}? This fails if any tenant (including inactive) still uses it.",
+    "deleting": "Deleting…",
+    "confirmDelete": "Delete"
   },
   "machines": {
     "title": "Machines & activation",
@@ -147,10 +429,107 @@
     "action": {
       "slotRelease": "Slot release",
       "rebind": "Rebind",
-      "softSuspend": "Soft suspend",
-      "policyRefresh": "Policy refresh"
+      "policyRefresh": "Policy refresh",
+      "revoke": "Revoke",
+      "reinstate": "Reinstate"
     },
-    "fingerprintHint": "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn."
+    "fingerprintHint": "Fingerprint confidence and rebind thresholds are evaluated server-side to limit unnecessary churn.",
+    "revokeConfirm": "Revoke this device? It is blocked within minutes and cannot reactivate itself with the licence key.",
+    "reinstateConfirm": "Reinstate this device? It needs a free slot on its licence.",
+    "revoked": "Device revoked.",
+    "reinstated": "Device reinstated.",
+    "working": "Working…",
+    "licenceRevoked": "Licence revoked",
+    "refreshRequested": "Policy refresh requested: the device fetches its policy at its next licence check (its sync pauses until then).",
+    "released": "Slot released. The device is refused from its next request and may activate again later.",
+    "rebound": "Slot moved to {{fingerprint}}. The old device is refused; the new one activates with the licence key.",
+    "slotReleased": "Slot released",
+    "refreshPending": "Refresh pending",
+    "dialog": {
+      "revoke": {
+        "title": "Revoke this device?",
+        "body": "{{fingerprint}} is refused from its next request and cannot reactivate itself with the licence key (reinstate it here).",
+        "confirm": "Revoke"
+      },
+      "reinstate": {
+        "title": "Reinstate this device?",
+        "body": "{{fingerprint}} may sync again. It needs a free slot on its licence.",
+        "confirm": "Reinstate"
+      },
+      "release": {
+        "title": "Release this slot?",
+        "body": "{{fingerprint}} is refused from its next request and its slot becomes free. Unlike a revocation, the device may activate again later with the licence key.",
+        "confirm": "Release slot"
+      },
+      "rebind": {
+        "title": "Move this slot to a replacement machine?",
+        "body": "{{fingerprint}} is refused at once. The replacement machine then activates with the licence key and finds its slot already held.",
+        "confirm": "Move slot",
+        "targetLabel": "Fingerprint of the replacement machine (shown on its activation screen)"
+      },
+      "refresh": {
+        "title": "Ask this device to refresh its policy?",
+        "body": "{{fingerprint}} fetches its licence, edition and policies at its next licence check instead of waiting for its schedule. Its sync pauses until then.",
+        "confirm": "Request refresh"
+      },
+      "recovery": {
+        "title": "Give this PC an administrator recovery code?",
+        "body": "Creates one new administrator account on {{fingerprint}} (valid 24 h, single use). Use it when the site can no longer administer this PC, for example when its only administrator forgot their password. The code is signed by Maintafox and works only on this PC:",
+        "confirm": "Issue the code",
+        "pointOnce": "It creates an EXTRA administrator: it does not reset or unlock an existing account. The customer disables the old account afterwards.",
+        "pointNotice": "Every active administrator of the PC sees a persistent notice that a recovery code was used, until they acknowledge it.",
+        "pointExpiry": "It is valid for 24 hours and can be used only once.",
+        "pointShownOnce": "It is shown to you once; Maintafox does not keep it.",
+        "stillValid_one": "{{count}} code issued earlier for this PC is still valid (until {{at}}).",
+        "stillValid_other": "{{count}} codes issued earlier for this PC are still valid (until {{at}}).",
+        "requestedByLabel": "Who asked at the customer (name and role)",
+        "identityCheckLabel": "How you checked their identity against the customer's registered contact",
+        "identityCheckChoose": "Choose…",
+        "identityCheck": {
+          "callback_registered_phone": "Called back on the registered phone number",
+          "email_from_registered_address": "Email from the registered address",
+          "in_person": "In person",
+          "other": "Other (explain below)"
+        },
+        "identityNoteRequired": "How the identity was checked (required, 5 to 200 characters)",
+        "identityNoteOptional": "Note on the identity check (optional)",
+        "historyTitle": "Codes issued for this PC",
+        "historyRow": "{{at}}: asked by {{who}}, {{check}}",
+        "historyValid": "valid until {{at}}",
+        "historyExpired": "expired"
+      }
+    },
+    "tenant": "Tenant",
+    "noTenants": "No tenants",
+    "extendGrace": "Extend grace (+{{hours}} h)",
+    "toggleTrustRule": "Toggle trust-revoke disconnect behavior",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh tenant machine state",
+    "activationClaim": "Activation claim (live API)",
+    "activationClaimHint": "Use this to verify that the control-plane activation endpoint accepts a key + machine fingerprint.",
+    "loading": "Loading machine activations…",
+    "empty": "No activated machines for this tenant yet.",
+    "selectedTenant": "Selected tenant",
+    "graceExtended": "Offline grace window is now {{hours}} h.",
+    "trustRuleUpdated": "Trust revocation behaviour updated.",
+    "policyDialog": {
+      "extendGrace": {
+        "title": "Extend the offline grace window?",
+        "body": "Devices of this customer may stay offline {{hours}} hours longer before they must reach the server.",
+        "confirm": "Extend"
+      },
+      "toggleTrust": {
+        "title": "Change what a trust revocation does?",
+        "body": "Switches whether revoking a device’s trust disconnects it at once or at its next licence check.",
+        "confirm": "Change"
+      }
+    },
+    "licenseKey": "License key",
+    "fingerprint": "Machine fingerprint",
+    "appVersion": "App version",
+    "claimDone": "Activation claimed; machine data refreshed.",
+    "claiming": "Claiming…",
+    "claim": "Claim activation"
   },
   "sync": {
     "title": "Sync operations",
@@ -179,15 +558,15 @@
     },
     "repair": {
       "title": "Repair queue",
-      "hint": "Explicit actions; server validates RBAC.",
+      "hint": "Measured by the server. Refused items are replayed from the device itself (its Sync Center: the server keeps only their ids and reasons); a device whose copy is wrong can be fully resynchronised below.",
       "col": {
         "id": "Item",
         "tenant": "Tenant",
         "queue": "Queue",
         "sev": "Severity",
-        "summary": "Summary",
-        "actions": "Actions"
-      }
+        "summary": "Summary"
+      },
+      "empty": "Repair queue is empty."
     },
     "anomalies": {
       "title": "Heartbeat policy anomalies affecting sync",
@@ -196,13 +575,144 @@
         "machine": "Machine",
         "code": "Code",
         "detected": "Detected"
-      }
+      },
+      "empty": "No heartbeat anomalies detected."
     },
     "drill": {
       "title": "Failure drill-down",
       "empty": "No failure rows for this tenant.",
       "attempts": "Attempts"
-    }
+    },
+    "timeline": {
+      "title": "Device timeline",
+      "body": "Everything the server recorded for one device: exchanges (and retries), refused items, conflicts, resynchronisations and operator actions on it.",
+      "customer": "Customer",
+      "machine": "Machine",
+      "span": "Period",
+      "hours_one": "last {{count}} hour",
+      "hours_other": "last {{count}} hours",
+      "protocol": "Protocol",
+      "lag": "Lag",
+      "checkpointAge": "Checkpoint age",
+      "lastSeen": "Last seen",
+      "empty": "Nothing recorded in this period.",
+      "noMachine": "No activated machine for this customer.",
+      "resync": "Full resynchronisation",
+      "resyncTitle": "Fully resynchronise this device?",
+      "resyncBody": "At its next sync, {{machine}} is told its copy is out of date: it keeps its unsent changes, downloads all the data again, then sends them. Use it when the device's data looks wrong or incomplete.",
+      "resyncConfirm": "Resynchronise",
+      "resyncRequested": "Resynchronisation requested: it starts at the device's next sync.",
+      "resyncOpen": "Resynchronisation requested {{at}} by {{by}}: waiting for the device's next sync.",
+      "kind": {
+        "exchange": "Sync",
+        "rejection": "Refused",
+        "conflict": "Conflict",
+        "resync_requested": "Resync requested",
+        "resync_completed": "Resync done",
+        "operator_action": "Operator"
+      }
+    },
+    "deletedAttachments": {
+      "title": "Deleted or replaced photos and attachments",
+      "body": "The server keeps the deleted or replaced entry and the device that sent the change. Files uploaded to the server are never deleted. For an equipment, request or work order attachment, also restore its 'Photo or file' entry so devices download the file again. A file that was never uploaded (e.g. from a PC that was offline when it was deleted) cannot be recovered.",
+      "loading": "Loading deleted or replaced attachments…",
+      "empty": "No photo or attachment has been deleted or replaced by synchronisation.",
+      "col": {
+        "deletedAt": "Changed",
+        "item": "Item",
+        "device": "Device that sent the change",
+        "state": "Archived version",
+        "action": "Action",
+        "now": "On the server now"
+      },
+      "type": {
+        "media_attachments": "Photo or file",
+        "asset_photos": "Equipment photo",
+        "di_attachments": "Request attachment",
+        "work_order_attachments": "Work order attachment",
+        "library_documents": "Library document",
+        "asset_document_links": "Equipment document link",
+        "inventory_document_links": "Inventory document link"
+      },
+      "state": {
+        "deleted": "Deleted",
+        "restored": "Restored",
+        "replaced": "Replaced",
+        "replacedByRestore": "Replaced by a restore"
+      },
+      "restoredBy": "Restored {{at}} by {{by}}",
+      "restore": "Restore",
+      "restoreTitle": "Restore this version?",
+      "restoreBody": "{{id}}: version {{archived}}, kept {{at}}, replaces what the server has now: {{current}}. It is sent to every device of this customer; what it replaces is kept and can be restored too.",
+      "restoreConfirm": "Restore on every device",
+      "restored": "Restored: {{id}} is sent to every device at their next sync.",
+      "file": {
+        "onServer": "File copy on the server",
+        "notOnServer": "No file copy on the server",
+        "unknown": "Server file copy unknown"
+      },
+      "companion": {
+        "live": "Photo or file entry: {{id}} (present)",
+        "archived": "Photo or file entry: {{id}} (deleted or replaced: restore it too)"
+      },
+      "byOperator": "Restore by {{operator}}",
+      "archivedVersion": "Version {{version}} kept",
+      "prior": {
+        "already_deleted": "Was already deleted: nothing kept",
+        "unknown": "Unknown to the server: nothing kept",
+        "present": "Version kept"
+      },
+      "current": {
+        "none": "No entry on the server",
+        "live": "Version {{version}} (present)",
+        "deleted": "Version {{version}} (deleted)"
+      },
+      "period": {
+        "label": "Period",
+        "all": "All time",
+        "days_one": "Last {{count}} day",
+        "days_other": "Last {{count}} days"
+      },
+      "view": {
+        "label": "Show",
+        "kept": "Deleted or replaced (versions kept)",
+        "nothing_kept": "Deletes that kept nothing (never held or already deleted)",
+        "all": "Everything"
+      },
+      "search": {
+        "label": "Item ID",
+        "submit": "Search"
+      },
+      "nothingKept": {
+        "summary_one": "{{count}} delete that kept nothing ({{type}}, an item the server never held or had already deleted), from device {{device}}",
+        "summary_other": "{{count}} deletes that kept nothing ({{type}}, items the server never held or had already deleted), from device {{device}}",
+        "show": "List them"
+      },
+      "loadMore": "Load more",
+      "device": {
+        "label": "Changed by device",
+        "all": "All devices"
+      },
+      "typeFilter": {
+        "label": "Type",
+        "all": "All types"
+      },
+      "before": {
+        "label": "Up to (date)"
+      },
+      "crossDevice": {
+        "label": "Only versions written by another device",
+        "help": "Hides changes a device made to rows it wrote itself, so a device cannot bury a real entry under its own deletes. Untick to see everything that kept a version."
+      },
+      "keptSummary_one": "{{count}} change that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "keptSummary_other": "{{count}} changes that kept a version from device {{device}} ({{cross}} about another device's version)",
+      "priorOrigin": "version written by {{device}}"
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading sync telemetry…",
+    "empty": "No tenant sync telemetry available yet."
   },
   "rollouts": {
     "title": "Rollouts",
@@ -214,7 +724,12 @@
       "tenants": "Affected tenants",
       "machines": "Affected machines",
       "channelOk": "Entitlement channel OK",
-      "blockers": "Known blockers"
+      "blockers": "Known blockers",
+      "yes": "Yes",
+      "no": "No",
+      "noBlockers": "None",
+      "noRelease": "No published release yet",
+      "release": "v{{version}} · {{ring}} · {{percent}}%"
     },
     "cohorts": {
       "title": "Channels & cohorts",
@@ -222,14 +737,46 @@
       "machines": "machines",
       "pausedAt": "Paused at",
       "pause": "Pause stage",
-      "recall": "Recall"
+      "recall": "Recall",
+      "resume": "Resume",
+      "recalledVersion": "Recalled version: {{version}}",
+      "empty": "No cohorts available."
     },
     "diagnostics": {
       "title": "Release diagnostics (24h)",
       "hint": "Signature, migration, and post-deploy heartbeat failures in one view for containment decisions.",
       "count": "{{n}} events",
-      "last": "Last"
-    }
+      "last": "Last",
+      "empty": "No rollout diagnostics available."
+    },
+    "governance": {
+      "deviceNotice": "Pause and recall are recorded on the server, written to the audit log and sent to every device of the cohort with its policy. Desktops will act on them once the updater (master plan Phase 5) exists: today's desktops do not install updates by themselves, so nothing changes on them yet.",
+      "done": {
+        "pause": "{{cohort}} paused.",
+        "resume": "{{cohort}} resumed.",
+        "recall": "Version recalled for {{cohort}}."
+      },
+      "pause": {
+        "title": "Pause this rollout?",
+        "body": "{{cohort}}: devices stop being offered new updates until you resume.",
+        "confirm": "Pause"
+      },
+      "resume": {
+        "title": "Resume this rollout?",
+        "body": "{{cohort}}: devices are offered updates again (a recall is lifted too).",
+        "confirm": "Resume"
+      },
+      "recall": {
+        "title": "Recall a version?",
+        "body": "{{cohort}}: the version below is withdrawn; devices running it are told to leave it.",
+        "confirm": "Recall",
+        "versionLabel": "Version to recall (e.g. 1.4.2)"
+      }
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading rollout telemetry…"
   },
   "health": {
     "title": "Platform health",
@@ -237,7 +784,17 @@
     "pageTitle": "Platform health & incidents",
     "pageBody": "Unified telemetry across services, infrastructure pressure, and alert ownership. Drill-through stays tenant-safe.",
     "services": {
-      "title": "Service status"
+      "title": "Service status",
+      "empty": "No platform service telemetry available.",
+      "names": {
+        "api": "API",
+        "workers": "Workers",
+        "postgresql": "PostgreSQL",
+        "redis": "Redis",
+        "object_storage": "Object storage",
+        "admin_ui": "Admin UI",
+        "backups": "Backups"
+      }
     },
     "pressure": {
       "title": "Infrastructure pressure",
@@ -247,14 +804,19 @@
         "value": "Value",
         "threshold": "Threshold hint",
         "trend": "Trend"
-      }
+      },
+      "empty": "No infrastructure pressure metrics available."
     },
     "drill": {
       "title": "Related operational views",
       "body": "Tenant-safe incident drill-through links curated views in sync and rollout workspaces without exposing unrelated customer data.",
       "sync": "Open sync health",
       "rollouts": "Open rollouts"
-    }
+    },
+    "retry": "Retry",
+    "refreshing": "Refreshing…",
+    "refresh": "Refresh",
+    "loading": "Loading platform telemetry…"
   },
   "ops": {
     "alerts": {
@@ -265,7 +827,8 @@
       "owner": "Owner (actor id)",
       "ack": "Acknowledge",
       "note": "Add note",
-      "readOnly": "Handled by upstream alerting workflow; this panel is read-only."
+      "readOnly": "Handled by upstream alerting workflow; this panel is read-only.",
+      "empty": "No alerts in this view."
     }
   },
   "audit": {
@@ -289,14 +852,7 @@
       "chainFail": "Chain / integrity issue",
       "open": "Open",
       "filter": {
-        "all": "All categories",
-        "auth": "Auth / session",
-        "entitlement": "Entitlement",
-        "machine": "Machine",
-        "sync": "Sync repair",
-        "rollout": "Rollout",
-        "platform": "Platform override",
-        "support": "Support"
+        "all": "All categories"
       },
       "col": {
         "seq": "Seq",
@@ -314,7 +870,27 @@
         "snapshots": "Before / after snapshot SHA-256",
         "chainPrev": "Chain previous hash",
         "refs": "Entity refs (forensic drill-through)",
-        "severityHint": "Operational severity (linked alerts)"
+        "severityHint": "Operational severity (linked alerts)",
+        "severityNotProvided": "Not provided by the audit API for a single record."
+      },
+      "export": "Export CSV",
+      "refresh": "Refresh",
+      "loading": "Loading audit records…",
+      "empty": "No audit records for this filter.",
+      "categories": {
+        "auth_session": "Desktop sign-in / session",
+        "entitlement": "Licences & slots",
+        "machine": "Machine trust",
+        "sync_repair": "Sync repair",
+        "rollout_intervention": "Forced updates",
+        "platform_override": "Platform override",
+        "support_intervention": "Support",
+        "vendor_auth": "Console sign-in",
+        "tenant": "Customers",
+        "operator": "Operators",
+        "billing": "Billing",
+        "rollout": "Rollout governance",
+        "release": "Desktop releases"
       }
     },
     "support": {
@@ -328,12 +904,34 @@
           "sev": "Severity",
           "module": "Module",
           "sync": "Sync hint",
-          "audit": "Linked audit IDs"
-        }
+          "audit": "Linked audit IDs",
+          "intervene": "Intervention"
+        },
+        "saving": "Saving…",
+        "export": "Export CSV",
+        "refresh": "Refresh",
+        "loading": "Loading tickets…",
+        "empty": "No support tickets yet.",
+        "notePh": "Intervention note",
+        "intervene": "Log intervention",
+        "noteTooShort": "The intervention note needs at least 3 characters.",
+        "intervened": "Intervention logged for {{id}}.",
+        "exported": "Support tickets exported (CSV)."
       },
       "bundle": {
-        "title": "Diagnostic bundle (export)",
-        "export": "Request signed export (VPS)"
+        "title": "Diagnostic bundles",
+        "loading": "Loading bundles…",
+        "empty": "No diagnostic bundle has been uploaded by a desktop yet.",
+        "download": "Download",
+        "col": {
+          "id": "Bundle",
+          "tenant": "Tenant / machine",
+          "status": "Status",
+          "size": "Size",
+          "ticket": "Ticket",
+          "download": "Download"
+        },
+        "downloadStarted": "Download of diagnostic bundle {{id}} started (recorded as {{record}})."
       },
       "offline": {
         "title": "Offline-origin reconciliation",
@@ -342,37 +940,743 @@
           "vendor": "Vendor ticket",
           "sync": "Sync state",
           "dup": "Duplicate of"
-        }
+        },
+        "loading": "Loading reconciliation rows…",
+        "empty": "No offline reconciliation rows."
       },
       "exports": {
         "title": "Compliance export kinds",
-        "syncLink": "Open sync evidence"
+        "syncLink": "Open sync evidence",
+        "kinds": {
+          "entitlement_history": "Entitlement history",
+          "machine_state_timeline": "Machine state timeline",
+          "rollout_actions": "Rollout actions",
+          "support_resolution_chronology": "Support resolution chronology"
+        }
+      },
+      "newTicket": {
+        "title": "Open a ticket",
+        "tenant": "Tenant",
+        "severity": "Severity",
+        "module": "Module (e.g. sync)",
+        "summary": "What is wrong?",
+        "submit": "Open ticket",
+        "incomplete": "Choose a customer and fill in the module (2+ characters) and the summary (3+ characters).",
+        "opened": "Ticket {{id}} opened."
       }
     },
     "harden": {
       "intro": "Privileged actions require reason codes and step-up; high-blast-radius may require dual approval on the server.",
       "guards": {
         "title": "Privileged-action safeguards",
-        "body": "Client hints only — VPS enforces RBAC, step-up window, and audit append.",
-        "stepUpExport": "Step-up: compliance export",
-        "stepUpRecall": "Step-up: rollout recall"
+        "body": "The server refuses these actions without a reason and a fresh code from the authenticator app, valid for that kind of action only; every attempt is in the audit log.",
+        "kindsAria": "Actions that need a fresh authenticator code",
+        "refresh": "Refresh"
       },
       "runbooks": {
-        "title": "Incident runbooks"
+        "title": "Incident runbooks",
+        "loading": "Loading runbooks…",
+        "empty": "No runbooks published yet."
       },
       "readiness": {
         "title": "Drill-based readiness matrix",
         "pass": "Pass",
-        "gap": "Gap"
+        "gap": "Gap",
+        "loading": "Loading readiness matrix…",
+        "empty": "No readiness checks available."
       }
     }
   },
   "stepUp": {
     "title": "Confirm sensitive action",
-    "description": "Step-up required for: {{action}}. Enter MFA or elevated password (server validates).",
-    "codeLabel": "Confirmation code",
-    "placeholder": "6-digit TOTP",
+    "description": "A fresh code from your authenticator app is required to {{action}}. The server then allows this kind of action for 5 minutes.",
     "cancel": "Cancel",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "verifying": "Verifying…",
+    "errorRateLimited": "Too many attempts. Wait a few minutes and try again.",
+    "errorGeneric": "Could not verify: {{message}}",
+    "cancelled": "Action cancelled: confirmation was not completed.",
+    "codeLabel": "6-digit code from your authenticator app",
+    "errorInvalidCode": "Code refused. Check the phone's time, or wait for the next code (a code works only once).",
+    "kinds": {
+      "mass_machine_revoke": "revoke several machines",
+      "entitlement_suspension": "revoke a licence or suspend a customer",
+      "forced_rollback": "roll back an update policy, recall a release or a rollout",
+      "tenant_restore": "lift a customer suspension",
+      "signing_key_rotation": "rotate the licence signing key",
+      "rollout_publish": "set an update policy, publish a release, pause or resume a rollout",
+      "machine_trust_change": "revoke, reinstate, release or rebind a machine",
+      "offline_policy_change": "change an offline policy",
+      "support_intervention": "record a support intervention",
+      "sync_repair": "replay or repair a device's synchronisation",
+      "vendor_user_admin": "change a console operator or reset their two-step verification",
+      "tenant_delete": "delete a customer and all its data",
+      "own_mfa_change": "generate new recovery codes",
+      "release_publisher_key": "create or revoke a release workflow key",
+      "admin_recovery_code": "give a PC a code that creates a new administrator",
+      "sync_attachment_restore": "restore a photo or attachment deleted by synchronisation"
+    }
+  },
+  "account": {
+    "menuAria": "Account",
+    "sessionUntil": "Session open until {{at}}",
+    "recoveryRemaining_one": "{{count}} recovery code left",
+    "recoveryRemaining_other": "{{count}} recovery codes left",
+    "logout": "Log out",
+    "cancel": "Cancel",
+    "logoutAll": {
+      "menu": "Log out everywhere",
+      "title": "Log out of every browser?",
+      "body": "Every session of your account ends now, on every computer (use it after losing a laptop or if you suspect someone used your account). You will sign in again with your password and a code.",
+      "confirm": "Log out everywhere"
+    },
+    "regenerate": {
+      "menu": "New recovery codes",
+      "title": "Generate new recovery codes",
+      "body": "Your current recovery codes stop working. You will see 10 new ones once: save them away from your phone.",
+      "reasonLabel": "Reason (kept in the audit log)",
+      "confirm": "Generate"
+    },
+    "codes": {
+      "title": "Your new recovery codes",
+      "body": "Each code works once, if you lose your authenticator app. They are shown only now: print them or save them somewhere safe.",
+      "done": "I have saved them"
+    },
+    "password": {
+      "menu": "Change password",
+      "title": "Change your password",
+      "body": "At least {{min}} characters. Your other sessions end; this one continues.",
+      "current": "Current password",
+      "next": "New password",
+      "confirmLabel": "New password again",
+      "confirm": "Change password",
+      "done_one": "Password changed. {{count}} other session ended.",
+      "done_other": "Password changed. {{count}} other sessions ended."
+    }
+  },
+  "operatorAction": {
+    "reasonLabel": "Reason (kept in the audit log)",
+    "cancel": "Cancel",
+    "working": "Working…"
+  },
+  "operators": {
+    "title": "Console operators",
+    "body": "Who can sign in to this console and what they may do. The server checks each operator's role on every request; every change here asks for a reason and a fresh authenticator code and is written to the audit log.",
+    "add": "Add operator",
+    "loading": "Loading operators…",
+    "empty": "No operators.",
+    "you": "(you)",
+    "never": "Never",
+    "roleFor": "Role of {{email}}",
+    "disable": "Disable",
+    "enable": "Enable",
+    "mfaReset": "Reset two-step verification",
+    "delete": "Delete",
+    "col": {
+      "name": "Operator",
+      "role": "Role",
+      "status": "Status",
+      "lastLogin": "Last sign-in",
+      "actions": "Actions"
+    },
+    "status": {
+      "active": "Active",
+      "disabled": "Disabled",
+      "mfa": "Two-step on",
+      "noMfa": "Not enrolled yet"
+    },
+    "roles": {
+      "owner": "Owner",
+      "operations": "Operations",
+      "support": "Support",
+      "auditor": "Auditor"
+    },
+    "rolesTitle": "What each role may do",
+    "roleHelp": {
+      "owner": "everything, including managing operators.",
+      "operations": "customers, licences, machines, rollouts, sync and support; cannot manage operators.",
+      "support": "support tickets and diagnostic bundles, sync repair; reads the rest.",
+      "auditor": "reads the audit log and platform health; changes nothing."
+    },
+    "form": {
+      "email": "Email",
+      "name": "Name",
+      "role": "Role",
+      "password": "Initial password (at least {{min}} characters; give it to them yourself)"
+    },
+    "done": {
+      "role": "Role of {{email}} changed.",
+      "disabled": "{{email}} is disabled: their sessions ended and they cannot sign in.",
+      "enabled": "{{email}} can sign in again.",
+      "deleted": "{{email}} was deleted (the audit log keeps their actions)."
+    },
+    "dialog": {
+      "create": {
+        "title": "Add an operator",
+        "body": "They sign in with this email and password, then set up their own authenticator app with the one-time code shown next.",
+        "confirm": "Create"
+      },
+      "role": {
+        "title": "Change role?",
+        "body": "{{email}} becomes {{role}}. It applies to their next request.",
+        "confirm": "Change role"
+      },
+      "disable": {
+        "title": "Disable this operator?",
+        "body": "{{email}} is signed out everywhere and cannot sign in until enabled again. The account and its audit trail are kept.",
+        "confirm": "Disable"
+      },
+      "enable": {
+        "title": "Enable this operator?",
+        "body": "{{email}} can sign in again.",
+        "confirm": "Enable"
+      },
+      "mfaReset": {
+        "title": "Reset two-step verification?",
+        "body": "{{email}}'s authenticator and recovery codes stop working and they are signed out. Their next sign-in needs the one-time reset code shown next, then a new enrolment.",
+        "confirm": "Reset"
+      },
+      "delete": {
+        "title": "Delete this operator?",
+        "body": "{{email}} is signed out and deleted. Their past actions stay in the audit log.",
+        "confirm": "Delete"
+      }
+    },
+    "code": {
+      "enrolment": {
+        "title": "One-time enrolment code",
+        "body": "Give this code to {{email}} with their password (not by the same channel if you can). Their first sign-in asks for it before they set up their authenticator. It is shown only now."
+      },
+      "reset": {
+        "title": "One-time reset code",
+        "body": "Give this code to {{email}}. Their next sign-in asks for it, then they set up their authenticator again. It is shown only now."
+      },
+      "done": "I have given it"
+    }
+  },
+  "billing": {
+    "title": "Billing and subscription",
+    "body": "Licence term and slots, and every payment exactly as recorded. \"Check with SlickPay\" asks SlickPay for the real status: a payment is applied only when SlickPay says it is paid; nothing here marks a payment as paid by hand.",
+    "customer": "Customer",
+    "loading": "Loading…",
+    "noLicence": "No licence for this customer yet.",
+    "noPayments": "No payment for this customer.",
+    "noInvoice": "no invoice (never reached SlickPay)",
+    "history": "Payment history",
+    "extraSlots_one": "+{{count}} slot",
+    "extraSlots_other": "+{{count}} slots",
+    "lastChecked": "SlickPay said \"{{status}}\" ({{at}})",
+    "slickpayOff": "SlickPay is not configured on the server: payment links and checks with SlickPay are unavailable (deploy/BILLING.md).",
+    "openOrders_one": "{{count}} payment is not settled yet: check it with SlickPay if the customer says they paid.",
+    "openOrders_other": "{{count}} payments are not settled yet: check them with SlickPay if the customer says they paid.",
+    "manualExtension": "Extend or add slots by hand (Entitlements)",
+    "col": {
+      "created": "Created",
+      "plan": "Plan",
+      "amount": "Amount",
+      "status": "Status (recorded)",
+      "slickpay": "SlickPay invoice",
+      "actions": "Actions"
+    },
+    "status": {
+      "pending": "Pending",
+      "awaiting_payment": "Awaiting payment",
+      "paid": "Paid",
+      "failed": "Failed"
+    },
+    "licence": {
+      "until": "Valid until {{date}}",
+      "noEnd": "No end date",
+      "revoked": "Revoked",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "expiredAgo_one": "Expired {{count}} day ago",
+      "expiredAgo_other": "Expired {{count}} days ago",
+      "slots": "Machines: {{active}} of {{max}} slots in use",
+      "channel": "Update channel: {{channel}}"
+    },
+    "reconcile": {
+      "button": "Check with SlickPay",
+      "title": "Check this payment with SlickPay?",
+      "body": "The server asks SlickPay for the status of invoice {{invoice}}. If SlickPay says it is paid and it was not applied (lost notification), the licence is renewed now, exactly as for a normal payment. Nothing else changes.",
+      "confirm": "Check",
+      "outcome": {
+        "applied": "SlickPay says paid: the payment is now applied and the licence renewed.",
+        "unchanged": "SlickPay says \"{{slickpay}}\": nothing to change.",
+        "already_paid": "Already applied: nothing to change.",
+        "license_revoked": "SlickPay says paid, but the licence is revoked: the payment was not applied (order marked failed).",
+        "issue_failed": "SlickPay says paid, but the licence could not be renewed: see the audit log.",
+        "mismatch_paid_here_not_at_slickpay": "Recorded as paid here, but SlickPay now says \"{{slickpay}}\". Nothing was undone: check with SlickPay and the customer."
+      }
+    },
+    "link": {
+      "button": "Create a payment link",
+      "title": "Create a SlickPay payment link",
+      "body": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year and the extra slots are added. Extra slot price: {{price}} each.",
+      "bodyNoSlotPrice": "SlickPay creates an invoice for this customer; send them the link. When they pay, the licence is renewed for one year. Extra slots need SLICKPAY_EXTRA_SLOT_PRICE on the server.",
+      "plan": "Plan name",
+      "amount": "Amount (DZD, without extra slots)",
+      "extraSlots": "Extra slots",
+      "confirm": "Create link",
+      "created": "Payment link created ({{amount}} {{currency}}): send it to the customer."
+    }
+  },
+  "entitlements": {
+    "pageTitle": "Entitlements",
+    "pageBody": "State-governed lifecycle, signed-claim preview, and auditable approval for destructive changes."
+  },
+  "overview": {
+    "title": "Overview",
+    "greeting": {
+      "morning": "Good morning, {{name}}",
+      "afternoon": "Good afternoon, {{name}}",
+      "evening": "Good evening, {{name}}"
+    },
+    "subtitle": "Everything below is live. Items that need you are listed first.",
+    "findCustomer": "Find a customer",
+    "newCustomer": "+ New customer",
+    "figures": "Key figures",
+    "kpi": {
+      "customers": "Active customers",
+      "customersHint": "of {{count}} in total",
+      "devices": "Devices in use",
+      "devicesHint_one": "{{count}} seat still free",
+      "devicesHint_other": "{{count}} seats still free",
+      "expiring": "Licences expiring in {{days}} days",
+      "reviewRenewals": "Review renewals",
+      "noneExpiring": "Nothing to renew soon",
+      "tickets": "Open support tickets",
+      "openSupport": "Open support"
+    },
+    "attention": "Needs your attention",
+    "items_one": "{{count}} item",
+    "items_other": "{{count}} items",
+    "health": "System health",
+    "healthDetails": "Details",
+    "customers": "Customers"
+  },
+  "attention": {
+    "none": {
+      "title": "Nothing needs you right now",
+      "body": "Renewals, devices that stop syncing, new tickets and backup problems will show up here."
+    },
+    "action": {
+      "renew": "Renew",
+      "viewDevice": "View device",
+      "openTicket": "Open ticket",
+      "openHealth": "Open system health",
+      "open": "Open"
+    },
+    "backup_failed": {
+      "title": "The last backup failed",
+      "detail": "Attempt on {{at}}. System health shows the cause."
+    },
+    "backup_late": {
+      "title": "No recent backup",
+      "detail": "A backup should run every night. Check the backup service."
+    },
+    "restore_test_failed": {
+      "title": "The last restore test failed",
+      "detail": "The backups may not be usable until this is fixed."
+    },
+    "restore_test_overdue": {
+      "title": "Restore test overdue",
+      "detail": "A monthly test proves the backups can be restored; none passed recently."
+    },
+    "licence_expired": {
+      "title_one": "{{customer}}: licence ended {{count}} day ago",
+      "title_other": "{{customer}}: licence ended {{count}} days ago",
+      "detail": "{{edition}} edition · its devices are refused until it is renewed"
+    },
+    "licence_expiring": {
+      "title_one": "{{customer}}: licence expires in {{count}} day",
+      "title_other": "{{customer}}: licence expires in {{count}} days",
+      "detail": "{{edition}} edition · {{devices}} device(s)"
+    },
+    "device_not_syncing": {
+      "title_one": "A device has not synced for {{count}} day",
+      "title_other": "A device has not synced for {{count}} days",
+      "detail": "{{customer}} · {{device}}"
+    },
+    "device_never_synced": {
+      "title": "A device has never synced",
+      "detail": "{{customer}} · {{device}} · last seen {{ago}}"
+    },
+    "ticket_new_with_file": {
+      "title": "New support ticket with a diagnostic file",
+      "detail": "{{customer}} · “{{summary}}”"
+    },
+    "ticket_new": {
+      "title": "New support ticket",
+      "detail": "{{customer}} · “{{summary}}”"
+    },
+    "unknown": {
+      "title": "Something needs a look",
+      "detail": "{{customer}}"
+    }
+  },
+  "customer": {
+    "back": "All customers",
+    "edition": "{{edition}} edition",
+    "since": "Customer since {{date}}",
+    "editDetails": "Edit details",
+    "renewLicence": "Renew licence",
+    "addLicence": "Give a licence",
+    "tabsAria": "Customer sections",
+    "tabs": {
+      "overview": "Overview",
+      "licence": "Licence & billing",
+      "sync": "Data sync",
+      "support": "Support",
+      "history": "History"
+    },
+    "tiles": {
+      "licence": "Licence",
+      "validUntil": "Valid until {{date}}",
+      "noEnd": "Valid, no end date",
+      "ended": "Ended {{date}}",
+      "noLicence": "No licence yet",
+      "daysLeft_one": "{{count}} day left",
+      "daysLeft_other": "{{count}} days left",
+      "devices": "Devices",
+      "seatsUsed": "{{used}} of {{seats}} seats used",
+      "seatsBar": "Seats used",
+      "sync": "Data sync",
+      "upToDate": "Up to date",
+      "noDevices": "No device yet",
+      "behind_one": "{{count}} device behind",
+      "behind_other": "{{count}} devices behind",
+      "lastContact": "Last contact {{ago}}"
+    },
+    "devices": "Devices",
+    "sensitive": {
+      "title": "Sensitive actions",
+      "body": "Each one asks for your authenticator code and a reason, and is recorded in the audit log.",
+      "revokeLicence": "Revoke a licence key",
+      "delete": "Delete customer"
+    },
+    "notFound": {
+      "title": "This customer does not exist (any more)",
+      "body": "It may have been deleted. Find it again from the customer list."
+    },
+    "sync": {
+      "noAccess": "Your role does not include sync operations."
+    },
+    "history": {
+      "title": "History",
+      "body": "Everything done for this customer, by whom and why.",
+      "noAccess": "Your role does not include the audit log."
+    },
+    "support": {
+      "noAccess": "Your role does not include support.",
+      "noTickets": "No support ticket for this customer",
+      "noTicketsBody": "Tickets opened from their desktops, or by you, appear here.",
+      "withFile_one": "{{count}} diagnostic file",
+      "withFile_other": "{{count}} diagnostic files",
+      "files": "Diagnostic files",
+      "noFiles": "No diagnostic file received from this customer.",
+      "goToSupport": "Go to Support to download or answer",
+      "state": {
+        "new": "New",
+        "triaged": "Being looked at",
+        "waiting_for_vendor": "Waiting for us",
+        "waiting_for_customer": "Waiting for the customer",
+        "resolved": "Resolved",
+        "closed": "Closed"
+      }
+    }
+  },
+  "devices": {
+    "subtitle": "Every desktop activated with a licence, what it is doing, and what you can do about it.",
+    "tabsAria": "Device sections",
+    "tabs": {
+      "devices": "Devices",
+      "sync": "Sync across customers",
+      "test": "Test an activation"
+    },
+    "customer": "Customer",
+    "noCustomers": {
+      "title": "No customers yet",
+      "body": "Devices appear once a customer activates Maintafox with their licence key."
+    },
+    "empty": {
+      "title": "No device activated yet",
+      "body": "Give the customer their licence key: each computer that activates Maintafox appears here."
+    },
+    "version": "version {{version}}",
+    "seen": "seen {{ago}}",
+    "status": {
+      "online": "Online",
+      "lastSeen": "Seen {{ago}}",
+      "notSeenDays_one": "Not seen for {{count}} day",
+      "notSeenDays_other": "Not seen for {{count}} days",
+      "neverSeen": "Never seen",
+      "released": "Seat freed",
+      "blocked": "Blocked",
+      "licenceRevoked": "Licence revoked"
+    },
+    "action": {
+      "freeSeat": "Free this seat",
+      "unblock": "Unblock",
+      "moveSeat": "Move the seat to a new computer",
+      "refresh": "Ask it to refresh its licence now",
+      "seeWhatHappened": "See what happened",
+      "block": "Block this device",
+      "recoveryCode": "Administrator recovery code",
+      "more": "More actions for {{name}}"
+    },
+    "recoveryCode": {
+      "issuedTitle": "Administrator recovery code",
+      "issuedBody": "Send this code to the site of {{name}} by email or chat. Someone at that PC enters it in the Maintafox desktop (administrator recovery) to create one new administrator account; existing accounts are not changed.",
+      "copy": "Copy the code",
+      "copied": "Copied",
+      "copyFailed": "Could not copy automatically: select the code and copy it by hand.",
+      "expires": "Valid until {{at}}, once.",
+      "shownOnce": "It is shown only this once: Maintafox does not keep it. Copy it now. If it is lost, issue a new one.",
+      "done": "Done"
+    },
+    "offline": {
+      "title": "Offline rules",
+      "body": "How long the computers of this customer may work without reaching the server, and what blocking one does.",
+      "grace": "May work offline for",
+      "hours_one": "{{count}} hour",
+      "hours_other": "{{count}} hours",
+      "trustRevoke": "Blocking a device takes effect",
+      "atOnce": "At once",
+      "atNextCheck": "At its next licence check",
+      "reconnect": "Must check in before working again"
+    },
+    "test": {
+      "body": "Checks that a licence key and a computer fingerprint are accepted. It is a real activation: the computer takes a seat (free it again in Devices).",
+      "appVersionOptional": "App version (optional)",
+      "accepted": "Activation accepted.",
+      "customer": "Customer",
+      "licence": "Licence"
+    }
+  },
+  "licences": {
+    "subtitle": "Licence keys of every customer, what each edition includes, and payments.",
+    "tabsAria": "Licence sections",
+    "tabs": {
+      "keys": "Licence keys",
+      "editions": "Editions",
+      "payments": "Payments"
+    }
+  },
+  "updates": {
+    "subtitle": "Which customers get a new version, when, and which version they must run.",
+    "tabsAria": "Update sections",
+    "tabs": {
+      "releases": "Releases",
+      "rollouts": "Rollout groups",
+      "forced": "Required versions"
+    },
+    "force": {
+      "customer": "Customer",
+      "noCustomers": "No customers yet.",
+      "saved": "Saved. Devices apply it at their next licence check.",
+      "rolledBack": "Back to the previous rule."
+    },
+    "releases": {
+      "title": "Desktop releases",
+      "refresh": "Refresh",
+      "intro": "Each version the release workflow uploads appears here as a draft. Publish it to a ring, then widen it step by step. Devices are only offered a version once it is published.",
+      "rings": {
+        "internal": "your own test machines.",
+        "pilot": "the customers you selected for early updates.",
+        "stable": "every customer."
+      },
+      "readOnly": "You can view releases. Publishing, recalling and editing notes need the rollout management permission.",
+      "empty": "No release yet.",
+      "emptyBody": "Versions appear here once the release workflow has uploaded them.",
+      "listAria": "Desktop releases, newest first",
+      "status": {
+        "uploading": "Uploading",
+        "draft": "Draft",
+        "internal": "Internal",
+        "pilot": "Pilot",
+        "stable": "Stable",
+        "recalled": "Recalled"
+      },
+      "version": "v{{version}}",
+      "percentOfRing": "{{percent}}% of the ring",
+      "unsigned": "Not code-signed",
+      "unsignedHelp": "This installer is not code-signed: Windows SmartScreen will warn users before it installs.",
+      "showDetails": "Details",
+      "hideDetails": "Hide details",
+      "publishedAt": "Published on {{date}}",
+      "notPublished": "Not published yet",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files",
+      "recalledInfo": "Recalled on {{date}} by {{by}}: {{reason}}",
+      "gitCommit": "Git commit",
+      "registeredBy": "Uploaded by",
+      "registeredAt": "Uploaded on",
+      "artifacts": {
+        "title": "Installer files",
+        "none": "No installer file declared.",
+        "platform": "Platform",
+        "file": "File",
+        "size": "Size",
+        "verified": "Check",
+        "sha256": "SHA-256 fingerprint",
+        "verifiedAt": "Verified {{date}}",
+        "notVerified": "Not verified yet"
+      },
+      "notes": {
+        "title": "Release notes",
+        "help": "Users read these notes before they update, in their language.",
+        "en": "English notes",
+        "fr": "French notes",
+        "required": "Both the English and the French notes are required.",
+        "save": "Save notes",
+        "saving": "Saving…",
+        "saved": "Notes of v{{version}} saved."
+      },
+      "publish": {
+        "action": "Publish",
+        "widen": "Widen",
+        "blocked": {
+          "uploading": "Cannot be published yet: the release workflow has not finished uploading and checking its files.",
+          "recalled": "This version was recalled: it can no longer be published."
+        },
+        "title": "Publish v{{version}}",
+        "body": "Choose who is offered this version. You will confirm with a code from your authenticator app.",
+        "confirm": "Publish",
+        "ringLabel": "Ring",
+        "noNarrowing": "A published version can only be widened: devices of the current ring may already run it. To take it back, recall it.",
+        "percentLabel": "Share of the ring's devices (%)",
+        "preset": "{{percent}}%",
+        "percentHelp": "The percentage applies to the widest ring chosen ({{ring}}); narrower rings get the version in full. Raising it later only adds devices: devices that already installed it keep it.",
+        "percentInvalid": "Enter a whole number from {{min}} to {{max}}.",
+        "unchanged": "This is already how the version is published.",
+        "done": "v{{version}} is now published to {{ring}} at {{percent}}%."
+      },
+      "recall": {
+        "action": "Recall",
+        "title": "Recall v{{version}}?",
+        "body": "Devices stop being offered this version at their next check; devices already running it are moved back to the previous release. A recalled version cannot be published again.",
+        "confirm": "Recall this version",
+        "done": "v{{version}} recalled."
+      }
+    },
+    "keys": {
+      "title": "Release workflow keys",
+      "intro": "The release workflow (GitHub Actions) uses one of these keys to upload new versions. It reads it from the GitHub secret {{secret}}. Revoke a key as soon as it may have leaked.",
+      "create": "New key",
+      "createTitle": "Create a release workflow key",
+      "createBody": "Give the key a name you will recognise (for example the repository it is for). Its token is shown only once.",
+      "createConfirm": "Create key",
+      "labelField": "Key name",
+      "empty": "No release workflow key yet.",
+      "emptyBody": "Create one so the release workflow can upload new versions.",
+      "listAria": "Release workflow keys",
+      "statusActive": "Active",
+      "statusRevoked": "Revoked",
+      "createdBy": "Created {{date}} by {{by}}",
+      "lastUsed": "last used {{date}}",
+      "neverUsed": "never used",
+      "revokedBy": "Revoked {{date}} by {{by}}",
+      "revoke": "Revoke",
+      "revokeTitle": "Revoke the key {{label}}?",
+      "revokeBody": "The release workflow can no longer upload with this key. Versions already uploaded are not affected.",
+      "revokeConfirm": "Revoke key",
+      "revoked": "Key {{label}} revoked.",
+      "tokenTitle": "Token of the key {{label}}",
+      "tokenWarning": "Store it now as the GitHub secret {{secret}}: it cannot be shown again. If you lose it, create a new key and revoke this one.",
+      "tokenLabel": "Key token",
+      "copy": "Copy",
+      "copied": "Copied.",
+      "copyFailed": "Could not copy automatically: select the text and copy it yourself.",
+      "tokenDone": "I have stored it"
+    }
+  },
+  "support": {
+    "subtitle": "Tickets from customers and from their devices, diagnostic files, and what was done."
+  },
+  "settings": {
+    "subtitle": "Your team, the audit log of every action, and the safeguards of the console.",
+    "tabsAria": "Settings sections",
+    "tabs": {
+      "team": "Team",
+      "audit": "Audit log",
+      "safeguards": "Safeguards",
+      "display": "Display"
+    },
+    "audit": {
+      "title": "Audit log"
+    },
+    "display": {
+      "title": "Display"
+    }
+  },
+  "sysHealth": {
+    "subtitle": "Green means nothing to do. Orange means look soon. Each line says what it means.",
+    "tabsAria": "Health sections",
+    "tabs": {
+      "summary": "Summary",
+      "details": "Technical details"
+    },
+    "allOk": "All systems working",
+    "needsLook": "Something needs a look",
+    "checked": "Checked {{ago}}",
+    "server": "Server",
+    "online": "Online",
+    "degraded": "Needs a look",
+    "answering": "Database answers in",
+    "ms": "{{ms}} ms",
+    "database": "Database",
+    "dbState": {
+      "ok": "Healthy",
+      "slow": "Slow",
+      "down": "Not reachable",
+      "unknown": "Unknown"
+    },
+    "fileStorage": "File storage",
+    "storageState": {
+      "ok": "Healthy",
+      "not_configured": "Not configured",
+      "unreachable": "Not reachable",
+      "unknown": "Unknown"
+    },
+    "diskFree": "Disk space free",
+    "diskOf": "{{free}} of {{total}}",
+    "unknown": "Unknown",
+    "backups": "Backups",
+    "protected": "Protected",
+    "lookSoon": "Look soon",
+    "lastBackup": "Last backup",
+    "lastBackupFailed": "The run of {{at}} failed; the date above is the last one that worked.",
+    "backupAtEncrypted": "{{at}} · encrypted",
+    "encryptedWithKey": "Encrypted with your key",
+    "lastRestoreTest": "Last restore test",
+    "passedOn": "Passed · {{at}}",
+    "failed": "Failed",
+    "never": "Never",
+    "copiesKept": "Copies kept",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days",
+    "onlyOnServer": "All copies are on this server only. Add a copy on a computer in your office (backup pull) to be safe if the server is lost.",
+    "offsiteFailed": "The off-site copy failed: only the copies on this server are up to date.",
+    "sync": "Data sync",
+    "allUpToDate": "All up to date",
+    "devicesToCheck_one": "{{count}} device to check",
+    "devicesToCheck_other": "{{count}} devices to check",
+    "devicesUpToDate": "Devices up to date",
+    "devicesSyncing": "Devices syncing normally",
+    "nOfM": "{{n}} of {{m}}",
+    "refused": "Changes refused and not fixed yet (last {{hours}} h)",
+    "conflicts": "Edits that collided (last {{hours}} h)",
+    "seeBehind": "See the device that is behind",
+    "updates": "App updates",
+    "versionsInUse_one": "{{count}} version in use",
+    "versionsInUse_other": "{{count}} versions in use",
+    "noDevices": "No device activated yet.",
+    "version": "Version {{version}}",
+    "versionUnknown": "Version not reported",
+    "devicesCount_one": "{{count}} device",
+    "devicesCount_other": "{{count}} devices",
+    "releaseCatalogLater": "The latest published version will show here with the release catalogue (Phase 5).",
+    "goToUpdates": "Go to Updates"
   }
 }

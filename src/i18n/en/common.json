@@ -47,7 +47,8 @@
     "ok": "OK",
     "yes": "Yes",
     "no": "No",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "retry": "Retry"
   },
   "status": {
     "active": "Active",
@@ -111,7 +112,7 @@
     "dangerousAction": "This is a sensitive action and requires confirmation. Continue?"
   },
   "pagination": {
-    "showing": "Showing {{from}}\u2013{{to}} of {{total}}",
+    "showing": "Showing {{from}}–{{to}} of {{total}}",
     "firstPage": "First page",
     "lastPage": "Last page",
     "nextPage": "Next page",
@@ -133,5 +134,102 @@
     "hours_ago_other": "{{count}} hours ago",
     "days_ago_one": "1 day ago",
     "days_ago_other": "{{count}} days ago"
+  },
+  "errors": {
+    "sessionEnded": "Your session has ended. Sign in again.",
+    "network": "The control API cannot be reached. Check the connection and try again.",
+    "invalidResponse": "The control API sent an unexpected answer. Refresh the page; if it persists, report it.",
+    "requestFailed": "The request failed (HTTP {{status}}).",
+    "unexpected": "Something went wrong. Try again.",
+    "clipboard": "Copy to the clipboard failed. Use the export instead.",
+    "guard": {
+      "missing_reason_code": "A reason is required for this action.",
+      "missing_step_up_token": "This action needs your authenticator code.",
+      "invalid_or_expired_step_up_token": "The authenticator confirmation expired. Confirm again.",
+      "step_up_action_kind_mismatch": "The authenticator confirmation was for another action. Confirm again."
+    },
+    "codes": {
+      "tenant_conflict": "This tenant slug is already taken. Choose another slug.",
+      "idempotency_key_conflict": "This request was already processed with different inputs. Submit it again.",
+      "slot_limit_reached": "Activation slot limit reached for this licence.",
+      "device_class_mismatch": "This device was activated as another kind of device (computer or phone). Activate it again with the right app.",
+      "mobile_not_licensed": "This licence does not include mobile devices. Set a number of mobile devices on the licence first.",
+      "no_policy_history": "No earlier policy to roll back to.",
+      "no_force_min_app_version": "No minimum version is set any more. Reload to see the current rule.",
+      "force_min_app_version_changed": "The minimum version was changed since this page loaded. Reload and check it before removing it.",
+      "force_min_app_version_needed_by_required_mode": "Under \"Required\", a rule needs a minimum version: without one every PC is asked to update. Keep or set a minimum version, or switch the mode first.",
+      "license_revoked": "This licence key is revoked and cannot be changed.",
+      "license_expired": "This licence key has expired.",
+      "license_not_found": "Licence key not found.",
+      "tenant_not_found": "Customer not found.",
+      "tenant_already_suspended": "This customer is already suspended.",
+      "tenant_not_suspended": "This customer is not suspended.",
+      "edition_version_conflict": "Another operator changed this edition. Refresh and try again.",
+      "edition_in_use": "This edition is still assigned to customers (including inactive ones).",
+      "edition_id_taken": "An edition with this id already exists.",
+      "edition_system_immutable": "Built-in editions cannot be changed.",
+      "edition_not_found": "Edition not found.",
+      "activation_not_found": "Machine activation not found.",
+      "activation_revoked": "This machine is blocked or no longer holds a seat.",
+      "tenant_suspended": "This customer is suspended. Resume it first.",
+      "admin_recovery_code_limit": "This PC already has the maximum number of recovery codes that are still valid. Use one already sent, or wait until the oldest one expires.",
+      "slot_not_held": "This machine does not hold a slot.",
+      "same_fingerprint": "The new machine fingerprint is the same as the current one.",
+      "target_fingerprint_in_use": "The new machine fingerprint is already activated.",
+      "resync_already_requested": "A resynchronisation is already waiting for this device.",
+      "archive_not_found": "This deleted attachment was not found.",
+      "nothing_to_restore": "This entry kept no version (the server held nothing, or the item was already deleted): there is nothing to restore.",
+      "confirmation_mismatch": "The typed confirmation does not match.",
+      "governance_unchanged": "This cohort is already in that state.",
+      "permission_denied": "Your role does not allow this action.",
+      "privileged_action_denied": "This action was refused.",
+      "rate_limited": "Too many attempts. Wait a moment and try again.",
+      "invalid_mfa_code": "The authenticator code is not valid.",
+      "last_owner": "The last active owner cannot be removed or demoted.",
+      "cannot_change_own_access": "You cannot change your own role or access.",
+      "operator_email_taken": "An operator with this email already exists.",
+      "operator_not_found": "Operator not found.",
+      "password_unchanged": "The new password must differ from the current one.",
+      "slickpay_not_configured": "SlickPay is not configured on the server.",
+      "payment_order_not_found": "Payment not found.",
+      "ticket_not_found": "Support ticket not found.",
+      "bundle_not_found": "Diagnostic bundle not found.",
+      "validation_error": "Some fields are not valid.",
+      "invalid_body": "Some fields are not valid.",
+      "internal_error": "The server failed to process the request (HTTP {{status}}).",
+      "channel_narrowing_refused": "A published version can only be widened (Internal, then Pilot, then Stable). To take it back from devices, recall it.",
+      "release_unchanged": "This version is already published to this ring at this percentage.",
+      "release_recalled": "This version was recalled: it can no longer be published or recalled again.",
+      "release_not_registered": "This version is still being uploaded and checked by the release workflow. Try again once it shows as a draft.",
+      "release_not_found": "This version no longer exists. Refresh the list.",
+      "publisher_key_not_found": "This release workflow key no longer exists. Refresh the list.",
+      "publisher_key_revoked": "This release workflow key is already revoked.",
+      "entity_changed_since_listing": "This item changed on the server since the list was loaded. The list is up to date now: check what the restore will replace, then try again.",
+      "invalid_cursor": "The list position is no longer valid. Reload the list."
+    }
+  },
+  "permissions": {
+    "loadError": {
+      "title": "Unable to verify permissions",
+      "config": "The console is not configured with the control API address (VITE_ADMIN_API_BASE_URL).",
+      "network": "The control API cannot be reached. Check the connection and try again.",
+      "http": "The control API refused to load your permissions (HTTP {{status}}).",
+      "invalid": "The control API sent an unreadable permission list."
+    }
+  },
+  "language": {
+    "label": "Language",
+    "names": {
+      "en": "English",
+      "fr": "Français"
+    }
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "switchToDark": "Switch to the dark theme",
+    "switchToLight": "Switch to the light theme",
+    "hint": "Saved in this browser only. The console opens in the light theme until you choose otherwise."
   }
 }

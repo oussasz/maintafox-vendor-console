@@ -1,27 +1,63 @@
 /**
- * Signs entitlement envelopes using the same canonical payload + SHA256 scheme
- * as desktop `entitlements/queries.rs` (issuer maintafox-vps / key-v1).
+ * Signs entitlement envelopes with Ed25519 over the canonical payload that desktop
+ * `entitlements/queries.rs::canonical_payload` rebuilds byte-for-byte.
+ *
+ * The private key exists only in the control-plane environment; desktops embed the matching
+ * public keys (by key_id), so a licence cannot be forged from anything shipped in the binary.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes, sign as cryptoSign, type KeyObject } from "node:crypto";
 
+import { DeviceClassSchema, type DeviceClass } from "./app/device-class.js";
 import {
   capabilitiesJsonForEdition,
   featureFlagsJsonForEdition,
-  parseEditionId,
+  isSystemEditionId,
   policyJsonForEdition,
-  type EditionId,
 } from "./edition-catalog.js";
 
-export const ENTITLEMENT_SIGNATURE_ALG_V1 = "sha256:issuer-key-v1";
+export const ENTITLEMENT_SIGNATURE_ALG = "ed25519:v2";
 export const ENTITLEMENT_ISSUER = "maintafox-vps";
-export const ENTITLEMENT_KEY_ID_V1 = "key-v1";
 
-/** Default matches desktop trusted_issuer_secrets() material string. */
-const DEFAULT_SECRET_V1 = "MAINTAFOX_TRUSTED_ISSUER_KEY_V1";
+export type EntitlementSigningKey = { keyId: string; privateKey: KeyObject };
 
-function issuerSecretV1(): string {
-  const fromEnv = process.env.ENTITLEMENT_ISSUER_SECRET_V1?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_SECRET_V1;
+const KEY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
+
+/**
+ * Parses a signing key from base64-encoded PKCS#8 DER (single line, fits in .env).
+ * Generate with `node scripts/generate-entitlement-signing-key.mjs`.
+ */
+export function parseEntitlementSigningKey(keyId: string, privateKeyPkcs8Base64: string): EntitlementSigningKey {
+  if (!KEY_ID_PATTERN.test(keyId)) {
+    throw new Error("ENTITLEMENT_SIGNING_KEY_ID must be 3-64 chars of [a-z0-9._-].");
+  }
+  let privateKey: KeyObject;
+  try {
+    privateKey = createPrivateKey({
+      key: Buffer.from(privateKeyPkcs8Base64, "base64"),
+      format: "der",
+      type: "pkcs8",
+    });
+  } catch (err) {
+    throw new Error(`ENTITLEMENT_SIGNING_PRIVATE_KEY is not a valid base64 PKCS#8 key: ${(err as Error).message}`);
+  }
+  if (privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error(`ENTITLEMENT_SIGNING_PRIVATE_KEY must be an Ed25519 key (got ${privateKey.asymmetricKeyType}).`);
+  }
+  return { keyId, privateKey };
+}
+
+let cachedKey: EntitlementSigningKey | null = null;
+
+/** Loads (once) the signing key from ENTITLEMENT_SIGNING_KEY_ID + ENTITLEMENT_SIGNING_PRIVATE_KEY. */
+export function loadEntitlementSigningKey(): EntitlementSigningKey {
+  if (cachedKey) return cachedKey;
+  const keyId = process.env.ENTITLEMENT_SIGNING_KEY_ID?.trim();
+  const material = process.env.ENTITLEMENT_SIGNING_PRIVATE_KEY?.trim();
+  if (!keyId || !material) {
+    throw new Error("ENTITLEMENT_SIGNING_KEY_ID and ENTITLEMENT_SIGNING_PRIVATE_KEY are required.");
+  }
+  cachedKey = parseEntitlementSigningKey(keyId, material);
+  return cachedKey;
 }
 
 export type EntitlementEnvelopePayload = {
@@ -74,10 +110,15 @@ export function payloadHash(input: UnsignedEnvelope): string {
   return createHash("sha256").update(canonicalPayload(input)).digest("hex");
 }
 
-export function signEnvelope(input: UnsignedEnvelope, secret = issuerSecretV1()): string {
-  const hash = payloadHash(input);
-  const material = `${input.issuer}:${input.key_id}:${hash}:${secret}`;
-  return createHash("sha256").update(material).digest("hex");
+/** Ed25519 signature (hex, 64 bytes) over the UTF-8 canonical payload. */
+export function signEnvelope(
+  input: UnsignedEnvelope,
+  key: EntitlementSigningKey = loadEntitlementSigningKey(),
+): string {
+  if (input.key_id !== key.keyId) {
+    throw new Error(`Envelope key_id '${input.key_id}' does not match signing key '${key.keyId}'.`);
+  }
+  return cryptoSign(null, Buffer.from(canonicalPayload(input), "utf8"), key.privateKey).toString("hex");
 }
 
 export function capabilitiesDigest(capabilitiesJson: string): string {
@@ -85,35 +126,58 @@ export function capabilitiesDigest(capabilitiesJson: string): string {
 }
 
 export type BuildEnvelopeInput = {
-  edition: EditionId | string;
+  /** Catalog edition id (system or custom). Used as envelope `tier`. */
+  edition: string;
   lineageVersion: number;
   previousEnvelopeId?: string | null;
   channel: string;
+  /** Slots of the device's class (desktop: max_machines, mobile: max_mobile_devices). */
   machineSlots: number;
+  /** Class of the device the envelope is issued to; signed inside policy_json. */
+  deviceClass: DeviceClass;
   issuedAt?: string;
   validFrom?: string;
   validUntil: string;
   offlineGraceUntil: string;
   state?: string;
+  /**
+   * Snapshot from edition_catalog at sign time (required for custom editions).
+   * When omitted, factory defaults are used for system editions only (scripts/tests).
+   */
+  capabilities_json?: string;
 };
 
 export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): EntitlementEnvelopePayload {
-  const edition = parseEditionId(input.edition, "core");
+  const tier = input.edition.trim();
+  let capabilitiesJson = input.capabilities_json;
+  if (!capabilitiesJson) {
+    if (!isSystemEditionId(tier)) {
+      throw new Error(
+        `capabilities_json is required when signing non-system edition '${tier}'`,
+      );
+    }
+    capabilitiesJson = capabilitiesJsonForEdition(tier);
+  }
+  // Checked at run time too: JavaScript callers (scripts) are not type-checked.
+  if (!DeviceClassSchema.safeParse(input.deviceClass).success) {
+    throw new Error(`deviceClass must be one of desktop | mobile (got '${String(input.deviceClass)}')`);
+  }
+  const signingKey = loadEntitlementSigningKey();
   const now = input.issuedAt ?? new Date().toISOString();
   const unsigned: UnsignedEnvelope = {
     envelope_id: `env_${randomBytes(8).toString("hex")}`,
     previous_envelope_id: input.previousEnvelopeId ?? null,
     lineage_version: input.lineageVersion,
     issuer: ENTITLEMENT_ISSUER,
-    key_id: ENTITLEMENT_KEY_ID_V1,
-    signature_alg: ENTITLEMENT_SIGNATURE_ALG_V1,
-    tier: edition,
+    key_id: signingKey.keyId,
+    signature_alg: ENTITLEMENT_SIGNATURE_ALG,
+    tier,
     state: input.state ?? "active",
     channel: input.channel,
     machine_slots: input.machineSlots,
     feature_flags_json: featureFlagsJsonForEdition(),
-    capabilities_json: capabilitiesJsonForEdition(edition),
-    policy_json: policyJsonForEdition(),
+    capabilities_json: capabilitiesJson,
+    policy_json: policyJsonForEdition(input.deviceClass),
     issued_at: now,
     valid_from: input.validFrom ?? now,
     valid_until: input.validUntil,
@@ -121,7 +185,7 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
   };
   return {
     ...unsigned,
-    signature: signEnvelope(unsigned),
+    signature: signEnvelope(unsigned, signingKey),
   };
 }
 

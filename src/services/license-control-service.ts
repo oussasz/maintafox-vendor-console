@@ -1,8 +1,47 @@
 import { z } from "zod";
 
-import { getAccessToken } from "@/lib/auth-token";
+import { apiBase } from "@/lib/api-base";
+import { authFetch } from "@/lib/api-client";
+import { throwIfNotOk } from "@/lib/api-error";
 
-const EditionIdSchema = z.enum(["core", "professional", "enterprise", "development"]);
+/** System + custom edition ids from the persisted catalog. */
+const EditionIdSchema = z.string().min(2).max(64);
+
+const MODULE_CAPABILITY_KEYS = [
+  "equipment",
+  "requests",
+  "work_orders",
+  "inventory",
+  "personnel",
+  "organization",
+  "reference",
+  "planning",
+  "pm",
+  "permits",
+  "inspections",
+  "training",
+  "reports",
+  "rams",
+  "finance",
+  "sync",
+  "erp",
+  "notifications.email",
+] as const;
+
+export type ModuleCapabilityKey = (typeof MODULE_CAPABILITY_KEYS)[number];
+export { MODULE_CAPABILITY_KEYS };
+
+const CapabilitiesMapSchema = z
+  .object(
+    Object.fromEntries(MODULE_CAPABILITY_KEYS.map((k) => [k, z.boolean()])) as {
+      [K in ModuleCapabilityKey]: z.ZodBoolean;
+    },
+  )
+  // A module a newer server adds is kept as is (and sent back unchanged on save), never a
+  // reason to refuse the whole edition list.
+  .passthrough();
+
+export type CapabilitiesMap = z.infer<typeof CapabilitiesMapSchema>;
 
 const TenantSchema = z.object({
   id: z.string(),
@@ -21,13 +60,20 @@ const TenantSchema = z.object({
   is_initialized: z.union([z.boolean(), z.number()]).optional(),
   has_demo_data: z.union([z.boolean(), z.number()]).optional(),
   is_active: z.number().optional(),
+  /** Soft suspension (POST /tenants/:id/suspend): when and why; null when active. */
+  suspended_at: z.string().nullable().optional(),
+  suspended_reason: z.string().nullable().optional(),
   created_at: z.string().optional(),
 });
 
 const EditionCatalogEntrySchema = z.object({
   id: EditionIdSchema,
   label: z.string(),
-  capabilities: z.record(z.boolean()),
+  capabilities: CapabilitiesMapSchema,
+  is_system: z.boolean(),
+  row_version: z.number(),
+  updated_at: z.string().nullable().optional(),
+  updated_by: z.string().nullable().optional(),
 });
 
 const EditionsResponseSchema = z.object({
@@ -39,6 +85,8 @@ const LicenseSchema = z.object({
   tenant_id: z.string(),
   license_key: z.string(),
   max_machines: z.number(),
+  /** Phones of the mobile field app (0 = mobile not licensed). */
+  max_mobile_devices: z.number().int().min(0),
   update_channel: z.string().optional(),
   expires_at: z.string().nullable().optional(),
   revoked_at: z.string().nullable().optional(),
@@ -84,10 +132,20 @@ const ActivationTenantStatusSchema = z.object({
 
 const ActivationRowSchema = z.object({
   machine_id: z.string(),
+  machine_label: z.string().nullable().optional(),
   tenant_id: z.string(),
+  activated_at_rfc3339: z.string().optional(),
+  revoked_at_rfc3339: z.string().nullable().optional(),
   last_heartbeat_rfc3339: z.string().nullable(),
   app_version: z.string().nullable().optional(),
   trusted_device: z.boolean(),
+  /**
+   * 'machine' = revoked by an operator (reinstatable), 'license' = licence revoked,
+   * 'released' = slot freed by an operator (the device may activate again), null = active.
+   */
+  revocation_kind: z.enum(["machine", "license", "released"]).nullable().optional(),
+  /** Set while an operator-requested policy refresh waits for the device. */
+  policy_refresh_requested_at: z.string().nullable().optional(),
   activation_source: z.string(),
   anomaly_flags: z.array(z.string()),
   heartbeat_freshness: z.enum(["live", "stale", "unknown"]),
@@ -135,120 +193,19 @@ export type PrivilegedActionContext = {
   step_up_token: string;
 };
 
-function apiBase(): string {
-  const raw = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
-  if (!raw) throw new Error("VITE_ADMIN_API_BASE_URL is not configured.");
-  return raw.replace(/\/$/, "");
-}
+/** Minimum X-Operator-Reason length; the API enforces the same (api/src/app/config.ts). */
+export const PRIVILEGED_REASON_MIN_LENGTH = 4;
 
-type ControlPlaneErrorBody = {
-  error?: string;
-  message?: string;
-  detail?: string | unknown;
-  details?: unknown;
-  max_machines?: number;
-};
-
-/** True when the message indicates a duplicate tenant slug (409 from POST /tenants). */
-export function isDuplicateTenantSlugMessage(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("already taken") ||
-    /\b(unique|duplicate)\b.*\bslug\b|\bslug\b.*\b(unique|duplicate)\b/.test(m) ||
-    (m.includes("sqlite") && m.includes("unique") && m.includes("slug")) ||
-    (m.includes("constraint") && m.includes("slug"))
-  );
-}
-
-/**
- * Maps control-plane JSON error bodies to operator-readable messages (incl. 409 conflicts).
- */
-export async function parseControlPlaneErrorResponse(res: Response): Promise<string> {
-  let body: ControlPlaneErrorBody = {};
-  try {
-    body = (await res.json()) as ControlPlaneErrorBody;
-  } catch {
-    return `Request failed (${res.status})`;
-  }
-  const code = typeof body.error === "string" ? body.error.trim() : "";
-  const msg = typeof body.message === "string" ? body.message.trim() : "";
-  const detailStr =
-    typeof body.detail === "string"
-      ? body.detail.trim()
-      : Array.isArray(body.detail)
-        ? body.detail
-            .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
-            .join(" ")
-        : "";
-
-  if (res.status === 409) {
-    if (code === "tenant_conflict") {
-      if (isDuplicateTenantSlugMessage(msg) || isDuplicateTenantSlugMessage(detailStr)) {
-        return "This tenant slug is already taken. Choose a different slug.";
-      }
-      if (msg || detailStr) {
-        return msg || detailStr;
-      }
-      return "This tenant slug is already taken. Choose a different slug.";
-    }
-    if (code === "idempotency_key_conflict") {
-      return "This request was already processed with different inputs. Retry with a fresh idempotency key.";
-    }
-    if (code === "slot_limit_reached") {
-      const max = body.max_machines;
-      return max != null
-        ? `Activation slot limit reached for this license (max ${max} machines).`
-        : "Activation slot limit reached for this license.";
-    }
-    if (code === "no_policy_history") {
-      return msg || "No policy history available to roll back.";
-    }
-    if (code === "license_revoked") {
-      return msg || "This license key is revoked and cannot be updated.";
-    }
-    if (msg || detailStr) {
-      return msg || detailStr;
-    }
-  }
-
-  if (res.status === 404 && (code === "tenant_not_found" || code === "license_not_found")) {
-    return msg || (code === "license_not_found" ? "License key not found." : "Tenant not found.");
-  }
-
-  if (msg) return msg;
-  if (detailStr) return detailStr;
-  if (code) return `${code.replace(/_/g, " ")} (${res.status})`;
-  return `Request failed (${res.status})`;
-}
-
-async function throwIfNotOk(res: Response): Promise<void> {
-  if (res.ok) return;
-  throw new Error(await parseControlPlaneErrorResponse(res));
-}
-
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = getAccessToken();
-  if (!token) throw new Error("Not authenticated.");
-  return fetch(`${apiBase()}${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers ?? {}),
-    },
-  });
-}
-
-function privilegedHeaders(input?: PrivilegedActionContext): Record<string, string> {
-  if (!input) return {};
+/** Headers for routes guarded server-side by requirePrivilegedAction (reason + step-up). */
+export function privilegedHeaders(input: PrivilegedActionContext): Record<string, string> {
   return {
     "X-Operator-Reason": input.reason_code,
     "X-Step-Up-Token": input.step_up_token,
   };
 }
 
-function idempotencyKey(prefix: string): string {
+/** A fresh Idempotency-Key: the API replays the first answer when the same key is sent again. */
+export function idempotencyKey(prefix: string): string {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
   } catch {
@@ -266,6 +223,46 @@ export async function listEditions(): Promise<EditionCatalogEntry[]> {
   const res = await authFetch("/api/v1/editions");
   await throwIfNotOk(res);
   return EditionsResponseSchema.parse(await res.json()).items;
+}
+
+export async function createEdition(input: {
+  id: string;
+  label: string;
+  capabilities: CapabilitiesMap;
+  clone_from?: string;
+}): Promise<EditionCatalogEntry> {
+  const res = await authFetch("/api/v1/editions", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  await throwIfNotOk(res);
+  return EditionCatalogEntrySchema.parse(await res.json());
+}
+
+export async function updateEdition(
+  editionId: string,
+  input: {
+    label?: string;
+    capabilities: CapabilitiesMap;
+    expected_row_version: number;
+  },
+): Promise<EditionCatalogEntry> {
+  const res = await authFetch(`/api/v1/editions/${encodeURIComponent(editionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+    headers: {
+      "If-Match": String(input.expected_row_version),
+    },
+  });
+  await throwIfNotOk(res);
+  return EditionCatalogEntrySchema.parse(await res.json());
+}
+
+export async function deleteEdition(editionId: string): Promise<void> {
+  const res = await authFetch(`/api/v1/editions/${encodeURIComponent(editionId)}`, {
+    method: "DELETE",
+  });
+  await throwIfNotOk(res);
 }
 
 export async function updateTenant(
@@ -286,9 +283,15 @@ export async function updateTenant(
   return TenantSchema.parse(await res.json());
 }
 
-export async function deleteTenant(tenantId: string): Promise<void> {
+/** Irreversible purge: the API needs the slug retyped, a reason and a `tenant_delete` step-up. */
+export async function deleteTenant(
+  tenantId: string,
+  input: { confirm_slug: string } & PrivilegedActionContext,
+): Promise<void> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}`, {
     method: "DELETE",
+    headers: privilegedHeaders(input),
+    body: JSON.stringify({ confirm_slug: input.confirm_slug }),
   });
   await throwIfNotOk(res);
 }
@@ -317,6 +320,7 @@ export async function createTenant(input: {
 export async function issueLicense(input: {
   tenant_id: string;
   max_machines: number;
+  max_mobile_devices: number;
   expires_at?: string | null;
   update_channel?: "stable" | "pilot" | "internal";
   operator_reason_code?: string | null;
@@ -343,6 +347,7 @@ export async function updateLicense(
   licenseId: string,
   input: {
     max_machines?: number;
+    max_mobile_devices?: number;
     expires_at?: string | null;
     update_channel?: "stable" | "pilot" | "internal";
     operator_rationale?: string | null;
@@ -356,14 +361,64 @@ export async function updateLicense(
   return LicenseSchema.parse(await res.json());
 }
 
-export async function revokeLicense(licenseId: string, reason?: string): Promise<void> {
+export async function revokeLicense(
+  licenseId: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
   const res = await authFetch(`/api/v1/licenses/${encodeURIComponent(licenseId)}/revoke`, {
     method: "POST",
     body: JSON.stringify({ reason }),
     headers: {
       "Idempotency-Key": idempotencyKey("revoke-license"),
+      ...privilegedHeaders(privileged),
     },
   });
+  await throwIfNotOk(res);
+}
+
+/**
+ * Revoke one device: its next request is refused (`activation_revoked`), its slot is freed, and
+ * re-entering the licence key on that device does not undo it.
+ */
+export async function revokeMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/revoke`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+      headers: {
+        "Idempotency-Key": idempotencyKey("revoke-machine"),
+        ...privilegedHeaders(privileged),
+      },
+    },
+  );
+  await throwIfNotOk(res);
+}
+
+/** Reinstate a device revoked with `revokeMachine` (needs a free slot on its licence). */
+export async function reinstateMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  reason: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/reinstate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+      headers: {
+        "Idempotency-Key": idempotencyKey("reinstate-machine"),
+        ...privilegedHeaders(privileged),
+      },
+    },
+  );
   await throwIfNotOk(res);
 }
 
@@ -432,10 +487,12 @@ export async function updateTenantOfflinePolicy(
     trust_revocation_disconnects_immediately: boolean;
     reconnect_requires_fresh_heartbeat: boolean;
   },
+  privileged: PrivilegedActionContext,
 ): Promise<OfflinePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/offline-policy`, {
     method: "PUT",
     body: JSON.stringify(input),
+    headers: privilegedHeaders(privileged),
   });
   await throwIfNotOk(res);
   return OfflinePolicySchema.parse(await res.json());
@@ -454,7 +511,7 @@ export async function updateTenantUpdatePolicy(
     force_update_mode?: "off" | "required" | "emergency" | "inherit";
     force_update_reason?: string | null;
   },
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<TenantUpdatePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy`, {
     method: "PUT",
@@ -467,7 +524,7 @@ export async function updateTenantUpdatePolicy(
 
 export async function rollbackTenantUpdatePolicy(
   tenantId: string,
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<TenantUpdatePolicy> {
   const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/rollback`, {
     method: "POST",
@@ -497,7 +554,7 @@ export async function updateCohortUpdatePolicy(
     force_update_mode?: "off" | "required" | "emergency";
     force_update_reason?: string | null;
   },
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<CohortUpdatePolicy> {
   const res = await authFetch(
     `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy`,
@@ -514,7 +571,7 @@ export async function updateCohortUpdatePolicy(
 export async function rollbackCohortUpdatePolicy(
   channel: "stable" | "pilot" | "internal",
   cohortLabel: string,
-  privileged?: PrivilegedActionContext,
+  privileged: PrivilegedActionContext,
 ): Promise<CohortUpdatePolicy> {
   const res = await authFetch(
     `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/rollback`,
@@ -526,4 +583,214 @@ export async function rollbackCohortUpdatePolicy(
   );
   await throwIfNotOk(res);
   return CohortUpdatePolicySchema.parse(await res.json());
+}
+
+/**
+ * Removes the customer's minimum version (and nothing else). `expectedFloor` is the floor the
+ * operator confirmed; the server refuses (409) when the stored one differs.
+ */
+export async function clearTenantMinAppVersion(
+  tenantId: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<TenantUpdatePolicy> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/update-policy/clear-min-version`, {
+    method: "POST",
+    body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+    headers: privilegedHeaders(privileged),
+  });
+  await throwIfNotOk(res);
+  return TenantUpdatePolicySchema.parse(await res.json());
+}
+
+/** Removes the rollout group's minimum version (see clearTenantMinAppVersion). */
+export async function clearCohortMinAppVersion(
+  channel: "stable" | "pilot" | "internal",
+  cohortLabel: string,
+  expectedFloor: string,
+  privileged: PrivilegedActionContext,
+): Promise<CohortUpdatePolicy> {
+  const res = await authFetch(
+    `/api/v1/cohorts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/update-policy/clear-min-version`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_force_min_app_version: expectedFloor }),
+      headers: privilegedHeaders(privileged),
+    },
+  );
+  await throwIfNotOk(res);
+  return CohortUpdatePolicySchema.parse(await res.json());
+}
+
+async function postMachineAction(
+  tenantId: string,
+  machineFingerprint: string,
+  action: "release" | "rebind" | "policy-refresh",
+  body: Record<string, unknown>,
+  headers: Record<string, string>,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Idempotency-Key": idempotencyKey(`machine-${action}`), ...headers },
+    },
+  );
+  await throwIfNotOk(res);
+}
+
+/** Frees the machine's slot; the device may activate again later (step-up `machine_trust_change`). */
+export async function releaseMachineSlot(
+  tenantId: string,
+  machineFingerprint: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  await postMachineAction(tenantId, machineFingerprint, "release", { reason: privileged.reason_code }, privilegedHeaders(privileged));
+}
+
+/** Moves the machine's slot to its replacement (step-up `machine_trust_change`). */
+export async function rebindMachine(
+  tenantId: string,
+  machineFingerprint: string,
+  newMachineFingerprint: string,
+  privileged: PrivilegedActionContext,
+): Promise<void> {
+  await postMachineAction(
+    tenantId,
+    machineFingerprint,
+    "rebind",
+    { new_machine_fingerprint: newMachineFingerprint, reason: privileged.reason_code },
+    privilegedHeaders(privileged),
+  );
+}
+
+/** Asks the device to fetch its policy now (audited, reason required, no step-up). */
+export async function requestMachinePolicyRefresh(tenantId: string, machineFingerprint: string, reasonCode: string): Promise<void> {
+  await postMachineAction(tenantId, machineFingerprint, "policy-refresh", {}, { "X-Operator-Reason": reasonCode });
+}
+
+const AdminRecoveryCodeIssuedSchema = z.object({
+  code: z.string().regex(/^MFXREC1\.[A-Za-z0-9_-]+\.[0-9a-f]{128}$/),
+  code_id: z.string(),
+  tenant_id: z.string(),
+  machine_fingerprint: z.string(),
+  license_id: z.string(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  audit_record_id: z.string(),
+});
+export type AdminRecoveryCodeIssued = z.infer<typeof AdminRecoveryCodeIssuedSchema>;
+
+const AdminRecoveryCodeRowSchema = z.object({
+  code_id: z.string(),
+  tenant_id: z.string(),
+  license_id: z.string(),
+  machine_fingerprint: z.string(),
+  issued_by: z.string(),
+  reason: z.string(),
+  requested_by: z.string(),
+  identity_check: z.string(),
+  identity_check_note: z.string().nullable(),
+  issued_at: z.string(),
+  expires_at: z.string(),
+  key_id: z.string(),
+  audit_record_id: z.string(),
+  expired: z.boolean(),
+});
+export type AdminRecoveryCodeRow = z.infer<typeof AdminRecoveryCodeRowSchema>;
+
+/** How the operator checked the requester against the customer's registered contact (API enum). */
+export const ADMIN_RECOVERY_IDENTITY_CHECKS = ["callback_registered_phone", "email_from_registered_address", "in_person", "other"] as const;
+export type AdminRecoveryIdentityCheck = (typeof ADMIN_RECOVERY_IDENTITY_CHECKS)[number];
+export type AdminRecoveryRequester = {
+  /** Name and role of the person at the customer who asked (2-120 chars). */
+  requested_by: string;
+  identity_check: AdminRecoveryIdentityCheck;
+  /** Required (5-200 chars) with "other"; optional otherwise. */
+  identity_check_note?: string;
+};
+
+/**
+ * Issues a signed one-time administrator recovery code for the PC (step-up `admin_recovery_code`).
+ * The code is in this response only: the server does not keep it. No Idempotency-Key (the server
+ * does not replay this response, so the code is never stored with it).
+ */
+export async function issueAdminRecoveryCode(
+  tenantId: string,
+  machineFingerprint: string,
+  requester: AdminRecoveryRequester,
+  privileged: PrivilegedActionContext,
+): Promise<AdminRecoveryCodeIssued> {
+  const note = requester.identity_check_note?.trim();
+  const body = {
+    requested_by: requester.requested_by.trim(),
+    identity_check: requester.identity_check,
+    ...(note ? { identity_check_note: note } : {}),
+  };
+  const res = await authFetch(
+    `/api/v1/tenants/${encodeURIComponent(tenantId)}/machines/${encodeURIComponent(machineFingerprint)}/admin-recovery-code`,
+    { method: "POST", body: JSON.stringify(body), headers: privilegedHeaders(privileged) },
+  );
+  await throwIfNotOk(res);
+  return AdminRecoveryCodeIssuedSchema.parse(await res.json());
+}
+
+/** Recovery codes issued for a customer's PCs (newest first), without the codes themselves. */
+export async function listAdminRecoveryCodes(tenantId: string, machineFingerprint?: string): Promise<AdminRecoveryCodeRow[]> {
+  const query = machineFingerprint ? `?machine_fingerprint=${encodeURIComponent(machineFingerprint)}` : "";
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/admin-recovery-codes${query}`);
+  await throwIfNotOk(res);
+  return z.array(AdminRecoveryCodeRowSchema).parse(await res.json());
+}
+
+/** Soft-suspends a tenant: its devices are refused, data kept (step-up `entitlement_suspension`). */
+export async function suspendTenant(tenantId: string, privileged: PrivilegedActionContext): Promise<void> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({ reason: privileged.reason_code }),
+    headers: { "Idempotency-Key": idempotencyKey("tenant-suspend"), ...privilegedHeaders(privileged) },
+  });
+  await throwIfNotOk(res);
+}
+
+/** Lifts a soft suspension; devices are asked to refresh their policy (step-up `tenant_restore`). */
+export async function resumeTenant(tenantId: string, privileged: PrivilegedActionContext): Promise<void> {
+  const res = await authFetch(`/api/v1/tenants/${encodeURIComponent(tenantId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ reason: privileged.reason_code }),
+    headers: { "Idempotency-Key": idempotencyKey("tenant-resume"), ...privilegedHeaders(privileged) },
+  });
+  await throwIfNotOk(res);
+}
+
+export type RolloutGovernanceAction = "pause" | "resume" | "recall";
+
+/**
+ * Pause / resume / recall one (channel, cohort). Step-up `rollout_publish` (pause, resume) or
+ * `forced_rollback` (recall). Devices act on it with the Phase 5 updater.
+ */
+export async function setRolloutGovernance(
+  channel: string,
+  cohortLabel: string,
+  action: RolloutGovernanceAction,
+  input: { recalled_version?: string } & PrivilegedActionContext,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/v1/rollouts/${encodeURIComponent(channel)}/${encodeURIComponent(cohortLabel)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(
+        action === "recall"
+          ? { reason: input.reason_code, recalled_version: input.recalled_version }
+          : { reason: input.reason_code },
+      ),
+      headers: { "Idempotency-Key": idempotencyKey(`rollout-${action}`), ...privilegedHeaders(input) },
+    },
+  );
+  await throwIfNotOk(res);
 }

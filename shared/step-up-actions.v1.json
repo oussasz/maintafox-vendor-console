@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "Step-up action kinds: a step-up token is issued for exactly one kind and accepted only by the privileged routes of that kind. Every kind of the desktop enum StepUpActionKind (src-tauri/src/vps/vendor_admin_console.rs) is listed with its Rust variant; kinds the desktop does not have yet are listed with rust_variant null and must be added there (drift check: api/scripts/step-up-kinds-drift.mjs).",
+  "kinds": [
+    { "kind": "mass_machine_revoke", "rust_variant": "MassMachineRevoke", "description": "Revoke several machines at once." },
+    { "kind": "entitlement_suspension", "rust_variant": "EntitlementSuspension", "description": "Revoke a licence or suspend a tenant." },
+    { "kind": "forced_rollback", "rust_variant": "ForcedRollback", "description": "Roll an update policy back or recall a rollout." },
+    { "kind": "tenant_restore", "rust_variant": "TenantRestore", "description": "Lift a tenant suspension." },
+    { "kind": "signing_key_rotation", "rust_variant": "SigningKeyRotation", "description": "Rotate the entitlement signing key." },
+    { "kind": "rollout_publish", "rust_variant": "RolloutPublish", "description": "Set an update policy, pause or resume a rollout." },
+    { "kind": "machine_trust_change", "rust_variant": null, "description": "Revoke, reinstate, release or rebind one machine slot." },
+    { "kind": "offline_policy_change", "rust_variant": null, "description": "Change a tenant's offline policy." },
+    { "kind": "support_intervention", "rust_variant": null, "description": "Record a privileged support intervention." },
+    { "kind": "sync_repair", "rust_variant": null, "description": "Replay or repair a device's sync state." },
+    { "kind": "vendor_user_admin", "rust_variant": null, "description": "Create, change or disable a vendor operator, or reset their MFA." },
+    { "kind": "tenant_delete", "rust_variant": null, "description": "Delete a tenant and purge its synchronised data (irreversible)." },
+    { "kind": "own_mfa_change", "rust_variant": null, "description": "Regenerate your own recovery codes." },
+    { "kind": "release_publisher_key", "rust_variant": null, "description": "Create or revoke a release workflow (CI) publisher key." },
+    { "kind": "admin_recovery_code", "rust_variant": null, "description": "Issue a signed one-time code that creates one new administrator account on a PC." },
+    { "kind": "sync_attachment_restore", "rust_variant": null, "description": "Restore a photo or attachment deleted by synchronisation (re-issued to every device)." }
+  ]
+}

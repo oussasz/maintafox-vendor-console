@@ -8,46 +8,17 @@ const LoginPage = lazy(() => import("@/pages/LoginPage").then((m) => ({ default:
 const VendorConsoleShell = lazy(() =>
   import("@/vendor-console/VendorConsoleShell").then((m) => ({ default: m.VendorConsoleShell })),
 );
-const VendorConsoleHomePage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleHomePage").then((m) => ({
-    default: m.VendorConsoleHomePage,
-  })),
-);
-const VendorConsoleCustomersPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleCustomersPage").then((m) => ({
-    default: m.VendorConsoleCustomersPage,
-  })),
-);
-const VendorConsoleEntitlementsPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleEntitlementsPage").then((m) => ({
-    default: m.VendorConsoleEntitlementsPage,
-  })),
-);
-const VendorConsoleMachinesPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleMachinesPage").then((m) => ({
-    default: m.VendorConsoleMachinesPage,
-  })),
-);
-const VendorConsoleSyncPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleSyncPage").then((m) => ({
-    default: m.VendorConsoleSyncPage,
-  })),
-);
-const VendorConsoleRolloutsPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleRolloutsPage").then((m) => ({
-    default: m.VendorConsoleRolloutsPage,
-  })),
-);
-const VendorConsoleHealthPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleHealthPage").then((m) => ({
-    default: m.VendorConsoleHealthPage,
-  })),
-);
-const VendorConsoleAuditPage = lazy(() =>
-  import("@/vendor-console/pages/VendorConsoleAuditPage").then((m) => ({
-    default: m.VendorConsoleAuditPage,
-  })),
-);
+const page = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) =>
+  lazy(() => load().then((m) => ({ default: m[name] })));
+const OverviewPage = page(() => import("@/vendor-console/pages/OverviewPage"), "OverviewPage");
+const CustomersPage = page(() => import("@/vendor-console/pages/CustomersPage"), "CustomersPage");
+const CustomerPage = page(() => import("@/vendor-console/pages/CustomerPage"), "CustomerPage");
+const LicencesPage = page(() => import("@/vendor-console/pages/LicencesPage"), "LicencesPage");
+const DevicesPage = page(() => import("@/vendor-console/pages/DevicesPage"), "DevicesPage");
+const UpdatesPage = page(() => import("@/vendor-console/pages/UpdatesPage"), "UpdatesPage");
+const SupportPage = page(() => import("@/vendor-console/pages/SupportPage"), "SupportPage");
+const SystemHealthPage = page(() => import("@/vendor-console/pages/SystemHealthPage"), "SystemHealthPage");
+const SettingsPage = page(() => import("@/vendor-console/pages/SettingsPage"), "SettingsPage");
 
 function PageSuspense() {
   return (
@@ -95,42 +66,45 @@ const routes: RouteObject[] = [
               {
                 element: <VendorConsoleShell />,
                 children: [
-                  { index: true, element: <VendorConsoleHomePage /> },
+                  { index: true, element: <OverviewPage /> },
+                  { path: "customers", element: <CustomersPage /> },
+                  { path: "customers/:tenantId", element: <CustomerPage /> },
                   {
-                    path: "customers",
-                    element: <PermissionRoute permission="customer.manage" />,
-                    children: [{ index: true, element: <VendorConsoleCustomersPage /> }],
+                    path: "licences",
+                    element: <PermissionRoute anyOf={["entitlement.manage", "customer.manage"]} />,
+                    children: [{ index: true, element: <LicencesPage /> }],
                   },
                   {
-                    path: "entitlements",
-                    element: <PermissionRoute permission="entitlement.manage" />,
-                    children: [{ index: true, element: <VendorConsoleEntitlementsPage /> }],
+                    path: "devices",
+                    element: <PermissionRoute anyOf={["sync.operate", "entitlement.manage"]} />,
+                    children: [{ index: true, element: <DevicesPage /> }],
                   },
                   {
-                    path: "machines",
-                    element: <PermissionRoute permission="entitlement.manage" />,
-                    children: [{ index: true, element: <VendorConsoleMachinesPage /> }],
-                  },
-                  {
-                    path: "sync",
-                    element: <PermissionRoute permission="sync.operate" />,
-                    children: [{ index: true, element: <VendorConsoleSyncPage /> }],
-                  },
-                  {
-                    path: "rollouts",
+                    path: "updates",
                     element: <PermissionRoute permission="rollout.manage" />,
-                    children: [{ index: true, element: <VendorConsoleRolloutsPage /> }],
+                    children: [{ index: true, element: <UpdatesPage /> }],
+                  },
+                  {
+                    path: "support",
+                    element: <PermissionRoute permission="support.manage" />,
+                    children: [{ index: true, element: <SupportPage /> }],
                   },
                   {
                     path: "health",
                     element: <PermissionRoute permission="platform.observe" />,
-                    children: [{ index: true, element: <VendorConsoleHealthPage /> }],
+                    children: [{ index: true, element: <SystemHealthPage /> }],
                   },
-                  {
-                    path: "audit",
-                    element: <PermissionRoute permission="audit.view" />,
-                    children: [{ index: true, element: <VendorConsoleAuditPage /> }],
-                  },
+                  { path: "settings", element: <SettingsPage /> },
+                  // Addresses of the console before the 2026 redesign (bookmarks, links in e-mails).
+                  { path: "entitlements", element: <Navigate to="/vendor-console/licences" replace /> },
+                  { path: "editions", element: <Navigate to="/vendor-console/licences?tab=editions" replace /> },
+                  { path: "billing", element: <Navigate to="/vendor-console/licences?tab=payments" replace /> },
+                  { path: "machines", element: <Navigate to="/vendor-console/devices" replace /> },
+                  { path: "sync", element: <Navigate to="/vendor-console/devices?tab=sync" replace /> },
+                  { path: "rollouts", element: <Navigate to="/vendor-console/updates" replace /> },
+                  { path: "audit", element: <Navigate to="/vendor-console/settings?tab=audit" replace /> },
+                  { path: "operators", element: <Navigate to="/vendor-console/settings?tab=team" replace /> },
+                  { path: "*", element: <Navigate to="/vendor-console" replace /> },
                 ],
               },
             ],

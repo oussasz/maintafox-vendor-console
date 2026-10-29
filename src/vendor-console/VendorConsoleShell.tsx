@@ -9,14 +9,14 @@ import { VendorConsoleTopBar } from "./VendorConsoleTopBar";
 
 function VendorConsoleShellInner() {
   const { t } = useTranslation("common");
-  const { stepUpOpen, closeStepUp, stepUpActionLabel, markStepUpSatisfied } = useVendorConsole();
+  const { stepUpOpen, stepUpActionKind, completeStepUp, cancelStepUp } = useVendorConsole();
 
   return (
-    <div className="flex h-screen flex-col bg-surface-0 text-text-primary">
-      <VendorConsoleTopBar />
-      <div className="flex min-h-0 flex-1">
-        <VendorConsoleSideNav />
-        <main id="vendor-console-main" className="min-h-0 flex-1 overflow-auto p-6" tabIndex={-1}>
+    <div className="flex h-screen bg-surface-0 font-sans text-text-primary">
+      <VendorConsoleSideNav />
+      <div className="min-h-0 flex-1 overflow-auto">
+        <main id="vendor-console-main" className="mx-auto flex max-w-[1180px] flex-col gap-6 px-8 pb-12 pt-5" tabIndex={-1}>
+          <VendorConsoleTopBar />
           <Suspense
             fallback={
               <div className="flex h-40 items-center justify-center text-sm text-text-muted">
@@ -30,9 +30,9 @@ function VendorConsoleShellInner() {
       </div>
       <VendorConsoleStepUpDialog
         open={stepUpOpen}
-        onOpenChange={(o) => !o && closeStepUp()}
-        actionLabel={stepUpActionLabel}
-        onSatisfied={() => markStepUpSatisfied()}
+        actionKind={stepUpActionKind}
+        onGranted={completeStepUp}
+        onCancel={cancelStepUp}
       />
     </div>
   );

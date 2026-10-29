@@ -1,0 +1,88 @@
+# MinIO -> Garage migration and rollback helpers (deploy/OBJECT_STORAGE.md §4-§5). Never part of a
+# normal start: used only with
+#   docker compose -f docker-compose.yml -f deploy/object-storage/migration.compose.yml --profile <p> ...
+# Needs in .env (the OLD MinIO login, kept only until the rollback window ends):
+#   MIGRATE_SOURCE_S3_ENDPOINT   http://minio:9000 while the old MinIO container still runs,
+#                                http://minio-source:9000 once it is replaced by `minio-source`
+#   MIGRATE_SOURCE_S3_REGION     us-east-1 (the region the API used with MinIO)
+#   MIGRATE_SOURCE_S3_ACCESS_KEY the old MINIO_ROOT_USER value
+#   MIGRATE_SOURCE_S3_SECRET_KEY the old MINIO_ROOT_PASSWORD value
+#   MIGRATE_SOURCE_S3_BUCKET     the old S3_BUCKET value (maintafox-tenant-media)
+# Reports are written to ./object-store-migration/ on the server (keep them with the deploy notes).
+
+services:
+  # profile "migration": copy MinIO -> Garage and verify. Read-only on MinIO.
+  object-store-migrate:
+    profiles: ["migration"]
+    image: maintafox-control-api:local
+    pull_policy: never
+    mem_limit: 256m
+    entrypoint: ["node", "dist/tools/object-store-migrate.js"]
+    environment:
+      MIGRATE_SOURCE_S3_ENDPOINT: ${MIGRATE_SOURCE_S3_ENDPOINT:?set MIGRATE_SOURCE_S3_ENDPOINT in .env (deploy/OBJECT_STORAGE.md §4)}
+      MIGRATE_SOURCE_S3_REGION: ${MIGRATE_SOURCE_S3_REGION:?set MIGRATE_SOURCE_S3_REGION in .env}
+      MIGRATE_SOURCE_S3_ACCESS_KEY: ${MIGRATE_SOURCE_S3_ACCESS_KEY:?set MIGRATE_SOURCE_S3_ACCESS_KEY in .env}
+      MIGRATE_SOURCE_S3_SECRET_KEY: ${MIGRATE_SOURCE_S3_SECRET_KEY:?set MIGRATE_SOURCE_S3_SECRET_KEY in .env}
+      MIGRATE_SOURCE_S3_BUCKET: ${MIGRATE_SOURCE_S3_BUCKET:?set MIGRATE_SOURCE_S3_BUCKET in .env}
+      MIGRATE_SOURCE_S3_FORCE_PATH_STYLE: "true"
+      S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT in .env}
+      S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:?set S3_FORCE_PATH_STYLE in .env}
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:?set DEPLOYMENT_ENV in .env}
+    volumes:
+      - ./object-store-migration:/reports
+    depends_on:
+      object-store:
+        condition: service_healthy
+
+  # profile "rollback": the old MinIO again, from the server's image cache (it cannot be pulled any
+  # more), on its untouched volume. Also the way to read MinIO's old object versions until the
+  # rollback window ends.
+  minio-source:
+    profiles: ["rollback"]
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    pull_policy: never
+    container_name: maintafox-minio-source
+    mem_limit: 512m
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MIGRATE_SOURCE_S3_ACCESS_KEY:?set MIGRATE_SOURCE_S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MIGRATE_SOURCE_S3_SECRET_KEY:?set MIGRATE_SOURCE_S3_SECRET_KEY in .env}
+    volumes:
+      - sync_minio_data:/data
+    expose:
+      - "9000"
+
+  # profile "rollback": copy Garage -> MinIO (media uploaded after the switch), then verify, before
+  # going back to the previous release. Read-only on Garage.
+  object-store-migrate-back:
+    profiles: ["rollback"]
+    image: maintafox-control-api:local
+    pull_policy: never
+    mem_limit: 256m
+    entrypoint: ["node", "dist/tools/object-store-migrate.js"]
+    environment:
+      MIGRATE_SOURCE_S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
+      MIGRATE_SOURCE_S3_REGION: ${S3_REGION:?set S3_REGION in .env}
+      MIGRATE_SOURCE_S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      MIGRATE_SOURCE_S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      MIGRATE_SOURCE_S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+      MIGRATE_SOURCE_S3_FORCE_PATH_STYLE: "true"
+      S3_ENDPOINT: http://minio-source:9000
+      # Not used by the copy (it signs no URL), required by the shared settings loader.
+      S3_PUBLIC_ENDPOINT: http://minio-source:9000
+      S3_REGION: ${MIGRATE_SOURCE_S3_REGION:?set MIGRATE_SOURCE_S3_REGION in .env}
+      S3_ACCESS_KEY: ${MIGRATE_SOURCE_S3_ACCESS_KEY:?set MIGRATE_SOURCE_S3_ACCESS_KEY in .env}
+      S3_SECRET_KEY: ${MIGRATE_SOURCE_S3_SECRET_KEY:?set MIGRATE_SOURCE_S3_SECRET_KEY in .env}
+      S3_BUCKET: ${MIGRATE_SOURCE_S3_BUCKET:?set MIGRATE_SOURCE_S3_BUCKET in .env}
+      S3_FORCE_PATH_STYLE: "true"
+      DEPLOYMENT_ENV: ${DEPLOYMENT_ENV:?set DEPLOYMENT_ENV in .env}
+    volumes:
+      - ./object-store-migration:/reports
+    depends_on:
+      - minio-source
+      - object-store

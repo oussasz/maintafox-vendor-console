@@ -1,0 +1,283 @@
+# Continuous integration for the vendor console and the control API (master plan Phase 3.6).
+# Every job must pass; nothing here is allowed to fail silently.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  lint-typecheck-test:
+    name: Lint, typecheck, console tests, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm --filter maintafox-control-api run typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  api-integration:
+    name: API integration scripts (Postgres 16)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # api/scripts/lib/test-postgres.mjs creates one fresh database per script on this server.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:all
+
+  e2e:
+    name: Browser test (sign-in with TOTP enrolment, step-up action, audit ledger)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # e2e/serve-api.mjs starts the real API on a fresh database of this server.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Keep the report and traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            e2e-report
+            e2e-results
+          retention-days: 14
+
+  contracts-drift:
+    name: Contracts drift against the desktop (IPC types, sync registry, step-up kinds)
+    runs-on: ubuntu-24.04
+    env:
+      # The desktop branch this console is built against: phase0/security-hardening holds the
+      # sync v2 allowlist and the IPC types the console and API use (desktop main does not have
+      # them yet). Switch to main when the desktop merges that branch.
+      DESKTOP_CONTRACTS_REF: phase0/security-hardening
+    steps:
+      - uses: actions/checkout@v4
+      # The desktop repository is public: read-only checkout, no secret needed.
+      - uses: actions/checkout@v4
+        with:
+          repository: oussasz/maintafox-desktop
+          ref: ${{ env.DESKTOP_CONTRACTS_REF }}
+          path: desktop
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            src-tauri/src/vps/vendor_admin_console.rs
+            shared/ipc-types.ts
+            shared/sync/server-entity-allowlist.v2.json
+            shared/sync/entity-registry.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Desktop types used by the console (packages/contracts)
+        run: node packages/contracts/scripts/extract-desktop-types.mjs --desktop desktop --check
+      - name: Sync entity registry
+        run: node packages/contracts/scripts/sync-registry-drift.mjs --desktop desktop
+      - name: Step-up action kinds
+        run: node api/scripts/step-up-kinds-drift.mjs --rust desktop/src-tauri/src/vps/vendor_admin_console.rs
+
+  backup-drill:
+    name: Backup and restore drill (real PostgreSQL 16 programs, media copy from Garage)
+    runs-on: ubuntu-24.04
+    env:
+      TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      TEST_S3_REGION: garage
+      TEST_S3_ACCESS_KEY: GKci0000drill0000key
+      TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - name: Install PostgreSQL 16 server and client programs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-16 postgresql-client-16 age
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - name: Start the object store (Garage image pinned in docker-compose.yml)
+        run: sh deploy/object-storage/ci-start-garage.sh
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:backup-drill
+      - run: pnpm --filter maintafox-control-api run test:backup-keygen
+
+  backup-offsite:
+    name: Object storage on Garage (media upload/download, support bundles, off-site copy, migration tool, release catalog + update manifest, attachment archive)
+    runs-on: ubuntu-24.04
+    env:
+      TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      TEST_S3_REGION: garage
+      TEST_S3_ACCESS_KEY: GKci0000store0000key
+      TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
+      # The nginx media route in front of Garage (deploy/object-storage/ci-start-media-proxy.sh):
+      # media and bundle URLs are signed for it, as desktops get them in production.
+      TEST_S3_PUBLIC_ENDPOINT: http://127.0.0.1:3980
+      OFFSITE_TEST_S3_ENDPOINT: http://127.0.0.1:3900
+      OFFSITE_TEST_S3_REGION: garage
+      OFFSITE_TEST_S3_ACCESS_KEY: GKci0000store0000key
+      OFFSITE_TEST_S3_SECRET_KEY: ci-garage-secret-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      # The production object store: the image pinned in docker-compose.yml with the production
+      # garage.toml (deploy/object-storage/).
+      - name: Start the object store (Garage image pinned in docker-compose.yml)
+        run: sh deploy/object-storage/ci-start-garage.sh
+      - name: Start the public media route (production rules, deploy/nginx-media-proxy.conf)
+        run: sh deploy/object-storage/ci-start-media-proxy.sh
+      # The production edge config as mounted by docker-compose.yml must load: a throwaway
+      # self-signed certificate stands in for Let's Encrypt, the upstream names point at localhost.
+      - name: Edge nginx configuration loads (deploy/nginx-edge.conf)
+        run: |
+          image=$(awk '/^  edge:/{e=1} e && /^ +image: /{print $2; exit}' docker-compose.yml)
+          live="$RUNNER_TEMP/letsencrypt/live/console.maintafox.systems"
+          mkdir -p "$live"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=ci -keyout "$live/privkey.pem" -out "$live/fullchain.pem" 2> /dev/null
+          docker run --rm             --add-host api:127.0.0.1 --add-host vendor-console:127.0.0.1 --add-host object-store:127.0.0.1             -v "$PWD/deploy/nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro"             -v "$PWD/deploy/nginx-media-proxy.conf:/etc/nginx/snippets/media-proxy.conf:ro"             -v "$RUNNER_TEMP/letsencrypt:/etc/letsencrypt:ro"             "$image" nginx -t
+      - run: sudo apt-get update && sudo apt-get install -y age
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter maintafox-control-api run test:media-presign
+      - run: pnpm --filter maintafox-control-api run test:support-bundles
+      - run: pnpm --filter maintafox-control-api run test:backup-offsite
+      - run: pnpm --filter maintafox-control-api run test:object-store-migrate
+      - run: pnpm --filter maintafox-control-api run test:update-manifest
+      # With TEST_S3_* set, also proves a photo deleted by sync and restored comes back byte-identical.
+      - run: pnpm --filter maintafox-control-api run test:sync-attachment-archive
+        env:
+          # Fail instead of skipping the byte-identical file check if the S3 settings go missing.
+          REQUIRE_S3: "1"
+      - name: Object store and media route logs (on failure)
+        if: failure()
+        run: |
+          docker logs mfx-ci-garage
+          docker logs mfx-ci-media-proxy
+
+  docker-images:
+    name: Docker images build (API + backup + postgres + backup pull)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f api/Dockerfile -t maintafox-control-api:ci .
+      - run: docker build -f api/Dockerfile --target backup -t maintafox-backup:ci .
+      - name: Backup image has the programs the scripts call
+        run: >
+          docker run --rm maintafox-backup:ci sh -c
+          'pg_dump --version && pg_restore --version && pg_basebackup --version && pg_archivecleanup --version
+          && psql --version && createdb --version && age --version && node --version
+          && pg_dump --version | grep -q "PostgreSQL) 16\."
+          && test -f /opt/maintafox-backup/scheduler.sh && test -f /opt/maintafox-backup/keygen.sh
+          && test -f dist/tools/verify-restored-database.js'
+      - run: docker build -t maintafox-postgres:ci deploy/postgres
+      - name: Postgres image can encrypt WAL (age) and is still PostgreSQL 16
+        run: docker run --rm --entrypoint sh maintafox-postgres:ci -c 'age --version && postgres --version | grep -q "PostgreSQL) 16\."'
+      # Every image a fresh server needs must pull, with no exception (the object store is pinned by
+      # digest, so this also proves the digest still exists in the registry).
+      - name: Images referenced by docker-compose.yml can be pulled (a fresh server must start)
+        run: |
+          for img in $(grep -E '^ +image: ' docker-compose.yml | awk '{print $2}' | grep -v ':local$' | sort -u); do
+            docker pull "$img"
+          done
+      - run: docker build -t maintafox-vendor-console:ci --build-arg VITE_ADMIN_API_BASE_URL=https://api.example.invalid --build-arg VITE_BASE_PATH=/ .
+
+  dependency-audit:
+    name: Dependency audit (fails on high)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # package.json pnpm.auditConfig.ignoreGhsas lists the advisories accepted on purpose
+      # (each one explained in deploy/CI.md).
+      - run: pnpm audit --audit-level high
+
+  secret-scan:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks 8.30.1
+        run: |
+          curl -sSfL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks git . --redact --no-banner --verbose
+
+  backup-pull:
+    name: Read-only backup pull (SFTP container + Windows pull script under pwsh)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y age
+      - run: pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
+      - run: bash deploy/backup-pull/ci-test.sh

@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import type { PermissionRecord } from "@shared/ipc-types";
+import type { PermissionRecord } from "@maintafox/contracts";
 
-import { getAccessToken } from "@/lib/auth-token";
+import { authFetch, SessionEndedError } from "@/lib/api-client";
 
 export const PermissionRecordSchema = z.object({
   name: z.string(),
@@ -17,21 +17,26 @@ export class AuthenticationRequiredError extends Error {
   readonly status: number;
   readonly code: string;
 
-  constructor(message = "Authentication required", status = 401, code = "unauthenticated") {
-    super(message);
+  constructor(status = 401, code = "unauthenticated") {
+    super(code);
     this.name = "AuthenticationRequiredError";
     this.status = status;
     this.code = code;
   }
 }
 
+/** Why permissions could not be loaded (common.json `permissions.loadError.<kind>`). */
+export type PermissionsLoadErrorKind = "config" | "network" | "http" | "invalid";
+
 /** Transient/config failure loading permissions — not Access Denied. */
 export class PermissionsLoadError extends Error {
+  readonly kind: PermissionsLoadErrorKind;
   readonly status?: number;
 
-  constructor(message: string, status?: number) {
-    super(message);
+  constructor(kind: PermissionsLoadErrorKind, status?: number) {
+    super(status === undefined ? kind : `${kind} (${status})`);
     this.name = "PermissionsLoadError";
+    this.kind = kind;
     this.status = status;
   }
 }
@@ -44,10 +49,8 @@ export function isPermissionsLoadError(err: unknown): err is PermissionsLoadErro
   return err instanceof PermissionsLoadError;
 }
 
-function apiBase(): string | null {
-  const raw = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
-  if (!raw) return null;
-  return raw.replace(/\/$/, "");
+function apiBaseConfigured(): boolean {
+  return Boolean(import.meta.env.VITE_ADMIN_API_BASE_URL?.trim());
 }
 
 async function errorCodeFromResponse(res: Response): Promise<string> {
@@ -63,30 +66,23 @@ async function errorCodeFromResponse(res: Response): Promise<string> {
  * Loads effective permissions from the VPS admin API.
  * Expected: `GET {VITE_ADMIN_API_BASE_URL}/api/v1/me/permissions` → JSON array of PermissionRecord.
  *
- * Throws {@link AuthenticationRequiredError} for 401 / invalid_token (caller must clear token + redirect).
+ * Throws {@link AuthenticationRequiredError} when there is no session (refresh refused) or the API
+ * still answers 401 / invalid_token (caller ends the session and redirects).
  * Throws {@link PermissionsLoadError} for config, network, 5xx, or parse failures.
  */
 export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
-  const base = apiBase();
-  if (!base) {
-    throw new PermissionsLoadError("Set VITE_ADMIN_API_BASE_URL.");
-  }
-
-  const token = getAccessToken();
-  if (!token) {
-    throw new AuthenticationRequiredError("Not authenticated", 401, "missing_token");
+  if (!apiBaseConfigured()) {
+    throw new PermissionsLoadError("config");
   }
 
   let res: Response;
   try {
-    res = await fetch(`${base}/api/v1/me/permissions`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-  } catch {
-    throw new PermissionsLoadError("Network error while loading permissions. Check API URL and CORS.");
+    res = await authFetch("/api/v1/me/permissions");
+  } catch (err) {
+    if (err instanceof SessionEndedError) {
+      throw new AuthenticationRequiredError(401, "session_ended");
+    }
+    throw new PermissionsLoadError("network");
   }
 
   if (!res.ok) {
@@ -97,25 +93,21 @@ export async function fetchMyPermissions(): Promise<PermissionRecord[]> {
       code === "invalid_token" ||
       (res.status === 403 && code === "invalid_token")
     ) {
-      throw new AuthenticationRequiredError(
-        `Authentication required (${code || res.status})`,
-        res.status,
-        code || "unauthenticated",
-      );
+      throw new AuthenticationRequiredError(res.status, code || "unauthenticated");
     }
-    throw new PermissionsLoadError(`Permissions request failed (${res.status})`, res.status);
+    throw new PermissionsLoadError("http", res.status);
   }
 
   let raw: unknown;
   try {
     raw = await res.json();
   } catch {
-    throw new PermissionsLoadError("Permissions response was not valid JSON.");
+    throw new PermissionsLoadError("invalid");
   }
 
   const parsed = z.array(PermissionRecordSchema).safeParse(raw);
   if (!parsed.success) {
-    throw new PermissionsLoadError("Permissions response shape was invalid.");
+    throw new PermissionsLoadError("invalid");
   }
   return parsed.data;
 }

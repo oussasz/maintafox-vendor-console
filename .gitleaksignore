@@ -1,0 +1,10 @@
+# Accepted gitleaks findings: exact fingerprints only (commit:file:rule:line), each with its reason.
+# Test-only value: base64("too-short"), the malformed key the tenant-isolation test feeds the API
+# to prove it refuses to start (commit 300ae9c). The test now builds it in code.
+300ae9c79dcfa69ab5148296a2243813227220b3:api/scripts/tenant-isolation.integration.mjs:generic-api-key:323
+# Placeholders, not secrets: the documented example values in .env.example of the Garage storage
+# change (branch claude/replace-minio, commit 7702ed3), e.g. "replace-with-64-hex-chars-from-...".
+7702ed3496fa35d50807441844eeaad251f5e043:.env.example:generic-api-key:83
+# Test-only fake: the deliberately wrong S3 secret the object-store check test feeds to prove the
+# check refuses it (api/scripts/media-presign.integration.mjs, commit 7702ed3).
+7702ed3496fa35d50807441844eeaad251f5e043:api/scripts/media-presign.integration.mjs:generic-api-key:93

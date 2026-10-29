@@ -1,28 +1,63 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
-  }),
-}));
+import "@/test/i18n";
+
 
 vi.mock("@/services/license-control-service", () => ({
+  PRIVILEGED_REASON_MIN_LENGTH: 4,
   listTenants: vi.fn(),
+  listEditions: vi.fn(),
   listTenantLicenses: vi.fn(),
   issueLicense: vi.fn(),
   revokeLicense: vi.fn(),
   updateLicense: vi.fn(),
 }));
 
+vi.mock("@/services/vendor-auth-service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/vendor-auth-service")>()),
+  // The API checks the TOTP code; here the dialog only has to hand back a kind-bound token.
+  requestStepUp: vi.fn(async (actionKind: string) => ({ token: "stepup-test-token", actionKind, expiresAtMs: Date.now() + 300_000 })),
+}));
+
 import {
   issueLicense,
+  listEditions,
   listTenantLicenses,
   listTenants,
   revokeLicense,
 } from "@/services/license-control-service";
+import { requestStepUp } from "@/services/vendor-auth-service";
 import { EntitlementLifecyclePanel } from "../EntitlementLifecyclePanel";
+import { renderWithConsole } from "./renderWithConsole";
+
+const coreEdition = {
+  id: "core",
+  label: "Core",
+  is_system: true,
+  row_version: 1,
+  capabilities: {
+    equipment: true,
+    requests: true,
+    work_orders: true,
+    inventory: true,
+    personnel: true,
+    organization: true,
+    reference: true,
+    planning: false,
+    pm: false,
+    permits: false,
+    inspections: false,
+    training: false,
+    reports: false,
+    rams: false,
+    finance: false,
+    sync: false,
+    erp: false,
+    "notifications.email": false,
+  },
+};
 
 const tenant = {
   id: "ten-acme",
@@ -37,6 +72,7 @@ const activeLicense = {
   tenant_id: tenant.id,
   license_key: "MFX-KEY-001",
   max_machines: 5,
+  max_mobile_devices: 0,
   update_channel: "stable",
   expires_at: null,
   revoked_at: null,
@@ -48,20 +84,24 @@ describe("EntitlementLifecyclePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listTenants).mockResolvedValue([tenant]);
+    vi.mocked(listEditions).mockResolvedValue([coreEdition]);
     vi.mocked(listTenantLicenses).mockResolvedValue([activeLicense]);
     vi.mocked(issueLicense).mockResolvedValue(activeLicense);
     vi.mocked(revokeLicense).mockResolvedValue();
   });
 
   it("renders key list and opens detail dialog on row click", async () => {
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
 
     await screen.findByText("MFX-KEY-001");
     await userEvent.click(screen.getByText("MFX-KEY-001"));
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByDisplayValue("lic-001")).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue("active")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("Active")).toBeInTheDocument();
+    // Revoking needs a reason for the audit ledger.
+    expect(within(dialog).getByRole("button", { name: "Revoke key" })).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText("Revoke reason (kept in the audit log)"), "rotation");
     expect(within(dialog).getByRole("button", { name: "Revoke key" })).toBeEnabled();
   });
 
@@ -79,7 +119,7 @@ describe("EntitlementLifecyclePanel", () => {
       return [activeLicense, createdLicense];
     });
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     await screen.findByText("MFX-KEY-001");
 
     await userEvent.click(screen.getAllByRole("button", { name: "Add/Issue key" })[0]!);
@@ -102,6 +142,8 @@ describe("EntitlementLifecyclePanel", () => {
     expect(issueArgs).toMatchObject({
       tenant_id: "ten-acme",
       max_machines: 1,
+      // No phones unless the operator enters a number.
+      max_mobile_devices: 0,
       update_channel: "stable",
       operator_reason_code: null,
       operator_rationale: "Initial onboarding key issuance for new tenant go-live.",
@@ -123,7 +165,7 @@ describe("EntitlementLifecyclePanel", () => {
       .mockRejectedValueOnce(new Error("License list failed (500)"))
       .mockResolvedValueOnce([activeLicense]);
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
 
     await screen.findByText("License list failed (500)");
     const callsBeforeRetry = vi.mocked(listTenantLicenses).mock.calls.length;
@@ -136,21 +178,29 @@ describe("EntitlementLifecyclePanel", () => {
   });
 
   it("revoke action works and detail dialog points operators to list Actions", async () => {
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     await screen.findByText("MFX-KEY-001");
 
     await userEvent.click(screen.getByText("MFX-KEY-001"));
     const dialog = await screen.findByRole("dialog");
 
-    await userEvent.type(within(dialog).getByLabelText("Revoke reason"), "security incident");
+    await userEvent.type(within(dialog).getByLabelText("Revoke reason (kept in the audit log)"), "security incident");
     await userEvent.click(within(dialog).getByRole("button", { name: "Revoke key" }));
 
+    // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("6-digit code from your authenticator app"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
+
     await waitFor(() => {
-      expect(revokeLicense).toHaveBeenCalledWith("lic-001", "security incident");
+      expect(revokeLicense).toHaveBeenCalledWith("lic-001", "security incident", {
+        reason_code: "security incident",
+        step_up_token: "stepup-test-token",
+      });
     });
 
     expect(
-      within(dialog).getByText(/Use the list Actions column to edit metadata or revoke from the grid/i),
+      within(dialog).getByText(/Use the Actions column of the list to edit or revoke/i),
     ).toBeInTheDocument();
   });
 
@@ -167,6 +217,7 @@ describe("EntitlementLifecyclePanel", () => {
       tenant_id: newlyProvisionedTenant.id,
       license_key: "MFX-NEW-001",
       max_machines: 12,
+      max_mobile_devices: 3,
       update_channel: "pilot",
       expires_at: "2027-01-01T00:00:00.000Z",
       revoked_at: null,
@@ -191,13 +242,21 @@ describe("EntitlementLifecyclePanel", () => {
       currentRows = [revokedIssued];
     });
 
-    render(<EntitlementLifecyclePanel />);
+    renderWithConsole(<EntitlementLifecyclePanel />);
     expect(await screen.findByText("No keys have been issued for this tenant.")).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole("button", { name: "Add/Issue key" })[0]!);
     const issueDialog = await screen.findByRole("dialog");
     await userEvent.clear(within(issueDialog).getByLabelText("Slot limit"));
     await userEvent.type(within(issueDialog).getByLabelText("Slot limit"), "12");
+    const mobileInput = within(issueDialog).getByLabelText("Mobile devices (phones)");
+    expect(mobileInput).toHaveValue("0");
+    await userEvent.clear(mobileInput);
+    await userEvent.type(mobileInput, "1001");
+    expect(within(issueDialog).getAllByText("Mobile devices must be a whole number between 0 and 1000.").length).toBeGreaterThan(0);
+    await userEvent.clear(mobileInput);
+    await userEvent.type(mobileInput, "3");
+    expect(within(issueDialog).queryAllByText("Mobile devices must be a whole number between 0 and 1000.")).toHaveLength(0);
     await userEvent.selectOptions(within(issueDialog).getByLabelText("Channel"), "pilot");
     const expiryInput = within(issueDialog).getByLabelText("Expiry (optional)");
     await userEvent.clear(expiryInput);
@@ -219,24 +278,33 @@ describe("EntitlementLifecyclePanel", () => {
     expect(calledWith).toMatchObject({
       tenant_id: "ten-new",
       max_machines: 12,
+      max_mobile_devices: 3,
       update_channel: "pilot",
       operator_reason_code: "ONBOARD-NEWCO",
       operator_rationale: "Provisioned tenant requires initial activation keys for onboarding.",
     });
     expect(typeof calledWith?.expires_at).toBe("string");
     expect(Number.isNaN(Date.parse(String(calledWith?.expires_at)))).toBe(false);
-    expect(await screen.findByText("Key lic-new-001 was issued successfully.")).toBeInTheDocument();
+    expect(await screen.findByText("Key lic-new-001 was issued.")).toBeInTheDocument();
 
     const detailDialog = await screen.findByRole("dialog", { name: "Entitlement key detail" });
-    expect(within(detailDialog).getByRole("button", { name: "Revoke key" })).toBeEnabled();
+    expect(within(detailDialog).getByRole("button", { name: "Revoke key" })).toBeDisabled();
     await userEvent.type(
-      within(detailDialog).getByLabelText("Revoke reason"),
+      within(detailDialog).getByLabelText("Revoke reason (kept in the audit log)"),
       "tenant onboarding correction",
     );
     await userEvent.click(within(detailDialog).getByRole("button", { name: "Revoke key" }));
 
+    // Privileged action: a TOTP step-up (kind entitlement_suspension) before the revoke request is sent.
+    await userEvent.type(await screen.findByLabelText("6-digit code from your authenticator app"), "123456");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(requestStepUp).toHaveBeenCalledWith("entitlement_suspension", "123456");
+
     await waitFor(() => {
-      expect(revokeLicense).toHaveBeenCalledWith("lic-new-001", "tenant onboarding correction");
+      expect(revokeLicense).toHaveBeenCalledWith("lic-new-001", "tenant onboarding correction", {
+        reason_code: "tenant onboarding correction",
+        step_up_token: "stepup-test-token",
+      });
     });
     expect(await screen.findByText("Key lic-new-001 was revoked.")).toBeInTheDocument();
   });

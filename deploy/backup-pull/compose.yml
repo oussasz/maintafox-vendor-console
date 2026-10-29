@@ -1,0 +1,25 @@
+# Optional read-only SFTP pull of the encrypted backups (README.md here). Not part of the default
+# stack: enable it by adding this file to COMPOSE_FILE in .env, e.g.
+#   COMPOSE_FILE=docker-compose.yml:deploy/backup-pull/compose.yml
+# and setting BACKUP_PULL_PORT and BACKUP_PULL_AUTHORIZED_KEYS. Requires
+# BACKUP_LOCAL_ENCRYPTION=required: only encrypted files are offered to the on-premise machine.
+services:
+  backup-pull:
+    image: maintafox-backup-pull:local
+    pull_policy: never
+    build:
+      context: deploy/backup-pull
+    container_name: maintafox-backup-pull
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "${BACKUP_PULL_PORT:?set BACKUP_PULL_PORT in .env}:2222"
+    volumes:
+      # Read-only: the account cannot change or delete anything, even if sshd were bypassed.
+      - backup_data:/pull/backups:ro
+      - pg_wal_archive:/pull/wal:ro
+      - backup_pull_hostkeys:/etc/ssh/hostkeys
+      - ${BACKUP_PULL_AUTHORIZED_KEYS:?set BACKUP_PULL_AUTHORIZED_KEYS in .env}:/etc/ssh/authorized_keys/mfxpull:ro
+
+volumes:
+  backup_pull_hostkeys:

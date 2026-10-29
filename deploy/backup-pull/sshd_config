@@ -1,0 +1,36 @@
+# sshd for the read-only backup pull (README.md). Nothing but SFTP downloads for one key.
+Port 2222
+HostKey /etc/ssh/hostkeys/ssh_host_ed25519_key
+PidFile /run/sshd.pid
+LogLevel VERBOSE
+
+AllowUsers mfxpull
+PermitRootLogin no
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+MaxAuthTries 3
+LoginGraceTime 20
+MaxSessions 2
+MaxStartups 5:50:10
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# No shell, no forwarding of any kind.
+PermitTTY no
+PermitUserRC no
+PermitTunnel no
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+GatewayPorts no
+
+# SFTP only, read-only (-R refuses every write, rename and delete), inside /pull (the backup
+# volumes, mounted read-only).
+ChrootDirectory /pull
+ForceCommand internal-sftp -R -l INFO
+Subsystem sftp internal-sftp -R

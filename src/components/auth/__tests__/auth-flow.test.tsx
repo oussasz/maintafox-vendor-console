@@ -1,13 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Navigate, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
-  }),
-}));
+import "@/test/i18n";
+
 
 vi.mock("@/services/admin-permissions", async () => {
   const actual = await vi.importActual<typeof import("@/services/admin-permissions")>(
@@ -19,16 +16,19 @@ vi.mock("@/services/admin-permissions", async () => {
   };
 });
 
-vi.mock("@/lib/auth-token", () => ({
-  getAccessToken: vi.fn(),
-  getValidLookingAccessToken: vi.fn(),
-  setAccessToken: vi.fn(),
-  looksLikeJwt: (token: string) => token.split(".").length === 3,
+const sessionEnded = new Set<() => void>();
+vi.mock("@/lib/auth-session", () => ({
+  ensureAccessToken: vi.fn(),
+  endSession: vi.fn(() => sessionEnded.forEach((l) => l())),
+  onSessionEnded: vi.fn((listener: () => void) => {
+    sessionEnded.add(listener);
+    return () => sessionEnded.delete(listener);
+  }),
 }));
 
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { PermissionRoute } from "@/components/auth/PermissionRoute";
-import { getValidLookingAccessToken, setAccessToken } from "@/lib/auth-token";
+import { endSession, ensureAccessToken } from "@/lib/auth-session";
 import {
   AuthenticationRequiredError,
   PermissionsLoadError,
@@ -64,36 +64,37 @@ function renderConsoleTree(initialPath = "/vendor-console") {
 describe("auth-before-authz flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionEnded.clear();
   });
 
-  it("redirects anonymous users (no token) to login", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue(null);
+  it("redirects to login when there is no session (refresh cookie refused)", async () => {
+    vi.mocked(ensureAccessToken).mockResolvedValue(null);
     renderConsoleTree();
     expect(await screen.findByText("Login screen")).toBeInTheDocument();
     expect(screen.queryByText("Console home")).not.toBeInTheDocument();
     expect(screen.queryByText(/necessary permissions/i)).not.toBeInTheDocument();
   });
 
-  it("redirects to login and clears token when permissions API returns 401", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue("hdr.payload.sig");
+  it("redirects to login and ends the session when permissions API returns 401", async () => {
+    vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockRejectedValue(
-      new AuthenticationRequiredError("Authentication required", 401, "invalid_token"),
+      new AuthenticationRequiredError(401, "invalid_token"),
     );
     renderConsoleTree();
     expect(await screen.findByText("Login screen")).toBeInTheDocument();
-    expect(setAccessToken).toHaveBeenCalledWith(null);
+    expect(endSession).toHaveBeenCalled();
     expect(screen.queryByText(/necessary permissions/i)).not.toBeInTheDocument();
   });
 
   it("allows authenticated admin with console.view into the console", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue("hdr.payload.sig");
+    vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockResolvedValue(fullPerms);
     renderConsoleTree();
     expect(await screen.findByText("Console home")).toBeInTheDocument();
   });
 
   it("shows Access Denied when authenticated with empty permissions", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue("hdr.payload.sig");
+    vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockResolvedValue([]);
     renderConsoleTree();
     expect(await screen.findByText(/Access denied/i)).toBeInTheDocument();
@@ -102,9 +103,9 @@ describe("auth-before-authz flow", () => {
   });
 
   it("shows retry panel (not Access Denied) on permissions load failure", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue("hdr.payload.sig");
+    vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
     vi.mocked(fetchMyPermissions).mockRejectedValue(
-      new PermissionsLoadError("Network error while loading permissions."),
+      new PermissionsLoadError("network"),
     );
     renderConsoleTree();
     expect(await screen.findByText(/Unable to verify permissions/i)).toBeInTheDocument();
@@ -118,10 +119,27 @@ describe("auth-before-authz flow", () => {
     });
   });
 
-  it("redirects invalid (non-JWT-shaped) tokens to login without calling the API", async () => {
-    vi.mocked(getValidLookingAccessToken).mockReturnValue(null);
+  it("does not load permissions without a session", async () => {
+    vi.mocked(ensureAccessToken).mockResolvedValue(null);
     renderConsoleTree();
     expect(await screen.findByText("Login screen")).toBeInTheDocument();
     expect(fetchMyPermissions).not.toHaveBeenCalled();
+  });
+
+  it("sends the operator to login when the API cannot be reached", async () => {
+    vi.mocked(ensureAccessToken).mockRejectedValue(new TypeError("Failed to fetch"));
+    renderConsoleTree();
+    expect(await screen.findByText("Login screen")).toBeInTheDocument();
+  });
+
+  it("returns to login when the session ends while the console is open", async () => {
+    vi.mocked(ensureAccessToken).mockResolvedValue("hdr.payload.sig");
+    vi.mocked(fetchMyPermissions).mockResolvedValue(fullPerms);
+    renderConsoleTree();
+    expect(await screen.findByText("Console home")).toBeInTheDocument();
+    act(() => {
+      sessionEnded.forEach((listener) => listener());
+    });
+    expect(await screen.findByText("Login screen")).toBeInTheDocument();
   });
 });

@@ -5,6 +5,8 @@
 - Console: `https://console.maintafox.systems`
 - API: `https://api.maintafox.systems`
 
+**Sync exchange (Postgres mirror + Garage object store, [`OBJECT_STORAGE.md`](./OBJECT_STORAGE.md)):** see [`SYNC_EXCHANGE.md`](./SYNC_EXCHANGE.md).
+
 **DNS:** Both hostnames must resolve to your server’s public IP (same A record target).
 
 ---
@@ -106,12 +108,12 @@ The API seeds the admin user **only when the database is empty** (first run). To
 
 ## 8. HTTPS and TLS certificates
 
-Production terminates TLS in the **edge** nginx container (`deploy/nginx-edge.conf`). Issue certificates on the host with Certbot, then mount `/etc/letsencrypt` into the edge service (see `docker-compose.yml`).
+Production terminates TLS in the **edge** nginx container (`deploy/nginx-edge.conf`). One certificate covers the three names (`media` is the public media address, `deploy/OBJECT_STORAGE.md` §1.1). Issue certificates on the host with Certbot, then mount `/etc/letsencrypt` into the edge service (see `docker-compose.yml`).
 
 ```bash
 apt-get install -y certbot
 certbot certonly --webroot -w /opt/maintafox-vendor-console/deploy/certbot-webroot \
-  -d console.maintafox.systems -d api.maintafox.systems
+  -d console.maintafox.systems -d api.maintafox.systems -d media.maintafox.systems
 docker compose --env-file .env up -d --force-recreate edge
 ```
 
@@ -156,6 +158,7 @@ The script:
 |--------|----------------|
 | `502` / `nginx` errors | `docker compose logs edge`, `docker compose logs api` |
 | CORS errors in browser | `CORS_ORIGIN` in `.env` must include `https://console.maintafox.systems` |
+| Desktop activation "Failed to fetch" / `network_unreachable` | `DESKTOP_APP_ORIGINS` in `.env` must include the installed app origin (`http://tauri.localhost` on Windows) |
 | Login always fails | API logs; DB seeded? `docker compose logs api` |
 | Wrong host | DNS A records for **both** subdomains → same VPS IP |
 | Immediate “Access denied” without login | Stale/invalid `localStorage` token was treated as auth. Redeploy SPA with auth-before-authz fix; clear site data or open incognito. Confirm `VITE_ADMIN_API_BASE_URL=https://api.maintafox.systems` at **image build** time. |
@@ -167,6 +170,7 @@ The script:
 Confirm env in `.env` before rebuild:
 
 - `CORS_ORIGIN=https://console.maintafox.systems`
+- `DESKTOP_APP_ORIGINS=http://tauri.localhost,https://tauri.localhost,tauri://localhost`
 - `VITE_ADMIN_API_BASE_URL=https://api.maintafox.systems` (baked into SPA at build)
 
 ```bash

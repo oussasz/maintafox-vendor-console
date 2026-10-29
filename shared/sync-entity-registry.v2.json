@@ -1,0 +1,1152 @@
+{
+  "registry_version": 1,
+  "protocol_version": "v2",
+  "description": "Allowlist of sync entity types for protocol v2. scope=tenant: delivered to every device of the tenant. scope=user: requires owner_user_sync_id and is delivered only to devices reporting that user in current_user_sync_ids. append_only=true: history the desktop never lets synchronisation delete; the server refuses delete/archive of these types (operation_not_allowed_for_type) except media_attachments, whose deletes the desktop replicates. Mirrors conflict_policy append_only of the desktop entity registry (drift-checked). Append-only: never rename or remove an entry; add new types with the desktop change that stages them.",
+  "entity_types": [
+    {
+      "entity_type": "analytics_contract_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "articles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_alert_configs",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_alert_events",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_lines",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "certification_types",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "closeout_validation_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "data_integrity_findings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "data_integrity_repair_actions",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "equipment",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_meters",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "failure_codes",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "failure_events",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "failure_hierarchies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_anomalies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_checkpoints",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_evidence",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "inspection_reliability_signals",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_results",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_rounds",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_template_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_templates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "integration_exceptions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "intervention_requests",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_transactions",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "loto_card_print_jobs",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "media_attachments",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "org_node_types",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "org_nodes",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "org_structure_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "permit_handover_logs",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "permit_isolations",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "permit_suspensions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "permit_types",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_certifications",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_readiness_snapshots",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_team_assignments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_occurrences",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_plan_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_plans",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "posted_export_batches",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "qualification_requirement_profiles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_values",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_kpi_snapshots",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "roles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "runtime_exposure_logs",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "stock_locations",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "stock_reservations",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "teams",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "training_attendance",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "training_expiry_alert_events",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "training_sessions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "user_accounts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "user_dismissals",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "user_role_assignments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "user_scope_assignments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "warehouses",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_interveners",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_tasks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_orders",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_permits",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "article_cost_profiles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "article_families",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "asset_document_links",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "asset_external_ids",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "asset_meter_readings",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "asset_photos",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "delegated_admin_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_classes",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_hierarchy",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_lifecycle_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "external_companies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "external_company_contacts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "goods_receipt_lines",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "goods_receipts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_article_equivalents",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_count_lines",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_count_sessions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_document_links",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_mutation_audit_links",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "inventory_reconciliation_findings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_reconciliation_runs",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_state_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "inventory_supplier_article_sources",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_supplier_contacts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_supplier_prices",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_suppliers",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_valuation_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "lookup_domains",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "lookup_value_aliases",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "lookup_values",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "org_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "org_entity_bindings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "org_node_responsibilities",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "org_type_relationship_rules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "position_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "positions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "procurement_requisition_lines",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "procurement_requisitions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "purchase_order_lines",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "purchase_orders",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "rbac_settings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_aliases",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_domains",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_sets",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_validation_reports",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reference_value_migrations",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "repairable_orders",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "role_permissions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "role_templates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "delay_reason_codes",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "di_attachments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "di_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "di_review_events",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "di_sla_rules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "di_state_transition_log",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "urgency_levels",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_action_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "wo_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "wo_state_transition_log",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "work_order_attachments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_delay_segments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_downtime_segments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_execution_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "work_order_failure_details",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_parts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_statuses",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_tools",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_types",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_order_verifications",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "capacity_rules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "planning_windows",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_executions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_findings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "pm_occurrence_transitions",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "pm_trigger_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "schedule_break_ins",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "schedule_candidates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "schedule_change_log",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "schedule_commitments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "schedule_details",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_actuals",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_commitments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_erp_cost_center_master",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_forecast_runs",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_forecasts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_variance_reviews",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "cost_centers",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "document_acknowledgements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_assignment_history",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_authorizations",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_availability_blocks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_rate_cards",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_skills",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "qualification_profile_skills",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "skill_categories",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "skill_definitions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "team_skill_requirements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "event_tree_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "fmeca_analyses",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "fmeca_item_parts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "fmeca_items",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "fta_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "markov_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "mc_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "ram_advanced_guardrails",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "ram_expert_sign_offs",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "ram_ishikawa_diagrams",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "rbd_models",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "rcm_decisions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "rcm_studies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_beta_benchmarks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_dashboard_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "weibull_fit_results",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "activity_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "admin_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "app_settings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "audit_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "notification_acknowledgements",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "notification_categories",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "notification_escalation_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "notification_escalation_steps",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "notification_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "notification_preferences",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "notification_rules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "notifications",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "policy_snapshots",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "report_schedules",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "report_templates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "retention_policies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "saved_activity_filters",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "settings_change_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "user_analytics_dashboard_layouts",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "user_dashboard_layouts",
+      "scope": "user",
+      "append_only": false
+    },
+    {
+      "entity_type": "library_documents",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "unit_conversions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_cost_profiles",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_studies",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_assets",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_decisions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "reliability_study_record_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "currency_exchange_rates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_lots",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_valuation_periods",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inventory_valuation_snapshot_lines",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "procurement_approval_limits",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_criticality_assessments",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "equipment_spare_parts",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_cost_estimates",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_cost_settlements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "budget_periods",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "inspection_schedules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "weekly_schedules",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "weekly_schedule_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "weekly_schedule_baseline_items",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "site_setting_events",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "site_settings",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "qualification_overrides",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "qualification_requirements",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "work_calendar_holidays",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "site_work_weeks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "schedule_class_versions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "team_schedule_assignments",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "personnel_schedule_exceptions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "admin_recovery_acknowledgements",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "admin_recovery_notices",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "audit_chain_stubs",
+      "scope": "tenant",
+      "append_only": true
+    }
+  ]
+}

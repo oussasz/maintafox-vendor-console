@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-const dataDir = mkdtempSync(join(tmpdir(), "mfx-control-api-license-"));
+import { loginOperator } from "./lib/vendor-session.mjs";
+import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
+import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
+
 const port = 33123;
 const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -14,7 +14,7 @@ function delay(ms) {
 }
 
 async function waitForHealth() {
-  for (let i = 0; i < 30; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try {
       const res = await fetch(`${baseUrl}/health`);
       if (res.ok) return;
@@ -27,14 +27,19 @@ async function waitForHealth() {
 }
 
 async function run() {
+  const testPg = await startTestPostgres();
+  const databaseUrl = await testPg.createDatabase();
   const server = spawn(process.execPath, ["dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       PORT: String(port),
-      DATA_DIR: dataDir,
+      DATABASE_URL: databaseUrl,
+      ...TEST_SYNC_ENV,
       JWT_SECRET: "integration_test_jwt_secret_value_with_minimum_length_12345",
       SEED_ADMIN_PASSWORD: "AdminPassw0rd!",
+      SEED_ADMIN_EMAIL: "admin@maintafox.systems",
+      ...TEST_ENTITLEMENT_SIGNING_ENV,
       SEED_BEHAVIOR: "safe",
       NODE_ENV: "production",
       CORS_ORIGIN: "http://localhost:5174",
@@ -53,15 +58,9 @@ async function run() {
   try {
     await waitForHealth();
 
-    const loginRes = await fetch(`${baseUrl}/api/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "admin@maintafox.systems", password: "AdminPassw0rd!" }),
-    });
-    assert.equal(loginRes.status, 200, "login must succeed");
-    const loginBody = await loginRes.json();
-    const token = loginBody.access_token;
-    assert.ok(token, "access token required");
+    const session = await loginOperator(baseUrl, "admin@maintafox.systems", "AdminPassw0rd!");
+    const token = session.accessToken;
+    const stepUpToken = await session.stepUp("entitlement_suspension");
 
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -143,7 +142,7 @@ async function run() {
         ...authHeaders,
         "Idempotency-Key": "revoke-license-integration-1",
         "X-Operator-Reason": "ONBOARDING-CORRECTION",
-        "X-Step-Up-Token": "stepup-token-valid",
+        "X-Step-Up-Token": stepUpToken,
       },
       body: JSON.stringify({ reason: "tenant onboarding correction" }),
     });
@@ -157,14 +156,19 @@ async function run() {
     assert.equal(postRevoke.length, 1);
     assert.ok(postRevoke[0].revoked_at, "revoked key must include revoked timestamp");
     assert.equal(postRevoke[0].revoked_reason, "tenant onboarding correction");
+  } catch (err) {
+    // The API output explains most failures (startup refusal, unhandled route error).
+    console.error(serverOutput);
+    throw err;
   } finally {
     server.kill("SIGTERM");
     await once(server, "exit").catch(() => undefined);
-    rmSync(dataDir, { recursive: true, force: true });
+    await testPg.stop();
   }
 }
 
 run().catch((err) => {
   console.error(err);
-  process.exitCode = 1;
+  // exit explicitly: shutdown hooks (embedded Postgres) must not mask a failure
+  process.exit(1);
 });

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 
-import type { SyncFailureDrillDownRowV1, TenantSyncHealthRowV1 } from "@shared/ipc-types";
+import type { SyncFailureDrillDownRowV1, TenantSyncHealthRowV1 } from "@maintafox/contracts";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,10 +14,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-import { repairActionAllowed } from "@/services/vendor-ops-contracts";
 import { getSyncOverview, type SyncOverviewV1 } from "@/services/vendor-ops-telemetry-service";
 import { ConsoleStatusBanner } from "./ConsoleStatusBanner";
 import { OpsSeverityBadge } from "./opsSeverityBadge";
+import { SyncDeviceTimeline } from "./SyncDeviceTimeline";
+import { errorText } from "@/lib/error-text";
 
 export function SyncHealthPanel() {
   const { t } = useTranslation("vendorConsole");
@@ -42,7 +43,7 @@ export function SyncHealthPanel() {
         setDrillTenant(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sync telemetry.");
+      setError(errorText(err));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -55,14 +56,11 @@ export function SyncHealthPanel() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold">{t("sync.pageTitle", "Sync health")}</h1>
+        <h2 className="text-[17px] font-bold text-text-primary">{t("sync.pageTitle")}</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          {t(
-            "sync.pageBody",
-            "Lag, checkpoints, retries, and repair queues. Actions require sync.operate and server enforcement.",
-          )}
+          {t("sync.pageBody")}
         </p>
       </header>
 
@@ -70,9 +68,9 @@ export function SyncHealthPanel() {
         <div
           className="rounded-md border border-surface-border bg-surface-1 p-3 text-sm"
           role="region"
-          aria-label={t("section.evidenceAria", "Active evidence context")}
+          aria-label={t("section.evidenceAria")}
         >
-          <p className="font-medium">{t("section.evidenceLabel", "Evidence context")}</p>
+          <p className="font-medium">{t("section.evidenceLabel")}</p>
           <p className="mt-1 font-mono text-xs text-text-secondary">{evidence}</p>
         </div>
       )}
@@ -81,7 +79,7 @@ export function SyncHealthPanel() {
         <ConsoleStatusBanner tone="error" role="alert">
           <p>{error}</p>
           <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => void loadOverview(true)}>
-            {t("sync.retry", "Retry")}
+            {t("sync.retry")}
           </Button>
         </ConsoleStatusBanner>
       ) : null}
@@ -90,7 +88,7 @@ export function SyncHealthPanel() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-text-muted">
-              {t("sync.metrics.maxLag", "Max tenant lag")}
+              {t("sync.metrics.maxLag")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-lg font-semibold">{overview?.aggregate.max_lag_seconds ?? 0}s</CardContent>
@@ -98,7 +96,7 @@ export function SyncHealthPanel() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-text-muted">
-              {t("sync.metrics.checkpointP95", "Checkpoint age p95")}
+              {t("sync.metrics.checkpointP95")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-lg font-semibold">
@@ -108,7 +106,7 @@ export function SyncHealthPanel() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-text-muted">
-              {t("sync.metrics.retryPressure", "Retry pressure")}
+              {t("sync.metrics.retryPressure")}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-lg font-semibold">{overview?.aggregate.aggregate_retry_pressure ?? 0}%</CardContent>
@@ -116,7 +114,7 @@ export function SyncHealthPanel() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-text-muted">
-              {t("sync.metrics.deadLetter", "Dead-letter items")}
+              {t("sync.metrics.deadLetter")}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex items-center gap-2">
@@ -128,23 +126,23 @@ export function SyncHealthPanel() {
 
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{t("sync.tenants.title", "Tenant sync posture")}</h2>
+          <h2 className="text-sm font-semibold">{t("sync.tenants.title")}</h2>
           <Button type="button" size="sm" variant="outline" onClick={() => void loadOverview(true)}>
-            {refreshing ? t("sync.refreshing", "Refreshing…") : t("sync.refresh", "Refresh")}
+            {refreshing ? t("sync.refreshing") : t("sync.refresh")}
           </Button>
         </div>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("sync.tenants.col.tenant", "Tenant")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.lag", "Lag")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.checkpoint", "Checkpoint age")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.reject", "Reject bps")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.retry", "Retry")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.dlq", "DLQ")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.sev", "Severity")}</th>
-                <th className="px-3 py-2">{t("sync.tenants.col.drill", "Diagnostics")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.tenant")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.lag")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.checkpoint")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.reject")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.retry")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.dlq")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.sev")}</th>
+                <th className="px-3 py-2">{t("sync.tenants.col.drill")}</th>
               </tr>
             </thead>
             <tbody>
@@ -162,7 +160,7 @@ export function SyncHealthPanel() {
                     </td>
                     <td className="px-3 py-2">
                       <Button type="button" size="sm" variant="outline" onClick={() => setDrillTenant(row)}>
-                        {t("sync.tenants.openDrill", "Open drill-down")}
+                        {t("sync.tenants.openDrill")}
                       </Button>
                     </td>
                   </tr>
@@ -171,8 +169,8 @@ export function SyncHealthPanel() {
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={8} className="px-3 py-4 text-center text-sm text-text-muted">
                     {loading
-                      ? t("sync.loading", "Loading sync telemetry…")
-                      : t("sync.empty", "No tenant sync telemetry available yet.")}
+                      ? t("sync.loading")
+                      : t("sync.empty")}
                   </td>
                 </tr>
               )}
@@ -182,18 +180,18 @@ export function SyncHealthPanel() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold">{t("sync.repair.title", "Repair queue")}</h2>
-        <p className="text-xs text-text-secondary">{t("sync.repair.hint", "Explicit actions; server validates RBAC.")}</p>
+        <h2 className="text-sm font-semibold">{t("sync.repair.title")}</h2>
+        <p className="text-xs text-text-secondary">{t("sync.repair.hint")}</p>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("sync.repair.col.id", "Item")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.tenant", "Tenant")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.queue", "Queue")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.sev", "Severity")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.summary", "Summary")}</th>
-                <th className="px-3 py-2">{t("sync.repair.col.actions", "Allowed actions")}</th>
+                <th className="px-3 py-2">{t("sync.repair.col.id")}</th>
+                <th className="px-3 py-2">{t("sync.repair.col.tenant")}</th>
+                <th className="px-3 py-2">{t("sync.repair.col.queue")}</th>
+                <th className="px-3 py-2">{t("sync.repair.col.sev")}</th>
+                <th className="px-3 py-2">{t("sync.repair.col.summary")}</th>
+
               </tr>
             </thead>
             <tbody>
@@ -207,19 +205,13 @@ export function SyncHealthPanel() {
                       <OpsSeverityBadge severity={item.severity} />
                     </td>
                     <td className="max-w-xs px-3 py-2 text-xs text-text-secondary">{item.summary}</td>
-                    <td className="px-3 py-2">
-                      <p className="font-mono text-xs text-text-secondary">
-                        {(["replay", "requeue", "acknowledge", "escalate"] as const)
-                          .filter((act) => repairActionAllowed(item, act))
-                          .join(" · ") || "none"}
-                      </p>
-                    </td>
+
                   </tr>
                 ))
               ) : (
                 <tr className="border-b border-surface-border last:border-0">
-                  <td colSpan={6} className="px-3 py-4 text-center text-sm text-text-muted">
-                    {t("sync.repair.empty", "Repair queue is empty.")}
+                  <td colSpan={5} className="px-3 py-4 text-center text-sm text-text-muted">
+                    {t("sync.repair.empty")}
                   </td>
                 </tr>
               )}
@@ -230,16 +222,16 @@ export function SyncHealthPanel() {
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold">
-          {t("sync.anomalies.title", "Heartbeat policy anomalies affecting sync")}
+          {t("sync.anomalies.title")}
         </h2>
         <div className="overflow-x-auto rounded-lg border border-surface-border">
           <table className="w-full min-w-[560px] text-left text-sm">
             <thead className="border-b border-surface-border bg-surface-2 text-xs uppercase text-text-muted">
               <tr>
-                <th className="px-3 py-2">{t("sync.anomalies.col.tenant", "Tenant")}</th>
-                <th className="px-3 py-2">{t("sync.anomalies.col.machine", "Machine")}</th>
-                <th className="px-3 py-2">{t("sync.anomalies.col.code", "Code")}</th>
-                <th className="px-3 py-2">{t("sync.anomalies.col.detected", "Detected")}</th>
+                <th className="px-3 py-2">{t("sync.anomalies.col.tenant")}</th>
+                <th className="px-3 py-2">{t("sync.anomalies.col.machine")}</th>
+                <th className="px-3 py-2">{t("sync.anomalies.col.code")}</th>
+                <th className="px-3 py-2">{t("sync.anomalies.col.detected")}</th>
               </tr>
             </thead>
             <tbody>
@@ -255,7 +247,7 @@ export function SyncHealthPanel() {
               ) : (
                 <tr className="border-b border-surface-border last:border-0">
                   <td colSpan={4} className="px-3 py-4 text-center text-sm text-text-muted">
-                    {t("sync.anomalies.empty", "No heartbeat anomalies detected.")}
+                    {t("sync.anomalies.empty")}
                   </td>
                 </tr>
               )}
@@ -264,17 +256,19 @@ export function SyncHealthPanel() {
         </div>
       </section>
 
+      <SyncDeviceTimeline />
+
       <Sheet open={drillTenant !== null} onOpenChange={(o) => !o && setDrillTenant(null)}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>{t("sync.drill.title", "Failure drill-down")}</SheetTitle>
+            <SheetTitle>{t("sync.drill.title")}</SheetTitle>
             <SheetDescription className="font-mono text-xs">
               {drillTenant?.tenant_id}
             </SheetDescription>
           </SheetHeader>
           <div className="mt-4 space-y-3">
             {drillRows.length === 0 ? (
-              <p className="text-sm text-text-secondary">{t("sync.drill.empty", "No failure rows for this tenant.")}</p>
+              <p className="text-sm text-text-secondary">{t("sync.drill.empty")}</p>
             ) : (
               <ul className="space-y-3">
                 {drillRows.map((r) => (
@@ -288,7 +282,7 @@ export function SyncHealthPanel() {
                     </p>
                     <p className="mt-1 font-mono text-text-muted">{r.idempotency_key}</p>
                     <p className="mt-1 text-text-secondary">
-                      {t("sync.drill.attempts", "Attempts")}: {r.attempt_count} · {r.last_attempt_rfc3339}
+                      {t("sync.drill.attempts")}: {r.attempt_count} · {r.last_attempt_rfc3339}
                     </p>
                   </li>
                 ))}
