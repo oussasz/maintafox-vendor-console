@@ -72,6 +72,7 @@ const activeLicense = {
   tenant_id: tenant.id,
   license_key: "MFX-KEY-001",
   max_machines: 5,
+  max_mobile_devices: 0,
   update_channel: "stable",
   expires_at: null,
   revoked_at: null,
@@ -141,6 +142,8 @@ describe("EntitlementLifecyclePanel", () => {
     expect(issueArgs).toMatchObject({
       tenant_id: "ten-acme",
       max_machines: 1,
+      // No phones unless the operator enters a number.
+      max_mobile_devices: 0,
       update_channel: "stable",
       operator_reason_code: null,
       operator_rationale: "Initial onboarding key issuance for new tenant go-live.",
@@ -214,6 +217,7 @@ describe("EntitlementLifecyclePanel", () => {
       tenant_id: newlyProvisionedTenant.id,
       license_key: "MFX-NEW-001",
       max_machines: 12,
+      max_mobile_devices: 3,
       update_channel: "pilot",
       expires_at: "2027-01-01T00:00:00.000Z",
       revoked_at: null,
@@ -245,6 +249,14 @@ describe("EntitlementLifecyclePanel", () => {
     const issueDialog = await screen.findByRole("dialog");
     await userEvent.clear(within(issueDialog).getByLabelText("Slot limit"));
     await userEvent.type(within(issueDialog).getByLabelText("Slot limit"), "12");
+    const mobileInput = within(issueDialog).getByLabelText("Mobile devices (phones)");
+    expect(mobileInput).toHaveValue("0");
+    await userEvent.clear(mobileInput);
+    await userEvent.type(mobileInput, "1001");
+    expect(within(issueDialog).getAllByText("Mobile devices must be a whole number between 0 and 1000.").length).toBeGreaterThan(0);
+    await userEvent.clear(mobileInput);
+    await userEvent.type(mobileInput, "3");
+    expect(within(issueDialog).queryAllByText("Mobile devices must be a whole number between 0 and 1000.")).toHaveLength(0);
     await userEvent.selectOptions(within(issueDialog).getByLabelText("Channel"), "pilot");
     const expiryInput = within(issueDialog).getByLabelText("Expiry (optional)");
     await userEvent.clear(expiryInput);
@@ -266,6 +278,7 @@ describe("EntitlementLifecyclePanel", () => {
     expect(calledWith).toMatchObject({
       tenant_id: "ten-new",
       max_machines: 12,
+      max_mobile_devices: 3,
       update_channel: "pilot",
       operator_reason_code: "ONBOARD-NEWCO",
       operator_rationale: "Provisioned tenant requires initial activation keys for onboarding.",

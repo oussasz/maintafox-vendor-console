@@ -152,6 +152,7 @@
       "tenant_conflict": "Cet identifiant de tenant est déjà pris. Choisissez-en un autre.",
       "idempotency_key_conflict": "Cette requête a déjà été traitée avec d'autres valeurs. Soumettez-la à nouveau.",
       "slot_limit_reached": "Limite de postes d'activation atteinte pour cette licence.",
+      "mobile_not_licensed": "Cette licence n’inclut pas d’appareils mobiles. Indiquez d’abord un nombre d’appareils mobiles sur la licence.",
       "no_policy_history": "Aucune politique antérieure vers laquelle revenir.",
       "no_force_min_app_version": "Aucune version minimale n’est plus définie. Rechargez pour voir la règle actuelle.",
       "force_min_app_version_changed": "La version minimale a changé depuis le chargement de la page. Rechargez et vérifiez-la avant de la retirer.",

@@ -117,11 +117,13 @@
     "tenant": "Tenant",
     "validation": {
       "maxMachines": "La limite de postes doit être un nombre entre 1 et 1000.",
+      "maxMobileDevices": "Le nombre d’appareils mobiles doit être un nombre entier entre 0 et 1000.",
       "expiryInvalid": "L'échéance doit être une date et heure valide.",
       "expiryPast": "L'échéance ne peut pas être dans le passé.",
       "reasonCode": "Le code motif doit contenir au moins 2 caractères.",
       "rationale": "La justification de l'opérateur doit contenir au moins 8 caractères."
     },
+    "mobileSlotsHint": "0 = l’application terrain ne peut pas être activée sur cette licence.",
     "packetNote": "À transmettre de façon sécurisée au seul contact d’intégration du client.",
     "packetExported": "Dossier d’intégration exporté pour {{id}}.",
     "selectTenantFirst": "Sélectionnez d’abord un tenant.",
@@ -138,6 +140,7 @@
       "issuedAt": "Émise le",
       "expiry": "Échéance",
       "slots": "Limite de postes",
+      "mobileSlots": "Appareils mobiles (téléphones)",
       "keyId": "ID de clé",
       "licenseKey": "Clé de licence",
       "issued": "Émise",

@@ -85,6 +85,8 @@ const LicenseSchema = z.object({
   tenant_id: z.string(),
   license_key: z.string(),
   max_machines: z.number(),
+  /** Phones of the mobile field app (0 = mobile not licensed). */
+  max_mobile_devices: z.number().int().min(0),
   update_channel: z.string().optional(),
   expires_at: z.string().nullable().optional(),
   revoked_at: z.string().nullable().optional(),
@@ -318,6 +320,7 @@ export async function createTenant(input: {
 export async function issueLicense(input: {
   tenant_id: string;
   max_machines: number;
+  max_mobile_devices: number;
   expires_at?: string | null;
   update_channel?: "stable" | "pilot" | "internal";
   operator_reason_code?: string | null;
@@ -344,6 +347,7 @@ export async function updateLicense(
   licenseId: string,
   input: {
     max_machines?: number;
+    max_mobile_devices?: number;
     expires_at?: string | null;
     update_channel?: "stable" | "pilot" | "internal";
     operator_rationale?: string | null;

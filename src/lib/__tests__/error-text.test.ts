@@ -23,6 +23,20 @@ describe("errorText", () => {
     expect(errorText(err)).toBe("Limite de postes d'activation atteinte pour cette licence.");
   });
 
+  it("translates a phone refused on a licence without mobile devices", async () => {
+    const err = await apiRequestError(
+      refusal(409, { error: "mobile_not_licensed", device_class: "mobile", max_mobile_devices: 0 }),
+    );
+    expect(err.params).toEqual({ max: 0 });
+    expect(errorText(err)).toBe(
+      "This licence does not include mobile devices. Set a number of mobile devices on the licence first.",
+    );
+    await i18n.changeLanguage("fr");
+    expect(errorText(err)).toBe(
+      "Cette licence n’inclut pas d’appareils mobiles. Indiquez d’abord un nombre d’appareils mobiles sur la licence.",
+    );
+  });
+
   it("explains a step-up refusal by its reason", async () => {
     const err = await apiRequestError(
       refusal(403, { error: "privileged_action_guard_failed", reason: "step_up_action_kind_mismatch" }),

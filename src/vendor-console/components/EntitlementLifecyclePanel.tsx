@@ -38,6 +38,8 @@ type LicenseSortDirection = "asc" | "desc";
 
 type IssueForm = {
   max_machines: string;
+  /** Phones of the mobile field app; "0" = mobile not licensed. */
+  max_mobile_devices: string;
   update_channel: "stable" | "pilot" | "internal";
   expires_at: string;
   operator_reason_code: string;
@@ -46,6 +48,7 @@ type IssueForm = {
 
 type IssueFormErrors = {
   max_machines?: string;
+  max_mobile_devices?: string;
   expires_at?: string;
   operator_reason_code?: string;
   operator_rationale?: string;
@@ -72,6 +75,8 @@ function isoToDatetimeLocal(iso: string | null | undefined): string {
 
 const DEFAULT_ISSUE_FORM: IssueForm = {
   max_machines: "1",
+  // A new licence includes no phones until the operator enters the number sold (API default too).
+  max_mobile_devices: "0",
   update_channel: "stable",
   expires_at: "",
   operator_reason_code: "",
@@ -102,6 +107,10 @@ function validateIssueForm(form: IssueForm): IssueFormErrors {
   const maxMachines = Number.parseInt(form.max_machines, 10);
   if (Number.isNaN(maxMachines) || maxMachines < 1 || maxMachines > 1000) {
     errors.max_machines = "entitlement.validation.maxMachines";
+  }
+  const maxMobile = Number(form.max_mobile_devices.trim());
+  if (form.max_mobile_devices.trim() === "" || !Number.isInteger(maxMobile) || maxMobile < 0 || maxMobile > 1000) {
+    errors.max_mobile_devices = "entitlement.validation.maxMobileDevices";
   }
 
   if (form.expires_at.trim()) {
@@ -333,6 +342,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
     setEditingLicense(license);
     setIssueForm({
       max_machines: String(license.max_machines),
+      max_mobile_devices: String(license.max_mobile_devices),
       update_channel: (license.update_channel ?? selectedTenant?.update_channel ?? "stable") as IssueForm["update_channel"],
       expires_at: license.expires_at ? isoToDatetimeLocal(license.expires_at) : "",
       operator_reason_code: "",
@@ -363,6 +373,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
       expires_at: license.expires_at ?? null,
       update_channel: license.update_channel ?? selectedTenant?.update_channel ?? "stable",
       max_machines: license.max_machines,
+      max_mobile_devices: license.max_mobile_devices,
       state: deriveLicenseState(license),
       onboarding_note: t("entitlement.packetNote"),
     };
@@ -667,6 +678,24 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               ) : null}
             </div>
             <div>
+              <Label htmlFor="edit-mobile-slots">{t("entitlement.col.mobileSlots")}</Label>
+              <Input
+                id="edit-mobile-slots"
+                value={issueForm.max_mobile_devices}
+                onChange={(event) => {
+                  setIssueForm((previous) => ({ ...previous, max_mobile_devices: event.target.value }));
+                }}
+                aria-invalid={Boolean(issueValidationErrors.max_mobile_devices)}
+              />
+              {issueValidationErrors.max_mobile_devices ? (
+                <p className="mt-1 text-xs text-danger" role="alert">
+                  {t(issueValidationErrors.max_mobile_devices)}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-text-secondary">{t("entitlement.mobileSlotsHint")}</p>
+              )}
+            </div>
+            <div>
               <Label htmlFor="edit-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="edit-channel"
@@ -758,6 +787,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                   const lic = editingLicense;
                   await updateLicense(lic.id, {
                     max_machines: Number.parseInt(issueForm.max_machines, 10),
+                    max_mobile_devices: Number(issueForm.max_mobile_devices.trim()),
                     update_channel: issueForm.update_channel,
                     expires_at: issueForm.expires_at ? new Date(issueForm.expires_at).toISOString() : null,
                     operator_rationale: issueForm.operator_rationale.trim(),
@@ -879,6 +909,24 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
               ) : null}
             </div>
             <div>
+              <Label htmlFor="issue-mobile-slots">{t("entitlement.col.mobileSlots")}</Label>
+              <Input
+                id="issue-mobile-slots"
+                value={issueForm.max_mobile_devices}
+                onChange={(event) => {
+                  setIssueForm((previous) => ({ ...previous, max_mobile_devices: event.target.value }));
+                }}
+                aria-invalid={Boolean(issueValidationErrors.max_mobile_devices)}
+              />
+              {issueValidationErrors.max_mobile_devices ? (
+                <p className="mt-1 text-xs text-danger" role="alert">
+                  {t(issueValidationErrors.max_mobile_devices)}
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-text-secondary">{t("entitlement.mobileSlotsHint")}</p>
+              )}
+            </div>
+            <div>
               <Label htmlFor="issue-channel">{t("entitlement.col.channel")}</Label>
               <select
                 id="issue-channel"
@@ -983,6 +1031,7 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                   const created = await issueLicense({
                     tenant_id: selectedTenant.id,
                     max_machines: Number.parseInt(issueForm.max_machines, 10),
+                    max_mobile_devices: Number(issueForm.max_mobile_devices.trim()),
                     update_channel: issueForm.update_channel,
                     expires_at: issueForm.expires_at
                       ? new Date(issueForm.expires_at).toISOString()
@@ -1052,6 +1101,10 @@ export const EntitlementLifecyclePanel = forwardRef<EntitlementLifecyclePanelHan
                 <div>
                   <Label>{t("entitlement.col.slots")}</Label>
                   <Input value={String(selectedLicense.max_machines)} readOnly />
+                </div>
+                <div>
+                  <Label>{t("entitlement.col.mobileSlots")}</Label>
+                  <Input value={String(selectedLicense.max_mobile_devices)} readOnly />
                 </div>
                 <div>
                   <Label>{t("entitlement.col.state")}</Label>

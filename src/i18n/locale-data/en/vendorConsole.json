@@ -117,11 +117,13 @@
     "issueHint": "Issue a new entitlement key for the selected tenant. This action creates a real key in the control-plane API.",
     "validation": {
       "maxMachines": "Slot limit must be a number between 1 and 1000.",
+      "maxMobileDevices": "Mobile devices must be a whole number between 0 and 1000.",
       "expiryInvalid": "Expiry must be a valid date/time.",
       "expiryPast": "Expiry date cannot be in the past.",
       "reasonCode": "Reason code must be at least 2 characters.",
       "rationale": "Operator rationale must be at least 8 characters."
     },
+    "mobileSlotsHint": "0 = the field app cannot be activated on this licence.",
     "packetNote": "Share securely with customer onboarding contact only.",
     "packetExported": "Onboarding packet exported for {{id}}.",
     "selectTenantFirst": "Select a tenant first.",
@@ -138,6 +140,7 @@
       "issuedAt": "Issued at",
       "expiry": "Expiry",
       "slots": "Slot limit",
+      "mobileSlots": "Mobile devices (phones)",
       "keyId": "Key ID",
       "licenseKey": "License key",
       "issued": "Issued",

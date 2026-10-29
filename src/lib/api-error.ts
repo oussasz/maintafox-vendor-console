@@ -23,6 +23,7 @@ type ErrorBody = {
   detail?: unknown;
   reason?: unknown;
   max_machines?: unknown;
+  max_mobile_devices?: unknown;
 };
 
 /** Reads a non-OK response of the control API into an `ApiRequestError`. */
@@ -44,6 +45,7 @@ export async function apiRequestError(res: Response): Promise<ApiRequestError> {
   const params: Record<string, string | number> = {};
   if (typeof body.reason === "string") params.reason = body.reason;
   if (typeof body.max_machines === "number") params.max = body.max_machines;
+  if (typeof body.max_mobile_devices === "number") params.max = body.max_mobile_devices;
   return new ApiRequestError(res.status, code, message, params);
 }
 
