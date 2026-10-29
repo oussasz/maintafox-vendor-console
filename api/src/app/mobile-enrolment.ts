@@ -245,3 +245,20 @@ export async function appendEnrolmentAudit(
     });
   }
 }
+
+/**
+ * A phone removed by its administrator that may still upload its pending work and confirm its
+ * wipe: not reported lost, not wiped yet, and removed less than WIPE_UPLOAD_WINDOW_HOURS ago. Past
+ * the window the phone is simply revoked (its wipe counts as finished: it can be enrolled again).
+ */
+export function finalUploadOpen(row: {
+  revoked_at: string | Date | null;
+  revocation_kind: string | null;
+  revoke_reason: string | null;
+  wiped_at: string | Date | null;
+}): boolean {
+  if (!row.revoked_at || row.revocation_kind !== "tenant_admin" || row.wiped_at || row.revoke_reason === "lost") {
+    return false;
+  }
+  return Date.now() - new Date(row.revoked_at).getTime() < WIPE_UPLOAD_WINDOW_HOURS * 3_600_000;
+}

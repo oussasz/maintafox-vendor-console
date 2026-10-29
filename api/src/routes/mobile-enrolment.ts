@@ -18,6 +18,7 @@ import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } fr
 import {
   ActorBody,
   appendEnrolmentAudit,
+  finalUploadOpen,
   ENROLMENT_TTL_SECONDS,
   enrolmentSecretHash,
   formatEnrolmentCode,
@@ -46,6 +47,8 @@ type MobileDeviceRow = {
   revoked_at: string | null;
   revoked_by_label: string | null;
   revoke_reason: string | null;
+  revocation_kind: string | null;
+  wiped_at: string | null;
 };
 
 type RevokedPhone = { id: string; machine_fingerprint: string; license_id: string };
@@ -340,7 +343,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
     const rows = await db.all<MobileDeviceRow>(
       `SELECT a.id, a.machine_fingerprint, a.machine_label, a.person_sync_id, a.person_label, a.site_sync_id,
               a.site_label, a.enrolled_by_label, a.enrolled_at, a.activated_at, a.last_seen_at, a.app_version,
-              a.revoked_at, a.revoked_by_label, a.revoke_reason, c.last_exchange_at
+              a.revoked_at, a.revoked_by_label, a.revoke_reason, a.revocation_kind, a.wiped_at, c.last_exchange_at
        FROM machine_activations a
        LEFT JOIN sync_device_checkpoint c
          ON c.tenant_id = a.tenant_id AND c.machine_fingerprint = a.machine_fingerprint
@@ -358,7 +361,8 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       max_mobile_devices: lic?.max_mobile_devices ?? 0,
       active_mobile_devices: await countActiveActivations(act.licenseId, "mobile"),
       open_enrolments: await countOpenEnrolments(act.licenseId),
-      devices: rows.map((r) => ({
+      // Removed phones stay listed while they may still upload and wipe (not lost, within the window).
+      devices: rows.filter((r) => !r.revoked_at || finalUploadOpen(r)).map((r) => ({
         device_id: r.id,
         machine_label: r.machine_label,
         person_sync_id: r.person_sync_id,
@@ -371,7 +375,6 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
         last_seen_at: isoOrNull(r.last_seen_at),
         app_version: r.app_version,
         status: r.revoked_at ? "wipe_pending" : "active",
-        lost: r.revoke_reason === "lost",
         revoked_at: isoOrNull(r.revoked_at),
         revoked_by_label: r.revoked_by_label,
       })),
@@ -383,10 +386,11 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
    * work (push only) and wipes itself (activationAuthMiddleware wipeOnly), unless it is reported
    * lost (no upload). Phones already revoked are left as they are.
    *
-   * For a person (account disabled), their open enrolments are cancelled FIRST, each under its own
-   * lock, then the licence slots are locked before their phones are read: a redeem in flight for
-   * that person either finished before (its phone is found and revoked) or finds its enrolment
-   * cancelled. Lock order as in redeem: enrolment, licence slots, device.
+   * For a person (account disabled), every licence slot lock of the tenant is taken first (as the
+   * issue route and redeem take theirs before touching enrolment rows), then their open enrolments
+   * are cancelled and their phones read. A redeem in flight for that person either committed before
+   * (its phone is found and revoked) or spends nothing: its spend re-checks that the enrolment is
+   * still open, and an issue in flight committed before or waits for this revocation.
    */
   async function revokePhones(
     act: ActivationAuthContext,
@@ -397,29 +401,21 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
     return db.tx(async () => {
       const cancelledEnrolments: string[] = [];
       if ("personSyncId" in where) {
-        const open = await db.all<{ id: string }>(
-          `SELECT id FROM mobile_enrolments
-           WHERE tenant_id = ? AND person_sync_id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL
-           ORDER BY id`,
-          act.tenantId,
-          where.personSyncId,
-        );
-        for (const e of open) {
-          await db.lockXact("mobile-enrolment", e.id);
-          const cancelled = await db.run(
-            `UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ?, cancelled_by_sync_id = ?
-             WHERE id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL`,
-            actor.actor_label,
-            actor.actor_sync_id,
-            e.id,
-          );
-          if (cancelled.changes > 0) cancelledEnrolments.push(e.id);
-        }
         const licences = await db.all<{ id: string }>(
           "SELECT id FROM license_keys WHERE tenant_id = ? ORDER BY id",
           act.tenantId,
         );
         for (const l of licences) await db.lockXact("license-slots", l.id);
+        const cancelled = await db.all<{ id: string }>(
+          `UPDATE mobile_enrolments SET cancelled_at = now(), cancelled_by_label = ?, cancelled_by_sync_id = ?
+           WHERE tenant_id = ? AND person_sync_id = ? AND cancelled_at IS NULL AND redeemed_at IS NULL
+           RETURNING id`,
+          actor.actor_label,
+          actor.actor_sync_id,
+          act.tenantId,
+          where.personSyncId,
+        );
+        cancelledEnrolments.push(...cancelled.map((r) => r.id).sort());
       }
       const candidates =
         "deviceId" in where

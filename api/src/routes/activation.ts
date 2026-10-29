@@ -20,6 +20,7 @@ import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } 
 import { observeActivationOutcome } from "../app/observability.js";
 import {
   ALREADY_ENROLLED_BODY,
+  finalUploadOpen,
   WIPE_PENDING_BODY,
   appendEnrolmentAudit,
   ENROLMENT_INVALID_BODY,
@@ -608,7 +609,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           };
         }
         // A removed phone still holding its previous person's data must finish its wipe first.
-        if (current?.revocation_kind === "tenant_admin" && current.wiped_at == null && current.revoke_reason !== "lost") {
+        if (current && finalUploadOpen(current)) {
           return {
             ok: false as const,
             failure: { status: 409, body: { ...WIPE_PENDING_BODY }, reason: "wipe_pending" },

@@ -13,7 +13,7 @@ import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import type { DeviceClass } from "./device-class.js";
-import { DEVICE_WIPE_REQUIRED_BODY, WIPE_UPLOAD_WINDOW_HOURS } from "./mobile-enrolment.js";
+import { DEVICE_WIPE_REQUIRED_BODY, finalUploadOpen } from "./mobile-enrolment.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
@@ -151,8 +151,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     // device_wipe_required. A phone reported lost, or one past the window, is simply revoked.
     let wipeOnly = false;
     if (row.revoked_at) {
-      const windowOpen = Date.now() - new Date(row.revoked_at).getTime() < WIPE_UPLOAD_WINDOW_HOURS * 3_600_000;
-      if (row.revocation_kind !== "tenant_admin" || row.wiped_at || row.revoke_reason === "lost" || !windowOpen) {
+      if (!finalUploadOpen(row)) {
         deny(403, "activation_revoked");
         return;
       }

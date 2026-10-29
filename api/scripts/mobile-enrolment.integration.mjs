@@ -326,7 +326,14 @@ try {
     assert.equal(r.status, 403, r.text);
     assert.equal(r.json.error, "activation_revoked", "a lost phone uploads nothing");
   }
-  assert.equal((await list(a.desk)).json.devices.find((d) => d.person_sync_id === "user-7").lost, true);
+  const afterLost = (await list(a.desk)).json.devices;
+  assert.ok(!afterLost.some((d) => d.person_sync_id === "user-7"), "a lost phone leaves the list at once");
+  assert.ok(!afterLost.some((d) => d.person_sync_id === "user-3"), "so does a removed phone past its upload window");
+  // A removed phone that never came back within the window can be enrolled again.
+  const e8 = await issue(a.desk, 8);
+  assert.equal(e8.status, 201, e8.text);
+  const afterWindow = await redeem({ token: e8.json.token }, "fp-phone-3");
+  assert.equal(afterWindow.status, 200, afterWindow.text);
 
   // ── Audit ledger ────────────────────────────────────────────────────────────────────────────
   const audits = await api.su(
@@ -334,8 +341,8 @@ try {
      WHERE action_code LIKE 'mobile_%' GROUP BY action_code ORDER BY action_code`,
   );
   const counts = Object.fromEntries(audits.map((r) => [r.action_code, r.n]));
-  assert.equal(counts.mobile_enrolment_issued, 7, JSON.stringify(counts));
-  assert.equal(counts.mobile_enrolment_redeemed, 3, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_issued, 8, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_redeemed, 4, JSON.stringify(counts));
   assert.equal(counts.mobile_enrolment_cancelled, 2, JSON.stringify(counts));
   assert.equal(counts.mobile_device_revoked, 3, JSON.stringify(counts));
   assert.equal(counts.mobile_device_wiped, 1, JSON.stringify(counts));
