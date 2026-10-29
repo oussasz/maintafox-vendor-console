@@ -13,7 +13,7 @@ import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import type { DeviceClass } from "./device-class.js";
-import { DEVICE_WIPE_REQUIRED_BODY, finalUploadOpen } from "./mobile-enrolment.js";
+import { DEVICE_WIPE_REQUIRED_BODY, finalUploadOpen, wipeWithoutUploadBody, wipeWithoutUploadReason } from "./mobile-enrolment.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
@@ -63,8 +63,17 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     db.runInScope(scope, next);
   }
 
-  /** Routes a phone removed by its administrator may still call before its wipe (POST only). */
-  const WIPE_ONLY_PATHS = new Set(["/api/v1/sync/exchange", "/api/v1/mobile-device/wipe-confirmed"]);
+  /**
+   * Routes a phone removed by its administrator may still call before its wipe (POST only): the
+   * final upload of its pending work (exchange, push only), the upload of the files that work
+   * references (presign-put, only for media this phone announced: routes/sync.ts; presign-get stays
+   * refused), and the wipe confirmation.
+   */
+  const WIPE_ONLY_PATHS = new Set([
+    "/api/v1/sync/exchange",
+    "/api/v1/sync/media/presign-put",
+    "/api/v1/mobile-device/wipe-confirmed",
+  ]);
 
   /** `last_seen_at` is written at most this often per device (the sync heartbeat runs every ~15 s). */
   const LAST_SEEN_TOUCH_INTERVAL_MS = 60_000;
@@ -75,7 +84,14 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
    * 401 missing_token | invalid_token | token_superseded | policy_refresh_required (sync routes only,
    * after an operator asked for a policy refresh: the desktop re-checks its licence, gets a new
    * token from POST /activation/policy-refresh and resumes);
-   * 403 tenant_inactive | license_revoked | license_expired | activation_revoked.
+   * 403 tenant_inactive | license_revoked | license_expired | activation_revoked | device_wipe_required.
+   *
+   * activation_revoked carries `wipe: "without_upload"` and `reason: "lost" | "upload_window_closed"`
+   * only for a phone removed by its customer's administrator that may not upload
+   * (wipeWithoutUploadReason); that answer comes before the tenant and licence checks, since such a
+   * phone erases whatever their state. Every other activation_revoked (no activation row, e.g.
+   * after a restore; a vendor revocation; a released slot) has no marker: the phone locks and keeps
+   * its data.
    */
   async function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
     const h = req.headers.authorization;
@@ -114,16 +130,17 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
           tenant_is_active: number;
         }
       | undefined;
-    const deny = (status: number, error: string) => {
+    const deny = (status: number, error: string, body: Record<string, unknown> = { error }) => {
       structuredLog("activation_auth_denied", {
         status,
         reason: error,
+        ...(body.wipe ? { wipe: body.wipe, wipe_reason: body.reason } : {}),
         tenant_id: claims.tenantId,
         license_id: claims.licenseId,
         machine_fingerprint: claims.machineFingerprint,
         path: req.path,
       });
-      res.status(status).json({ error });
+      res.status(status).json(body);
     };
     if (!row) {
       deny(403, "activation_revoked");
@@ -131,6 +148,12 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     }
     if (row.activation_token !== token) {
       deny(401, "token_superseded");
+      return;
+    }
+    // A phone that must erase without uploading is told so whatever its tenant or licence state.
+    const wipeReason = wipeWithoutUploadReason(row);
+    if (wipeReason) {
+      deny(403, "activation_revoked", { ...wipeWithoutUploadBody(wipeReason) });
       return;
     }
     if (row.tenant_is_active !== 1) {
@@ -145,13 +168,15 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       deny(403, "license_expired");
       return;
     }
-    // A phone removed by its customer's administrator (routes/mobile-enrolment.ts) keeps two routes
+    // A phone removed by its customer's administrator (routes/mobile-enrolment.ts) keeps three routes
     // until it confirms its wipe, for WIPE_UPLOAD_WINDOW_HOURS: the final upload of its pending
-    // work (sync exchange, push only) and the wipe confirmation. Everything else answers
-    // device_wipe_required. A phone reported lost, or one past the window, is simply revoked.
+    // work (sync exchange, push only, and presign-put for its files) and the wipe confirmation.
+    // Everything else answers device_wipe_required. A phone reported lost, or one past the window,
+    // was answered above (activation_revoked with the wipe marker).
     let wipeOnly = false;
     if (row.revoked_at) {
       if (!finalUploadOpen(row)) {
+        // A vendor revocation or a released slot (or a desktop): no wipe marker, the device keeps its data.
         deny(403, "activation_revoked");
         return;
       }

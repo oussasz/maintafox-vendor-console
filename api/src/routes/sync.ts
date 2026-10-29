@@ -233,6 +233,39 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     }
   });
 
+  /**
+   * Whether a phone removed by its administrator (wipeOnly) may upload this object: only a file of
+   * its own work. The server keeps no owner per object, so ownership is what this phone itself
+   * exchanged: a media_manifest entry it reported for exactly this key and content hash, whose
+   * media_attachments record it pushed (sync_mirror_ingress row of this device). A key another
+   * device announced, or one announced without its record, is refused.
+   */
+  async function removedPhoneOwnsMedia(act: ActivationAuthContext, objectKey: string, contentSha256: string): Promise<boolean> {
+    const row = await db.get<{ ok: number }>(
+      `SELECT 1 AS ok
+       FROM sync_media_manifest m
+       WHERE m.tenant_id = $1 AND m.object_key = $2 AND m.content_sha256 = $3
+         AND m.reported_by_machine_fingerprint = $4
+         AND EXISTS (
+           SELECT 1 FROM sync_mirror_ingress i
+           WHERE i.tenant_id = m.tenant_id AND i.machine_fingerprint = $4
+             AND i.entity_type = 'media_attachments' AND i.entity_sync_id = m.entity_sync_id
+         )
+       LIMIT 1`,
+      act.tenantId,
+      objectKey,
+      contentSha256,
+      act.machineFingerprint,
+    );
+    return row?.ok === 1;
+  }
+
+  /**
+   * Presigned PUT for one media object of the tenant. A phone removed by its administrator may still
+   * call it during its upload window (activationAuthMiddleware wipeOnly), for its own files only
+   * (removedPhoneOwnsMedia); the key must then be the canonical one of the announced file
+   * (`{env}/media/{tenant}/{parent type}/{parent sync id}/{content sha256}`, matching the body).
+   */
   app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
     if (!act) {
@@ -240,21 +273,22 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       return;
     }
     const media = getMediaStore();
-    if (!media) {
-      res.status(503).json({ error: "object_storage_unavailable" });
-      return;
-    }
     const parsed = SyncMediaPresignPutBody.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed);
       return;
     }
+    const givenKey = parsed.data.object_key?.trim();
+    if (!givenKey && !media) {
+      res.status(503).json({ error: "object_storage_unavailable" });
+      return;
+    }
     let objectKey: string;
     try {
       objectKey =
-        parsed.data.object_key?.trim() ||
+        givenKey ||
         buildTenantMediaObjectKey({
-          deploymentEnv: media.config.deploymentEnv,
+          deploymentEnv: media!.config.deploymentEnv,
           tenantId: act.tenantId,
           parentEntityType: parsed.data.parent_entity_type,
           parentEntitySyncId: parsed.data.parent_entity_sync_id,
@@ -269,6 +303,31 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     }
     if (!assertTenantOwnsObjectKey(act.tenantId, objectKey)) {
       res.status(403).json({ error: "object_key_tenant_mismatch" });
+      return;
+    }
+    if (act.wipeOnly) {
+      const [, , , parentType, parentSyncId, sha, ...rest] = objectKey.split("/");
+      const sent = parsed.data;
+      const canonical =
+        rest.length === 0 &&
+        parentType === sent.parent_entity_type.trim() &&
+        parentSyncId === sent.parent_entity_sync_id.trim() &&
+        sha === sent.content_sha256.trim().toLowerCase();
+      if (!canonical || !(await removedPhoneOwnsMedia(act, objectKey, sha))) {
+        structuredLog("media_presign_put_refused", {
+          tenant_id: act.tenantId,
+          machine_fingerprint: act.machineFingerprint,
+          reason: "media_not_from_this_device",
+        });
+        res.status(403).json({
+          error: "media_not_from_this_device",
+          message: "A removed phone may upload only the files of its own work that it announced in its final upload.",
+        });
+        return;
+      }
+    }
+    if (!media) {
+      res.status(503).json({ error: "object_storage_unavailable" });
       return;
     }
     try {

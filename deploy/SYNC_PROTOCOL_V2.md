@@ -12,7 +12,7 @@ not been updated. The server picks the protocol from `protocol_version` in the r
 |---|---|
 | `POST /api/v1/sync/exchange` | Push outbox items and pull inbound deltas (v1 or v2 by `protocol_version`). |
 | `POST /api/v1/sync/snapshot` | v2 only. Paged current state for bootstrap; the last page returns a checkpoint for deltas. |
-| `POST /api/v1/sync/media/presign-put` / `presign-get` | Unchanged from v1. |
+| `POST /api/v1/sync/media/presign-put` / `presign-get` | Unchanged from v1 (a removed phone: presign-put only, see below). |
 | `POST /api/v1/sync/diagnostic-bundles`, `POST /api/v1/sync/diagnostic-bundles/:id/complete` | Support: upload a diagnostic bundle (presigned PUT, verified by size and SHA-256; optional ticket). See `deploy/SUPPORT.md`. |
 
 All routes need the device activation token (`Authorization: Bearer <activation token>`) and go
@@ -20,6 +20,33 @@ through the same licence/activation checks as v1 (`401 token_superseded`,
 `403 tenant_inactive | license_revoked | license_expired | activation_revoked`).
 The device identity is the activation's `(tenant_id, machine_fingerprint)`; nothing in the body can
 change it.
+
+### Phones removed by their administrator
+
+A phone removed from the customer's desktop (`POST /api/v1/mobile-devices/:id/revoke`, or
+`revoke-person`) gets `403 device_wipe_required` on every route except, for 168 hours
+(`WIPE_UPLOAD_WINDOW_HOURS`), these three (POST):
+
+- `/api/v1/sync/exchange`: v2 only, push only (no inbound items, conflicts or user snapshots; the
+  checkpoint does not move). Its `media_manifest` is recorded as usual.
+- `/api/v1/sync/media/presign-put`: only for a file of its own work: an `object_key` this phone
+  reported in a `media_manifest` entry with the same `content_sha256`, whose `media_attachments`
+  record this phone pushed, and the key must be `{env}/media/{tenant}/{parent_entity_type}/{parent_entity_sync_id}/{content_sha256}`
+  matching the body. Otherwise `403 media_not_from_this_device`. So: exchange first (record +
+  manifest), then presign-put. Same limits as any device (15-minute URL, 32 MiB per object at the
+  media route). `presign-get` stays refused (`device_wipe_required`).
+- `/api/v1/mobile-device/wipe-confirmed`: optional strict body
+  `{ "dropped": { "total": <int >= 0>, "by_kind": { "<kind, 1-64 chars>": <int >= 0>, ... at most 32 } } }`
+  (what was erased unsent, kept in the `mobile_device_wiped` audit entry); `{}` or no body is
+  accepted; anything else is `400 invalid_request` and changes nothing.
+
+`403 activation_revoked` tells a phone to erase without uploading only when it carries the marker:
+`{ "error": "activation_revoked", "message": "...", "wipe": "without_upload", "reason": "lost" | "upload_window_closed" }`
+(reported lost; or removed by its administrator and past the window or already wiped). That answer
+comes before the tenant and licence checks. Every other `activation_revoked` (no activation row, e.g.
+after a database restore; a vendor revocation; a released slot) has no `wipe` field: the phone locks
+and keeps its data.
+
 
 ## 2. Entity registry
 

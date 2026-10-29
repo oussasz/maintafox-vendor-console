@@ -529,6 +529,14 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
    * enrolment, the licence, the mobile slot and this phone are checked under the same locks as a
    * claim, and the phone's activation is created bound to the enrolment's person and site.
    * Answers like a claim (summary, signed envelope, device token) plus the binding.
+   *
+   * Replay (an answer lost on mobile data): the same secret presented again by the phone that spent
+   * it gets the same answer (its activation's current token, the binding with the original
+   * enrolled_at), with no second slot and a `mobile_enrolment_redeem_replayed` audit event instead
+   * of a second "redeemed". Only while the enrolment's original lifetime runs (expires_at, 15
+   * minutes from issue: the secret is never accepted after the time the administrator was shown),
+   * and only while that activation is still this enrolment's, active, on a valid licence. Any other
+   * fingerprint, a later replay or a revoked phone: 404 enrolment_invalid as before.
    */
   app.post(
     "/api/v1/mobile-enrolments/redeem",
@@ -576,16 +584,63 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         await db.lockXact("mobile-enrolment", found.id);
         const enrolment = await db.get<EnrolmentRow>(
           `SELECT id, tenant_id, license_id, person_sync_id, person_label, site_sync_id, site_label,
-                  issued_by_label, expires_at, cancelled_at, redeemed_at
+                  issued_by_label, expires_at, cancelled_at, redeemed_at, activation_id
            FROM mobile_enrolments WHERE id = ?`,
           found.id,
         );
-        if (!enrolment || enrolment.cancelled_at || enrolment.redeemed_at || new Date(enrolment.expires_at) <= new Date()) {
+        if (!enrolment || enrolment.cancelled_at || new Date(enrolment.expires_at) <= new Date()) {
           return { ok: false as const, failure: invalid };
         }
         await db.lockXact("license-slots", enrolment.license_id);
         await db.lockXact("activation-device", `${enrolment.tenant_id}:${input.machine_fingerprint}`);
         const lic = await loadLicenseById(enrolment.license_id, enrolment.tenant_id);
+
+        if (enrolment.redeemed_at) {
+          // Spent already: only the phone that spent it gets its answer again (see above).
+          const spentBy = enrolment.activation_id
+            ? await db.get<{
+                id: string;
+                license_id: string;
+                device_class: DeviceClass;
+                revoked_at: string | null;
+                enrolment_id: string | null;
+                activation_token: string;
+                enrolled_at: string | Date | null;
+              }>(
+                `SELECT id, license_id, device_class, revoked_at, enrolment_id, activation_token, enrolled_at
+                 FROM machine_activations WHERE id = ? AND tenant_id = ? AND machine_fingerprint = ?`,
+                enrolment.activation_id,
+                enrolment.tenant_id,
+                input.machine_fingerprint,
+              )
+            : undefined;
+          const licenceValid =
+            lic != null &&
+            lic.is_active === 1 &&
+            !lic.revoked_at &&
+            !(lic.expires_at && new Date(lic.expires_at) <= new Date()) &&
+            lic.max_mobile_devices > 0;
+          if (
+            !spentBy ||
+            spentBy.revoked_at != null ||
+            spentBy.device_class !== "mobile" ||
+            spentBy.enrolment_id !== enrolment.id ||
+            spentBy.license_id !== enrolment.license_id ||
+            !licenceValid
+          ) {
+            return { ok: false as const, failure: invalid };
+          }
+          return {
+            ok: true as const,
+            replayed: true as const,
+            validated: { lic },
+            resolvedPolicy: await resolveActivationPolicy(lic, input.app_version),
+            activationToken: spentBy.activation_token,
+            enrolment,
+            activationId: spentBy.id,
+            enrolledAt: new Date(spentBy.enrolled_at ?? enrolment.redeemed_at).toISOString(),
+          };
+        }
 
         // A phone that is enrolled and active must be removed first: an enrolment never moves a
         // working phone to another person.
@@ -690,7 +745,16 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           enrolment.id,
         );
         if (spent.changes !== 1) throw new EnrolmentNoLongerOpen();
-        return { ok: true as const, validated, resolvedPolicy, activationToken, enrolment, activationId };
+        return {
+          ok: true as const,
+          replayed: false as const,
+          validated,
+          resolvedPolicy,
+          activationToken,
+          enrolment,
+          activationId,
+          enrolledAt: nowIso,
+        };
       }).catch((e: unknown) => {
         if (e instanceof EnrolmentNoLongerOpen) return { ok: false as const, failure: invalid };
         throw e;
@@ -699,9 +763,10 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         refuse(outcome.failure);
         return;
       }
-      const { validated, resolvedPolicy, activationToken, enrolment, activationId } = outcome;
+      const { validated, resolvedPolicy, activationToken, enrolment, activationId, enrolledAt, replayed } = outcome;
+      const event = replayed ? "mobile_enrolment_redeem_replayed" : "mobile_enrolment_redeemed";
       observeActivationOutcome("ok");
-      structuredLog("mobile_enrolment_redeemed", {
+      structuredLog(event, {
         status: 200,
         tenant_id: validated.lic.tenant_id,
         license_id: validated.lic.id,
@@ -710,7 +775,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         duration_ms: Date.now() - startedAt,
       });
       await appendEnrolmentAudit(db, appendAuditRecord, {
-        action_code: "mobile_enrolment_redeemed",
+        action_code: event,
         actor: `device:${input.machine_fingerprint}`,
         tenantId: validated.lic.tenant_id,
         licenseId: validated.lic.id,
@@ -736,7 +801,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           person_label: enrolment.person_label,
           site_sync_id: enrolment.site_sync_id,
           site_label: enrolment.site_label,
-          enrolled_at: nowIso,
+          enrolled_at: enrolledAt,
         },
       });
     },

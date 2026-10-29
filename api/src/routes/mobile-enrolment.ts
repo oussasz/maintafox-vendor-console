@@ -27,6 +27,7 @@ import {
   newEnrolmentToken,
   RevokeDeviceBody,
   RevokePersonBody,
+  WipeConfirmedBody,
 } from "../app/mobile-enrolment.js";
 import { newId, structuredLog } from "../app/runtime.js";
 
@@ -527,7 +528,10 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
 
   /**
    * A removed phone confirms it uploaded its pending work and erased its data. From then on its
-   * token is refused everywhere (activation_revoked) and it leaves the desktop's list.
+   * token is refused everywhere (activation_revoked, with the wipe marker) and it leaves the
+   * desktop's list. Optional body (WipeConfirmedBody): `dropped`, what it erased without having
+   * sent it, kept in the audit ledger; an invalid body is a 400 and changes nothing, an empty one is
+   * accepted (older phones).
    */
   app.post("/api/v1/mobile-device/wipe-confirmed", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = activationOf(req);
@@ -535,6 +539,12 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       res.status(401).json({ error: "missing_token" });
       return;
     }
+    const parsed = WipeConfirmedBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendValidationError(res, parsed, "body");
+      return;
+    }
+    const dropped = parsed.data.dropped ?? null;
     if (!act.wipeOnly) {
       res.status(409).json({ error: "wipe_not_requested" });
       return;
@@ -549,14 +559,14 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       act.machineFingerprint,
     );
     if (row) {
-      structuredLog("mobile_device_wiped", { tenant_id: act.tenantId, device_id: row.id });
+      structuredLog("mobile_device_wiped", { tenant_id: act.tenantId, device_id: row.id, dropped_total: dropped?.total ?? null });
       await appendEnrolmentAudit(db, appendAuditRecord, {
         action_code: "mobile_device_wiped",
         actor: `device:${act.machineFingerprint}`,
         tenantId: act.tenantId,
         licenseId: act.licenseId,
         machineFingerprint: act.machineFingerprint,
-        payload: { device_id: row.id },
+        payload: { device_id: row.id, dropped },
       });
     }
     res.json({ wiped: true });

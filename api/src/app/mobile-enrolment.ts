@@ -148,6 +148,31 @@ export const DEVICE_WIPE_REQUIRED_BODY = {
   message: "This phone was removed by your administrator. Pending work is uploaded, then the phone's data is erased.",
 } as const;
 
+/**
+ * Why a phone must erase itself WITHOUT uploading anything: it was reported lost, or it was removed
+ * by its administrator and may no longer upload (the WIPE_UPLOAD_WINDOW_HOURS window is over, or it
+ * already confirmed its wipe).
+ */
+export type WipeWithoutUploadReason = "lost" | "upload_window_closed";
+
+/**
+ * 403 activation_revoked for a phone that must erase without uploading. The `wipe` marker is the
+ * only signal a phone may act on to erase unsent work: every other activation_revoked (a missing
+ * activation row after a restore, a vendor revocation, a released slot, a rebind) carries no
+ * marker, and the phone then locks and keeps its data.
+ */
+export function wipeWithoutUploadBody(reason: WipeWithoutUploadReason) {
+  return {
+    error: "activation_revoked",
+    message:
+      reason === "lost"
+        ? "This phone was reported lost by your administrator. Its data is erased; nothing is uploaded."
+        : "This phone was removed by your administrator and its upload period is over. Its data is erased; nothing more can be uploaded.",
+    wipe: "without_upload",
+    reason,
+  } as const;
+}
+
 /** 409 when a removed phone presents an enrolment before it confirmed its wipe. */
 export const WIPE_PENDING_BODY = {
   error: "wipe_pending",
@@ -159,6 +184,27 @@ export const ALREADY_ENROLLED_BODY = {
   error: "already_enrolled",
   message: "This phone is already enrolled. Your administrator must remove it before it can be enrolled again.",
 } as const;
+
+const DroppedCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Phone -> server: the wipe confirmation. Optional `dropped`: what the phone erased without having
+ * sent it (counts only, per kind of record, e.g. { "work_orders": 1, "media_attachments": 3 }),
+ * kept in the audit ledger. An empty body (phones released before this field) is accepted.
+ */
+export const WipeConfirmedBody = z
+  .object({
+    dropped: z
+      .object({
+        total: DroppedCount,
+        by_kind: z
+          .record(z.string().min(1).max(64), DroppedCount)
+          .refine((o) => Object.keys(o).length <= 32, { message: "At most 32 kinds." }),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 /** An enrolment row as the redeem and desktop routes read it. */
 export type EnrolmentRow = {
@@ -173,6 +219,7 @@ export type EnrolmentRow = {
   expires_at: string;
   cancelled_at: string | null;
   redeemed_at: string | null;
+  activation_id: string | null;
 };
 
 /** Stored hash of what a phone presents; null for a typed code that cannot be one. */
@@ -270,4 +317,22 @@ export function finalUploadOpen(row: {
     return false;
   }
   return Date.now() - new Date(row.revoked_at).getTime() < WIPE_UPLOAD_WINDOW_HOURS * 3_600_000;
+}
+
+/**
+ * The marker for a phone's activation_revoked: set only for a phone removed by its customer's
+ * administrator that may not upload (reported lost; or past finalUploadOpen: window over, or wipe
+ * already confirmed). Null for every other revocation (vendor revoke, released slot, licence) and
+ * for a phone that may still upload.
+ */
+export function wipeWithoutUploadReason(row: {
+  device_class: string;
+  revoked_at: string | Date | null;
+  revocation_kind: string | null;
+  revoke_reason: string | null;
+  wiped_at: string | Date | null;
+}): WipeWithoutUploadReason | null {
+  if (row.device_class !== "mobile" || !row.revoked_at || row.revocation_kind !== "tenant_admin") return null;
+  if (row.revoke_reason === "lost") return "lost";
+  return finalUploadOpen(row) ? null : "upload_window_closed";
 }

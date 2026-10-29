@@ -5,9 +5,17 @@
  * - the phone redeems the QR token or the typed code once (case, dashes and look-alike letters
  *   ignored), within 15 minutes, unless cancelled; it gets a device token, a signed mobile envelope
  *   and its person / site binding; an enrolled phone cannot take a second enrolment;
+ * - a redeem whose answer was lost is answered again for the same phone only (same token, no second
+ *   slot, a "replayed" audit event), within the enrolment's 15 minutes, never once revoked; two
+ *   concurrent redeems of one secret give one activation;
  * - the desktop lists its phones (person, site, enrolled by / at, last sync) and revokes one, or every
  *   phone of a disabled person; the slot is free at once; the revoked phone may only upload (push
- *   only: nothing comes back) and confirm its wipe, then its token is refused everywhere;
+ *   only: nothing comes back), presign uploads of the files of its own work (never downloads, never
+ *   another device's files) and confirm its wipe (with what it dropped), then its token is refused
+ *   everywhere;
+ * - activation_revoked carries the erase marker (wipe: without_upload) only for a phone reported lost
+ *   or past its upload window; a missing activation row, a vendor revocation and a released slot
+ *   answer without it;
  * - another tenant's desktop sees none of it; each step is in the audit ledger.
  */
 import assert from "node:assert/strict";
@@ -154,6 +162,16 @@ try {
   });
   assert.ok(!JSON.stringify(p1.json).includes(a.licence.license_key), "the licence key never reaches the phone");
   const tokenP1 = p1.json.activation_token;
+
+  // Replay: the answer was lost on mobile data; the same phone presents the same enrolment again
+  // (here its QR token after the typed code: either secret of that enrolment).
+  // (Redeems and claims share a limit of 30 per address per 15 minutes: this test stays below it.)
+  const p1Again = await redeem({ token: e1.json.token }, "fp-phone-1");
+  assert.equal(p1Again.status, 200, p1Again.text);
+  assert.equal(p1Again.json.activation_token, tokenP1, "the same activation and token");
+  assert.deepEqual(p1Again.json.enrolment, p1.json.enrolment, "the same binding, the original enrolled_at");
+  assert.equal(p1Again.json.activated_device_count, 1, "no second slot");
+  assert.equal(JSON.parse(p1Again.json.entitlement_envelope.policy_json).device_class, "mobile");
   assert.equal((await refresh(tokenP1)).status, 200, "the device token works");
   const st1 = (await status(a.desk, e1.json.enrolment_id)).json;
   assert.equal(st1.status, "redeemed");
@@ -275,6 +293,59 @@ try {
   assert.deepEqual(finalUpload.json.conflict_items, []);
   assert.deepEqual(finalUpload.json.user_snapshot_required, []);
   assert.equal(finalUpload.json.has_more, false);
+  // Files of the final upload: presign-put only, only for this phone's own announced media.
+  const sha = (text) => createHash("sha256").update(text).digest("hex");
+  const mediaKey = (parentType, parentId, digest) => `ci/media/${a.tenant.id}/${parentType}/${parentId}/${digest}`;
+  const shaPhone = sha("phone photo");
+  const keyPhone = mediaKey("work_orders", "wo-1", shaPhone);
+  const shaAlone = sha("announced without its record");
+  const keyAlone = mediaKey("work_orders", "wo-1", shaAlone);
+  const shaDesk = sha("desktop photo");
+  const keyDesk = mediaKey("equipment", "eq-after-revoke", shaDesk);
+  const presignPut = (token, parentType, parentId, digest, key) =>
+    api.call("POST", "/api/v1/sync/media/presign-put", token, {
+      parent_entity_type: parentType,
+      parent_entity_sync_id: parentId,
+      content_sha256: digest,
+      object_key: key,
+    });
+  const deskMedia = await exchange(a.desk, {
+    ...v2([item("media_attachments", "ma-desk-1", { object_key: keyDesk })]),
+    device_class: "desktop",
+    media_manifest: [{ entity_sync_id: "ma-desk-1", content_sha256: shaDesk, object_key: keyDesk, byte_size: 13 }],
+  });
+  assert.equal(deskMedia.status, 200, deskMedia.text);
+  const phoneMedia = await exchange(tokenP1, {
+    ...v2([item("media_attachments", "ma-phone-1", { object_key: keyPhone })]),
+    media_manifest: [
+      { entity_sync_id: "ma-phone-1", content_sha256: shaPhone, object_key: keyPhone, byte_size: 11 },
+      { entity_sync_id: "ma-phone-2", content_sha256: shaAlone, object_key: keyAlone, byte_size: 28 },
+    ],
+  });
+  assert.equal(phoneMedia.status, 200, phoneMedia.text);
+  assert.equal(phoneMedia.json.acknowledged_items.length, 1);
+  // Allowed: past the guard and the ownership check it reaches the object store (none is
+  // configured in this test, hence 503; the real upload is in media-presign.integration.mjs).
+  const ownPut = await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, keyPhone);
+  assert.equal(ownPut.status, 503, ownPut.text);
+  assert.equal(ownPut.json.error, "object_storage_unavailable");
+  for (const [label, r] of [
+    ["another device's file", await presignPut(tokenP1, "equipment", "eq-after-revoke", shaDesk, keyDesk)],
+    ["announced without its record", await presignPut(tokenP1, "work_orders", "wo-1", shaAlone, keyAlone)],
+    ["never announced", await presignPut(tokenP1, "work_orders", "wo-1", sha("other"), mediaKey("work_orders", "wo-1", sha("other")))],
+    ["key not matching the body", await presignPut(tokenP1, "work_orders", "wo-2", shaPhone, keyPhone)],
+    ["non-canonical key", await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, `${keyPhone}/x`)],
+  ]) {
+    assert.equal(r.status, 403, `${label}: ${r.text}`);
+    assert.equal(r.json.error, "media_not_from_this_device", label);
+  }
+  const getRefused = await api.call("POST", "/api/v1/sync/media/presign-get", tokenP1, { object_key: keyPhone });
+  assert.equal(getRefused.status, 403, getRefused.text);
+  assert.equal(getRefused.json.error, "device_wipe_required", "a removed phone downloads nothing");
+  // The ownership check is for removed phones only: an enrolled phone is not limited by it.
+  const activePut = await presignPut(tokenP3, "equipment", "eq-after-revoke", shaDesk, keyDesk);
+  assert.equal(activePut.status, 503, activePut.text);
+
   const replay = await exchange(tokenP1, beforeRevoke);
   assert.equal(replay.status, 200, replay.text);
   assert.deepEqual(replay.json.inbound_items, [], "a replayed answer sends nothing back to a removed phone");
@@ -283,14 +354,46 @@ try {
   const [revokedRow] = await api.su("SELECT revoked_by_sync_id, revoke_reason FROM machine_activations WHERE id = $1", [d1.device_id]);
   assert.deepEqual(revokedRow, { revoked_by_sync_id: "user-admin", revoke_reason: "admin" });
 
-  const wiped = await api.call("POST", "/api/v1/mobile-device/wipe-confirmed", tokenP1, {});
+  // The wipe confirmation: an invalid body changes nothing; what was dropped is audited.
+  const wipe = (token, body) => api.call("POST", "/api/v1/mobile-device/wipe-confirmed", token, body);
+  for (const bad of [
+    { dropped: { total: -1, by_kind: {} } },
+    { dropped: { total: 1.5, by_kind: {} } },
+    { dropped: { total: 1 } },
+    { dropped: { total: 1, by_kind: { work_orders: -1 } } },
+    { dropped: { total: 1, by_kind: { ["k".repeat(65)]: 1 } } },
+    { dropped: { total: 1, by_kind: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`kind_${i}`, 1])) } },
+    { dropped: { total: 1, by_kind: {}, extra: 1 } },
+    { dropped_total: 1 },
+  ]) {
+    const r = await wipe(tokenP1, bad);
+    assert.equal(r.status, 400, `${JSON.stringify(bad).slice(0, 80)}: ${r.text}`);
+  }
+  const [notWipedYet] = await api.su("SELECT wiped_at FROM machine_activations WHERE id = $1", [d1.device_id]);
+  assert.equal(notWipedYet.wiped_at, null, "an invalid confirmation changes nothing");
+  assert.equal((await refresh(tokenP1)).json.error, "device_wipe_required");
+  const dropped = { total: 3, by_kind: { work_orders: 1, media_attachments: 2 } };
+  const wiped = await wipe(tokenP1, { dropped });
   assert.equal(wiped.status, 200, wiped.text);
-  for (const r of [await refresh(tokenP1), await exchange(tokenP1, v2())]) {
+  const [wipedAudit] = await api.su(
+    "SELECT payload_canonical_sha256 FROM audit_records WHERE action_code = 'mobile_device_wiped' ORDER BY sequence DESC LIMIT 1",
+  );
+  assert.equal(
+    wipedAudit.payload_canonical_sha256,
+    sha(JSON.stringify({ device_id: d1.device_id, dropped })),
+    "what the phone dropped is in the audit ledger",
+  );
+  for (const r of [await refresh(tokenP1), await exchange(tokenP1, v2()), await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, keyPhone)]) {
     assert.equal(r.status, 403, r.text);
-    assert.equal(r.json.error, "activation_revoked");
+    assert.deepEqual(
+      [r.json.error, r.json.wipe, r.json.reason],
+      ["activation_revoked", "without_upload", "upload_window_closed"],
+      "a wiped phone is told to erase without uploading",
+    );
   }
   assert.ok(!(await list(a.desk)).json.devices.some((d) => d.device_id === d1.device_id), "a wiped phone leaves the list");
   assert.equal((await api.call("POST", "/api/v1/mobile-device/wipe-confirmed", tokenP3, {})).status, 409, "only a removed phone confirms a wipe");
+  assert.equal((await api.call("POST", "/api/v1/mobile-device/wipe-confirmed", tokenP3)).status, 409, "no body at all is accepted as empty");
 
   // ── A disabled person: every phone and open enrolment ───────────────────────────────────────
   assert.equal((await issue(a.desk, 6)).status, 409, "person 3 holds a phone and person 5 an open enrolment: full");
@@ -323,13 +426,22 @@ try {
   await api.su("UPDATE machine_activations SET revoked_at = now() - interval '169 hours' WHERE machine_fingerprint = 'fp-phone-3'");
   const late = await exchange(tokenP3, v2());
   assert.equal(late.status, 403, late.text);
-  assert.equal(late.json.error, "activation_revoked", "past the upload window the phone is simply revoked");
+  assert.deepEqual(
+    [late.json.error, late.json.wipe, late.json.reason],
+    ["activation_revoked", "without_upload", "upload_window_closed"],
+    "past the upload window the phone erases without uploading",
+  );
   const lostRevoke = await api.call("POST", `/api/v1/mobile-devices/${(await status(a.desk, e7.json.enrolment_id)).json.device_id}/revoke`, a.desk, { ...actor, lost: true });
   assert.equal(lostRevoke.status, 200, lostRevoke.text);
   for (const r of [await refresh(reEnrolled.json.activation_token), await exchange(reEnrolled.json.activation_token, v2())]) {
     assert.equal(r.status, 403, r.text);
-    assert.equal(r.json.error, "activation_revoked", "a lost phone uploads nothing");
+    assert.deepEqual([r.json.error, r.json.wipe, r.json.reason], ["activation_revoked", "without_upload", "lost"], "a lost phone uploads nothing");
   }
+  // Lost wins over the tenant's state: a suspended tenant's lost phone still erases.
+  await api.su("UPDATE tenants SET is_active = 0 WHERE id = $1", [a.tenant.id]);
+  const lostSuspended = await refresh(reEnrolled.json.activation_token);
+  assert.deepEqual([lostSuspended.status, lostSuspended.json.wipe, lostSuspended.json.reason], [403, "without_upload", "lost"]);
+  await api.su("UPDATE tenants SET is_active = 1 WHERE id = $1", [a.tenant.id]);
   const afterLost = (await list(a.desk)).json.devices;
   assert.ok(!afterLost.some((d) => d.person_sync_id === "user-7"), "a lost phone leaves the list at once");
   assert.ok(!afterLost.some((d) => d.person_sync_id === "user-3"), "so does a removed phone past its upload window");
@@ -339,16 +451,85 @@ try {
   const afterWindow = await redeem({ token: e8.json.token }, "fp-phone-3");
   assert.equal(afterWindow.status, 200, afterWindow.text);
 
+  // ── Concurrent redeems of one secret ────────────────────────────────────────────────────────
+  // Same phone twice (a retry racing the first request): one activation, both answers alike.
+  const e9 = await issue(a.desk, 9);
+  assert.equal(e9.status, 201, e9.text);
+  const [r9a, r9b] = await Promise.all([redeem({ token: e9.json.token }, "fp-phone-9"), redeem({ token: e9.json.token }, "fp-phone-9")]);
+  assert.deepEqual([r9a.status, r9b.status], [200, 200], `${r9a.text} ${r9b.text}`);
+  assert.equal(r9a.json.activation_token, r9b.json.activation_token, "one activation for both answers");
+  assert.deepEqual(r9a.json.enrolment, r9b.json.enrolment);
+  const [{ n: phone9Rows }] = await api.su("SELECT count(*)::int AS n FROM machine_activations WHERE machine_fingerprint = 'fp-phone-9'");
+  assert.equal(phone9Rows, 1);
+  // Not once the phone is revoked, even within the 15 minutes.
+  const phone9 = (await status(a.desk, e9.json.enrolment_id)).json.device_id;
+  assert.equal((await api.call("POST", `/api/v1/mobile-devices/${phone9}/revoke`, a.desk, actor)).status, 200);
+  const replayRevoked = await redeem({ token: e9.json.token }, "fp-phone-9");
+  assert.equal(replayRevoked.status, 404, replayRevoked.text);
+  assert.equal(replayRevoked.json.error, "enrolment_invalid");
+
+  // Two phones racing for one secret: exactly one gets it. Whichever ran second was refused as a
+  // replay by another phone (the first one to run always wins).
+  const eb = await issue(b.desk, 1);
+  assert.equal(eb.status, 201, eb.text);
+  const race = await Promise.all([redeem({ token: eb.json.token }, "fp-b-phone-1"), redeem({ token: eb.json.token }, "fp-b-phone-2")]);
+  assert.deepEqual(race.map((r) => r.status).sort(), [200, 404], race.map((r) => r.text).join(" "));
+  const winner = race[0].status === 200 ? "fp-b-phone-1" : "fp-b-phone-2";
+  const tokenB = race.find((r) => r.status === 200).json.activation_token;
+  assert.equal(race.find((r) => r.status === 404).json.error, "enrolment_invalid");
+  // After the enrolment's 15 minutes, no replay.
+  await api.su(
+    "UPDATE mobile_enrolments SET issued_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes', redeemed_at = now() - interval '6 minutes' WHERE id = $1",
+    [eb.json.enrolment_id],
+  );
+  assert.equal((await redeem({ token: eb.json.token }, winner)).status, 404, "no replay after the enrolment's lifetime");
+
+  // ── activation_revoked without the erase marker: the phone locks and keeps its data ─────────
+  const privileged = async (reason) => ({
+    ...idem(),
+    "X-Operator-Reason": reason,
+    "X-Step-Up-Token": await api.stepUpToken(admin, "machine_trust_change"),
+  });
+  const machineAction = async (tenantId, fingerprint, action) =>
+    api.call(
+      "POST",
+      `/api/v1/tenants/${tenantId}/machines/${encodeURIComponent(fingerprint)}/${action}`,
+      admin,
+      { reason: `integration ${action}` },
+      await privileged(`MACHINE-${action.toUpperCase()}`),
+    );
+  const noMarker = (r, label) => {
+    assert.equal(r.status, 403, `${label}: ${r.text}`);
+    assert.equal(r.json.error, "activation_revoked", label);
+    assert.equal(r.json.wipe, undefined, `${label}: no erase marker`);
+    assert.equal(r.json.reason, undefined, label);
+  };
+  // A slot released by the vendor.
+  assert.equal((await machineAction(b.tenant.id, winner, "release")).status, 200);
+  noMarker(await refresh(tokenB), "released slot");
+  noMarker(await exchange(tokenB, v2()), "released slot (exchange)");
+  // A phone revoked by the vendor (the phone enrolled again after its upload window, above).
+  const tokenP3c = afterWindow.json.activation_token;
+  assert.equal((await machineAction(a.tenant.id, "fp-phone-3", "revoke")).status, 200);
+  noMarker(await refresh(tokenP3c), "vendor revocation");
+  // No activation row at all (a database restored from before the phone was enrolled, a deleted row).
+  assert.equal((await machineAction(a.tenant.id, "fp-phone-3", "reinstate")).status, 200);
+  assert.equal((await refresh(tokenP3c)).status, 200, "reinstated");
+  await api.su("DELETE FROM machine_activations WHERE machine_fingerprint = 'fp-phone-3'");
+  noMarker(await refresh(tokenP3c), "missing activation row");
+  noMarker(await exchange(tokenP3c, v2()), "missing activation row (exchange)");
+
   // ── Audit ledger ────────────────────────────────────────────────────────────────────────────
   const audits = await api.su(
     `SELECT action_code, count(*)::int AS n FROM audit_records
      WHERE action_code LIKE 'mobile_%' GROUP BY action_code ORDER BY action_code`,
   );
   const counts = Object.fromEntries(audits.map((r) => [r.action_code, r.n]));
-  assert.equal(counts.mobile_enrolment_issued, 8, JSON.stringify(counts));
-  assert.equal(counts.mobile_enrolment_redeemed, 4, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_issued, 10, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_redeemed, 6, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_redeem_replayed, 2, JSON.stringify(counts));
   assert.equal(counts.mobile_enrolment_cancelled, 2, JSON.stringify(counts));
-  assert.equal(counts.mobile_device_revoked, 3, JSON.stringify(counts));
+  assert.equal(counts.mobile_device_revoked, 4, JSON.stringify(counts));
   assert.equal(counts.mobile_device_wiped, 1, JSON.stringify(counts));
 
   // ── Schema constraints ──────────────────────────────────────────────────────────────────────

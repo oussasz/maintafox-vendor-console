@@ -3,7 +3,8 @@
  * (deploy/SYNC_EXCHANGE.md): POST /api/v1/sync/media/presign-put -> PUT the bytes to the presigned
  * URL -> POST /api/v1/sync/media/presign-get -> GET the presigned URL returns the exact bytes.
  * Also: one tenant can neither read nor write another tenant's keys, a tampered URL is refused by
- * the object store, a missing bucket is reported, never created by the API, and the pre-start
+ * the object store, a phone removed by its administrator uploads the files of its own final upload
+ * (and nothing else, never a download), a missing bucket is reported, never created by the API, and the pre-start
  * check (api/src/tools/object-store-check.ts) passes only with a working store and settings.
  *
  * Public route: desktops never reach the store directly. Every URL is signed for
@@ -370,6 +371,85 @@ try {
   assert.equal(listed.status, 403, `presigned bucket listing through the route: ${listed.status}`);
   await listed.arrayBuffer();
   assert.equal(await rawStatus(`/${presignedQuery}`), 403, "bucket-level request at / through the route");
+
+  // A phone removed by its administrator uploads the files of its final upload through the same
+  // route: only files of its own work that it announced, and it downloads nothing.
+  {
+    const t = await api.call("POST", "/api/v1/tenants", admin, { slug: "media-phone", display_name: "Media phone" });
+    const l = await api.call("POST", "/api/v1/licenses", admin, { tenant_id: t.json.id, max_machines: 1, max_mobile_devices: 1 });
+    assert.equal(l.status, 201, l.text);
+    const desk = await api.claimDevice(l.json.license_key, "media-phone-desk");
+    const enrolment = await api.call("POST", "/api/v1/mobile-enrolments", desk, {
+      person_sync_id: "user-1",
+      person_label: "Technicien",
+      site_sync_id: "site-1",
+      site_label: "Usine",
+      issued_by_sync_id: "user-admin",
+      issued_by_label: "Admin",
+    });
+    assert.equal(enrolment.status, 201, enrolment.text);
+    const phone = await api.call("POST", "/api/v1/mobile-enrolments/redeem", null, {
+      token: enrolment.json.token,
+      machine_fingerprint: "media-phone-1",
+      device_class: "mobile",
+    });
+    assert.equal(phone.status, 200, phone.text);
+    const phoneToken = phone.json.activation_token;
+    const deviceId = (await api.call("GET", "/api/v1/mobile-devices", desk)).json.devices[0].device_id;
+    const revoked = await api.call("POST", `/api/v1/mobile-devices/${deviceId}/revoke`, desk, {
+      actor_sync_id: "user-admin",
+      actor_label: "Admin",
+    });
+    assert.equal(revoked.status, 200, revoked.text);
+
+    const fieldPhoto = randomBytes(64 * 1024 + 3);
+    const fieldKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(fieldPhoto)}`;
+    const payloadJson = JSON.stringify({ object_key: fieldKey });
+    const finalUpload = await api.call("POST", "/api/v1/sync/exchange", phoneToken, {
+      protocol_version: "v2",
+      idempotency_key: `v2-${randomBytes(8).toString("hex")}`,
+      checkpoint_token: null,
+      current_user_sync_ids: [],
+      device_class: "mobile",
+      outbox_batch: [
+        {
+          idempotency_key: `item-${randomBytes(8).toString("hex")}`,
+          entity_type: "media_attachments",
+          entity_sync_id: "ma-field-1",
+          operation: "create",
+          row_version: 1,
+          base_row_version: null,
+          payload_json: payloadJson,
+          payload_hash: sha256(payloadJson),
+        },
+      ],
+      media_manifest: [{ entity_sync_id: "ma-field-1", content_sha256: sha256(fieldPhoto), object_key: fieldKey, byte_size: fieldPhoto.length }],
+    });
+    assert.equal(finalUpload.status, 200, finalUpload.text);
+    assert.equal(finalUpload.json.acknowledged_items.length, 1, finalUpload.text);
+
+    const fieldPut = await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(fieldPhoto),
+      object_key: fieldKey,
+    });
+    assert.equal(fieldPut.status, 200, fieldPut.text);
+    const fieldPutRes = await fetch(fieldPut.json.url, { method: "PUT", body: fieldPhoto });
+    assert.ok(fieldPutRes.ok, `removed phone's PUT through the route: ${fieldPutRes.status} ${await fieldPutRes.text()}`);
+    assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: fieldKey }))).ContentLength, fieldPhoto.length);
+
+    const otherKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(photo)}`;
+    const notAnnounced = await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(photo),
+      object_key: otherKey,
+    });
+    assert.deepEqual([notAnnounced.status, notAnnounced.json?.error], [403, "media_not_from_this_device"], notAnnounced.text);
+    const download = await api.call("POST", "/api/v1/sync/media/presign-get", phoneToken, { object_key: fieldKey });
+    assert.deepEqual([download.status, download.json?.error], [403, "device_wipe_required"], download.text);
+  }
 
   // The object is still there.
   assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: put.json.object_key }))).ContentLength, photo.length);
