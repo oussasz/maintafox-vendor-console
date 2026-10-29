@@ -66,9 +66,14 @@ function sendSyncRequestError(res: express.Response, err: SyncRequestError): voi
 }
 
 /**
- * Re-checks the device class on every sync request: the class a request carries (absent = desktop,
- * which every desktop released before the mobile app is) must be the class of the activation behind
- * the bearer token. Returns false after answering 409 device_class_mismatch.
+ * Re-checks the device class on the data exchange (v1, v2) and the snapshot: the class a request
+ * carries (absent = desktop, which every desktop released before the mobile app is) must be the
+ * class of the activation behind the bearer token. Returns false after answering 409
+ * device_class_mismatch.
+ *
+ * Scope: only these routes carry a device class. Media, diagnostics, notifications, updates and
+ * tenant status still need a live activation (which holds a slot of its own class), so no class
+ * can use them without a paid slot; they do not re-check the class.
  */
 function deviceClassMatches(
   res: express.Response,
