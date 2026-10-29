@@ -461,8 +461,13 @@ export async function runSyncExchangeV2(
       now,
     );
 
+    // A manifest entry belongs to the device that first reported it (the one that stored the
+    // file): a device announces only its own uploads, so another device's report of the same
+    // media record is ignored, never a takeover (a removed phone could otherwise claim another
+    // device's file and get an upload URL for it). The owner's own re-reports still update it.
+    let mediaManifestIgnored = 0;
     for (const entry of mediaManifest) {
-      await db.run(
+      const written = await db.get<{ ok: number }>(
         `INSERT INTO sync_media_manifest
            (tenant_id, entity_sync_id, content_sha256, object_key, byte_size, reported_by_machine_fingerprint, reported_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -471,7 +476,9 @@ export async function runSyncExchangeV2(
            object_key = EXCLUDED.object_key,
            byte_size = EXCLUDED.byte_size,
            reported_by_machine_fingerprint = EXCLUDED.reported_by_machine_fingerprint,
-           reported_at = EXCLUDED.reported_at`,
+           reported_at = EXCLUDED.reported_at
+         WHERE sync_media_manifest.reported_by_machine_fingerprint = EXCLUDED.reported_by_machine_fingerprint
+         RETURNING 1 AS ok`,
         act.tenantId,
         entry.entity_sync_id,
         entry.content_sha256,
@@ -480,6 +487,7 @@ export async function runSyncExchangeV2(
         act.machineFingerprint,
         now,
       );
+      if (!written) mediaManifestIgnored += 1;
     }
 
     const response: SyncExchangeResponseV2 = {
@@ -525,6 +533,7 @@ export async function runSyncExchangeV2(
       server_batch_id: serverBatchId,
       device_class: body.device_class,
       media_manifest_count: mediaManifest.length,
+      media_manifest_ignored: mediaManifestIgnored,
       user_snapshot_required: newUsers.length,
       // Never include payload bodies; entity types only.
       entity_types: body.outbox_batch.map((i) =>

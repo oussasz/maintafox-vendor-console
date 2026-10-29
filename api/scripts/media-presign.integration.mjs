@@ -422,6 +422,21 @@ try {
         (e) => (e?.$metadata?.httpStatusCode === 404 ? false : Promise.reject(e)),
       );
 
+    // A file the desktop announced but has not uploaded yet.
+    const pendingPhoto = randomBytes(16 * 1024 + 1);
+    const pendingKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(pendingPhoto)}`;
+
+    const deskAnnounce = await api.call("POST", "/api/v1/sync/exchange", desk, {
+      protocol_version: "v2",
+      idempotency_key: `v2-${randomBytes(8).toString("hex")}`,
+      checkpoint_token: null,
+      current_user_sync_ids: [],
+      device_class: "desktop",
+      outbox_batch: [],
+      media_manifest: [{ entity_sync_id: "ma-desk-pending", content_sha256: sha256(pendingPhoto), object_key: pendingKey, byte_size: pendingPhoto.length }],
+    });
+    assert.equal(deskAnnounce.status, 200, deskAnnounce.text);
+
     const fieldPhoto = randomBytes(64 * 1024 + 3);
     const fieldKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(fieldPhoto)}`;
     const mediaItem = (entitySyncId, objectKey) => {
@@ -443,15 +458,16 @@ try {
       checkpoint_token: null,
       current_user_sync_ids: [],
       device_class: "mobile",
-      outbox_batch: [mediaItem("ma-field-1", fieldKey), mediaItem("ma-field-2", deskKey)],
+      outbox_batch: [mediaItem("ma-field-1", fieldKey), mediaItem("ma-field-2", deskKey), mediaItem("ma-field-3", pendingKey)],
       media_manifest: [
         { entity_sync_id: "ma-field-1", content_sha256: sha256(fieldPhoto), object_key: fieldKey, byte_size: fieldPhoto.length },
         // The desktop's stored file, announced by the phone with a record of its own.
         { entity_sync_id: "ma-field-2", content_sha256: sha256(deskPhoto), object_key: deskKey, byte_size: deskPhoto.length },
+        { entity_sync_id: "ma-field-3", content_sha256: sha256(pendingPhoto), object_key: pendingKey, byte_size: pendingPhoto.length },
       ],
     });
     assert.equal(finalUpload.status, 200, finalUpload.text);
-    assert.equal(finalUpload.json.acknowledged_items.length, 2, finalUpload.text);
+    assert.equal(finalUpload.json.acknowledged_items.length, 3, finalUpload.text);
 
     const presignField = () =>
       api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
@@ -476,8 +492,19 @@ try {
     assert.ok(fieldPutRes.ok, `removed phone's PUT through the route: ${fieldPutRes.status} ${await fieldPutRes.text()}`);
     assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: fieldKey }))).ContentLength, fieldPhoto.length);
 
+    // Announced by the desktop too but not stored yet: the phone gets a URL (bound to the hash, it
+    // can only store those same bytes), never "already stored", or the photo would be lost.
+    const pendingPut = await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(pendingPhoto),
+      object_key: pendingKey,
+    });
+    assert.equal(pendingPut.status, 200, pendingPut.text);
+    assert.ok((await fetch(pendingPut.json.url, { method: "PUT", body: pendingPhoto, headers: pendingPut.json.headers })).ok);
+
     // Already on the server: the phone gets no URL, it counts the file as uploaded (a retry after
-    // a lost answer; or another device's file it announced, which it can never replace).
+    // a lost answer; or another device's stored file it announced, which it can never replace).
     for (const r of [
       await presignField(),
       await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {

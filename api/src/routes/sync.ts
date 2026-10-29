@@ -260,26 +260,12 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     return row?.ok === 1;
   }
 
-  /** Whether another device of the tenant announced this object key in its own media manifest. */
-  async function announcedByAnotherDevice(act: ActivationAuthContext, objectKey: string): Promise<boolean> {
-    const row = await db.get<{ ok: number }>(
-      `SELECT 1 AS ok FROM sync_media_manifest
-       WHERE tenant_id = $1 AND object_key = $2 AND reported_by_machine_fingerprint <> $3
-       LIMIT 1`,
-      act.tenantId,
-      objectKey,
-      act.machineFingerprint,
-    );
-    return row?.ok === 1;
-  }
-
-  /** 409 for a removed phone: the file is (or will be) on the server already; it counts as uploaded. */
-  function sendMediaAlreadyStored(res: express.Response, act: ActivationAuthContext, why: string): void {
+  /** 409 for a removed phone: the object is on the server already; it counts as uploaded. */
+  function sendMediaAlreadyStored(res: express.Response, act: ActivationAuthContext): void {
     structuredLog("media_presign_put_refused", {
       tenant_id: act.tenantId,
       machine_fingerprint: act.machineFingerprint,
       reason: "media_already_stored",
-      why,
     });
     res.status(409).json({
       error: "media_already_stored",
@@ -298,8 +284,9 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
    *
    * A phone removed by its administrator may still call it during its upload window
    * (activationAuthMiddleware wipeOnly), for its own files only (removedPhoneOwnsMedia), the key
-   * matching the body; 409 media_already_stored when the key is another device's announced file or
-   * the object already exists (content-addressed: the phone counts it as uploaded).
+   * matching the body; 409 media_already_stored only when the object already exists (checked on
+   * the store; content-addressed: the phone counts it as uploaded). A key another device announced
+   * but has not stored yet gets a URL: bound to the hash, it can only store the same bytes.
    */
   app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
@@ -369,10 +356,6 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         });
         return;
       }
-      if (await announcedByAnotherDevice(act, objectKey)) {
-        sendMediaAlreadyStored(res, act, "announced_by_another_device");
-        return;
-      }
     }
     if (!media) {
       res.status(503).json({ error: "object_storage_unavailable" });
@@ -380,7 +363,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     }
     try {
       if (act.wipeOnly && (await media.headObject(objectKey))) {
-        sendMediaAlreadyStored(res, act, "object_exists");
+        sendMediaAlreadyStored(res, act);
         return;
       }
       res.json(

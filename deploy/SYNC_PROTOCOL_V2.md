@@ -42,9 +42,11 @@ the licence is revoked or expired (those checks do not apply to them):
   reported in a `media_manifest` entry with the same `content_sha256`, whose `media_attachments`
   record this phone pushed; the key must be
   `{env}/media/{tenant}/{parent_entity_type}/{parent_entity_sync_id}/{content_sha256}` matching the
-  body. Otherwise `403 media_not_from_this_device`. `409 media_already_stored` when another device
-  announced the same key or the object already exists: content-addressed, the phone counts the
-  file as uploaded. So: exchange first (record + manifest), then presign-put, then the PUT with the
+  body. Otherwise `403 media_not_from_this_device`. `409 media_already_stored` only when the object
+  already exists on the store: content-addressed, the phone counts the file as uploaded. (A key
+  another device announced but has not stored yet gets a URL; bound to the hash, it can only store
+  the same bytes.) A manifest entry belongs to the device that first reported it: another device's
+  report of the same `entity_sync_id` is ignored. So: exchange first (record + manifest), then presign-put, then the PUT with the
   returned `headers`. Same limits as any phone (15-minute URL, 32 MiB per object at the media route,
   bytes bound to the SHA-256). `presign-get` stays refused (`device_wipe_required`).
 - `/api/v1/mobile-device/wipe-confirmed`: optional strict body

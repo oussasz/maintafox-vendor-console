@@ -11,8 +11,8 @@
  *   concurrent redeems of one secret give one activation;
  * - the desktop lists its phones (person, site, enrolled by / at, last sync) and revokes one, or every
  *   phone of a disabled person; the slot is free at once; the revoked phone may only upload (push
- *   only: nothing comes back), presign uploads of the files of its own work (never downloads; a key
- *   another device announced counts as already stored), also while its tenant is suspended, and
+ *   only: nothing comes back), presign uploads of the files of its own work (never downloads, never
+ *   another device's manifest entry), also while its tenant is suspended, and
  *   confirm its wipe (with what it dropped), then its token is refused everywhere;
  * - activation_revoked carries the erase marker (wipe: without_upload) only for a phone reported lost
  *   or past its upload window; a missing activation row, a vendor revocation and a released slot
@@ -374,15 +374,41 @@ try {
   const getRefused = await api.call("POST", "/api/v1/sync/media/presign-get", tokenP1, { object_key: keyPhone });
   assert.equal(getRefused.status, 403, getRefused.text);
   assert.equal(getRefused.json.error, "device_wipe_required", "a removed phone downloads nothing");
+  // The phone cannot take over another device's manifest entry (its media record id): the
+  // entry stays the desktop's, and the phone gets no URL for the key it tried to put there.
+  const keyTaken = mediaKey("equipment", "eq-after-revoke", sha("takeover"));
+  const takeover = await exchange(tokenP1, {
+    ...v2(),
+    media_manifest: [{ entity_sync_id: "ma-desk-1", content_sha256: sha("takeover"), object_key: keyTaken, byte_size: 8 }],
+  });
+  assert.equal(takeover.status, 200, takeover.text);
+  const [deskEntry] = await api.su(
+    "SELECT object_key, content_sha256, reported_by_machine_fingerprint FROM sync_media_manifest WHERE tenant_id = $1 AND entity_sync_id = 'ma-desk-1'",
+    [a.tenant.id],
+  );
+  assert.deepEqual(deskEntry, { object_key: keyDesk, content_sha256: shaDesk, reported_by_machine_fingerprint: "fp-enrol-a-desk" });
+  const takeoverPut = await presignPut(tokenP1, "equipment", "eq-after-revoke", sha("takeover"), keyTaken);
+  assert.deepEqual([takeoverPut.status, takeoverPut.json.error], [403, "media_not_from_this_device"], takeoverPut.text);
+  // The desktop's own re-report of its entry still updates it.
+  const deskAgain = await exchange(a.desk, {
+    ...v2(),
+    device_class: "desktop",
+    media_manifest: [{ entity_sync_id: "ma-desk-1", content_sha256: shaDesk, object_key: keyDesk, byte_size: 14 }],
+  });
+  assert.equal(deskAgain.status, 200, deskAgain.text);
+  const [deskEntryAgain] = await api.su("SELECT byte_size FROM sync_media_manifest WHERE tenant_id = $1 AND entity_sync_id = 'ma-desk-1'", [a.tenant.id]);
+  assert.equal(Number(deskEntryAgain.byte_size), 14);
   // The phone announces another device's file (key and hash known from earlier pulls) with a
-  // record of its own: never a URL for it; that file counts as already stored.
-  const hijack = await exchange(tokenP1, {
+  // record of its own. Not stored yet, so it is not "already stored": it gets past every check
+  // to the store (503 here, no store configured; with one, a URL bound to that hash, which can
+  // only store the same bytes: media-presign.integration.mjs).
+  const shared = await exchange(tokenP1, {
     ...v2([item("media_attachments", "ma-phone-3", { object_key: keyDesk })]),
     media_manifest: [{ entity_sync_id: "ma-phone-3", content_sha256: shaDesk, object_key: keyDesk, byte_size: 13 }],
   });
-  assert.equal(hijack.status, 200, hijack.text);
-  const hijackPut = await presignPut(tokenP1, "equipment", "eq-after-revoke", shaDesk, keyDesk);
-  assert.deepEqual([hijackPut.status, hijackPut.json.error], [409, "media_already_stored"], hijackPut.text);
+  assert.equal(shared.status, 200, shared.text);
+  const sharedPut = await presignPut(tokenP1, "equipment", "eq-after-revoke", shaDesk, keyDesk);
+  assert.deepEqual([sharedPut.status, sharedPut.json.error], [503, "object_storage_unavailable"], sharedPut.text);
   // The ownership check is for removed phones only: an enrolled phone is not limited by it, but a
   // phone's key must end with the file's SHA-256 (its URL is bound to that hash).
   const activePut = await presignPut(tokenP3, "equipment", "eq-after-revoke", shaDesk, keyDesk);
@@ -535,6 +561,11 @@ try {
   const winner = race[0].status === 200 ? "fp-b-phone-1" : "fp-b-phone-2";
   const tokenB = race.find((r) => r.status === 200).json.activation_token;
   assert.equal(race.find((r) => r.status === 404).json.error, "enrolment_invalid");
+  // No replay while the tenant is suspended.
+  await api.su("UPDATE tenants SET is_active = 0 WHERE id = $1", [b.tenant.id]);
+  const replaySuspended = await redeem({ token: eb.json.token }, winner, { headers: { "X-Forwarded-For": "192.0.2.10" } });
+  assert.deepEqual([replaySuspended.status, replaySuspended.json.error], [404, "enrolment_invalid"], replaySuspended.text);
+  await api.su("UPDATE tenants SET is_active = 1 WHERE id = $1", [b.tenant.id]);
   // After the enrolment's 15 minutes, no replay.
   await api.su(
     "UPDATE mobile_enrolments SET issued_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes', redeemed_at = now() - interval '6 minutes' WHERE id = $1",
