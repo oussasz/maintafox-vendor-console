@@ -322,6 +322,17 @@ try {
   const p1Refused = await refresh(tokenP1c, { device_class: "mobile" });
   assert.equal(p1Refused.status, 403);
   assert.equal(p1Refused.json.error, "mobile_not_licensed");
+  // Sync stops the phone at once too (exchange v1/v2 and snapshot), never the desktop.
+  for (const [path, body] of [
+    ["exchange", v1("mobile")],
+    ["exchange", v2("mobile")],
+    ["snapshot", snapshot("mobile")],
+  ]) {
+    const r = await sync(path, tokenP1c, body);
+    assert.equal(r.status, 403, `${path} ${body.protocol_version}: ${r.text}`);
+    assert.equal(r.json.error, "mobile_not_licensed");
+  }
+  assert.equal((await sync("exchange", tokenA, v2("desktop"))).status, 200, "the desktop still syncs");
   assert.equal((await claim(phone1, "mobile")).json.error, "mobile_not_licensed");
   assert.equal((await refresh(tokenA)).status, 200, "the desktop is not affected");
 

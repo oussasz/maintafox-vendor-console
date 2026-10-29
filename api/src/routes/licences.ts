@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { PRIVILEGED_REASON_MIN_LENGTH } from "../app/config.js";
-import { MaxMobileDevicesSchema, slotLimitFor, type DeviceClass } from "../app/device-class.js";
+import { MaxMobileDevicesSchema, slotLimitFor, type DeviceClass, MOBILE_NOT_LICENSED_BODY } from "../app/device-class.js";
 import { parsePagination, resolveActorId, sendValidationError } from "../app/http.js";
 import { newId, randomLicenseKey, structuredLog } from "../app/runtime.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
@@ -197,8 +197,9 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
     const input = parsed.data;
     const nextMax = input.max_machines ?? row.max_machines;
     // Lowering a count below the devices already active evicts nobody (same rule as max_machines):
-    // those devices keep working until a vendor operator revokes them one by one, and their next
-    // policy refresh is refused when the count is 0. New claims respect the new count at once.
+    // new claims respect the new count at once, but devices already active keep working. For an
+    // immediate cut-off of a device, a vendor operator must revoke it. Setting the phone count to 0
+    // stops every phone of the licence at once (policy refresh and sync answer mobile_not_licensed).
     const nextMaxMobile = input.max_mobile_devices ?? row.max_mobile_devices;
     const nextExpires =
       input.expires_at === undefined ? row.expires_at : input.expires_at === null ? null : input.expires_at;
@@ -350,6 +351,9 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       if (row.revocation_kind !== "machine") {
         return { status: 409, body: { error: "license_revoked", message: "The licence itself is revoked; issue a new licence." } };
       }
+      // Lock first, then read the licence, as claim does: the counts read below cannot change
+      // before the device takes its slot.
+      await db.lockXact("license-slots", row.license_id);
       const lic = await db.get("SELECT max_machines, max_mobile_devices, revoked_at FROM license_keys WHERE id = ?", row.license_id) as
         | { max_machines: number; max_mobile_devices: number; revoked_at: string | null }
         | undefined;
@@ -359,9 +363,8 @@ export function registerLicencesRoutes(app: express.Express, ctx: ApiContext): v
       // The device comes back on a slot of its own class.
       // 403 as on claim and policy refresh: the licence does not include phones (not a full pool).
       if (row.device_class === "mobile" && lic.max_mobile_devices <= 0) {
-        return { status: 403, body: { error: "mobile_not_licensed", device_class: "mobile", max_mobile_devices: 0 } };
+        return { status: 403, body: { ...MOBILE_NOT_LICENSED_BODY } };
       }
-      await db.lockXact("license-slots", row.license_id);
       const limit = slotLimitFor(lic, row.device_class);
       if (await countActiveActivations(row.license_id, row.device_class) >= limit) {
         return {
