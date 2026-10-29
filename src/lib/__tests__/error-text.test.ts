@@ -25,7 +25,7 @@ describe("errorText", () => {
 
   it("translates a phone refused on a licence without mobile devices", async () => {
     const err = await apiRequestError(
-      refusal(409, { error: "mobile_not_licensed", device_class: "mobile", max_mobile_devices: 0 }),
+      refusal(403, { error: "mobile_not_licensed", device_class: "mobile", max_mobile_devices: 0 }),
     );
     expect(err.params).toEqual({ max: 0 });
     expect(errorText(err)).toBe(

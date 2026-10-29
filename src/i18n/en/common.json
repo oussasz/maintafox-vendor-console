@@ -152,6 +152,7 @@
       "tenant_conflict": "This tenant slug is already taken. Choose another slug.",
       "idempotency_key_conflict": "This request was already processed with different inputs. Submit it again.",
       "slot_limit_reached": "Activation slot limit reached for this licence.",
+      "device_class_mismatch": "This device was activated as another kind of device (computer or phone). Activate it again with the right app.",
       "mobile_not_licensed": "This licence does not include mobile devices. Set a number of mobile devices on the licence first.",
       "no_policy_history": "No earlier policy to roll back to.",
       "no_force_min_app_version": "No minimum version is set any more. Reload to see the current rule.",
