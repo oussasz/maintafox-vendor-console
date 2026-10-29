@@ -237,8 +237,8 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
    * Whether a phone removed by its administrator (wipeOnly) may upload this object: only a file of
    * its own work. The server keeps no owner per object, so ownership is what this phone itself
    * exchanged: a media_manifest entry it reported for exactly this key and content hash, whose
-   * media_attachments record it pushed (sync_mirror_ingress row of this device). A key another
-   * device announced, or one announced without its record, is refused.
+   * media_attachments record it pushed (sync_mirror_ingress row of this device). One announced
+   * without its record is refused.
    */
   async function removedPhoneOwnsMedia(act: ActivationAuthContext, objectKey: string, contentSha256: string): Promise<boolean> {
     const row = await db.get<{ ok: number }>(
@@ -260,11 +260,46 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     return row?.ok === 1;
   }
 
+  /** Whether another device of the tenant announced this object key in its own media manifest. */
+  async function announcedByAnotherDevice(act: ActivationAuthContext, objectKey: string): Promise<boolean> {
+    const row = await db.get<{ ok: number }>(
+      `SELECT 1 AS ok FROM sync_media_manifest
+       WHERE tenant_id = $1 AND object_key = $2 AND reported_by_machine_fingerprint <> $3
+       LIMIT 1`,
+      act.tenantId,
+      objectKey,
+      act.machineFingerprint,
+    );
+    return row?.ok === 1;
+  }
+
+  /** 409 for a removed phone: the file is (or will be) on the server already; it counts as uploaded. */
+  function sendMediaAlreadyStored(res: express.Response, act: ActivationAuthContext, why: string): void {
+    structuredLog("media_presign_put_refused", {
+      tenant_id: act.tenantId,
+      machine_fingerprint: act.machineFingerprint,
+      reason: "media_already_stored",
+      why,
+    });
+    res.status(409).json({
+      error: "media_already_stored",
+      message: "This file is already on the server (same key, same content): it counts as uploaded.",
+    });
+  }
+
   /**
-   * Presigned PUT for one media object of the tenant. A phone removed by its administrator may still
-   * call it during its upload window (activationAuthMiddleware wipeOnly), for its own files only
-   * (removedPhoneOwnsMedia); the key must then be the canonical one of the announced file
-   * (`{env}/media/{tenant}/{parent type}/{parent sync id}/{content sha256}`, matching the body).
+   * Presigned PUT for one media object of the tenant.
+   *
+   * For phones the URL is bound to the content: the key's last segment must be the file's SHA-256
+   * (`{env}/media/{tenant}/{parent type}/{parent sync id}/{content sha256}`) and the URL carries it
+   * as a signed `x-amz-checksum-sha256` header that the phone must send (`headers` in the answer);
+   * the store refuses other bytes, so a phone can never replace a file with different content.
+   * Desktops get an unbound URL as before (their uploader does not send the header yet).
+   *
+   * A phone removed by its administrator may still call it during its upload window
+   * (activationAuthMiddleware wipeOnly), for its own files only (removedPhoneOwnsMedia), the key
+   * matching the body; 409 media_already_stored when the key is another device's announced file or
+   * the object already exists (content-addressed: the phone counts it as uploaded).
    */
   app.post("/api/v1/sync/media/presign-put", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
@@ -305,15 +340,24 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       res.status(403).json({ error: "object_key_tenant_mismatch" });
       return;
     }
+    const segments = objectKey.split("/");
+    const keySha = segments[segments.length - 1] ?? "";
+    if (act.deviceClass === "mobile" && !/^[0-9a-f]{64}$/.test(keySha)) {
+      res.status(400).json({
+        error: "presign_put_failed",
+        message: "A phone's object key must end with the file's SHA-256 (64 lowercase hex characters).",
+      });
+      return;
+    }
     if (act.wipeOnly) {
-      const [, , , parentType, parentSyncId, sha, ...rest] = objectKey.split("/");
+      const [, , , parentType, parentSyncId, sha, ...rest] = segments;
       const sent = parsed.data;
       const canonical =
         rest.length === 0 &&
         parentType === sent.parent_entity_type.trim() &&
         parentSyncId === sent.parent_entity_sync_id.trim() &&
         sha === sent.content_sha256.trim().toLowerCase();
-      if (!canonical || !(await removedPhoneOwnsMedia(act, objectKey, sha))) {
+      if (!canonical || !(await removedPhoneOwnsMedia(act, objectKey, keySha))) {
         structuredLog("media_presign_put_refused", {
           tenant_id: act.tenantId,
           machine_fingerprint: act.machineFingerprint,
@@ -325,13 +369,25 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         });
         return;
       }
+      if (await announcedByAnotherDevice(act, objectKey)) {
+        sendMediaAlreadyStored(res, act, "announced_by_another_device");
+        return;
+      }
     }
     if (!media) {
       res.status(503).json({ error: "object_storage_unavailable" });
       return;
     }
     try {
-      res.json(await media.presignPut(objectKey));
+      if (act.wipeOnly && (await media.headObject(objectKey))) {
+        sendMediaAlreadyStored(res, act, "object_exists");
+        return;
+      }
+      res.json(
+        act.deviceClass === "mobile"
+          ? await media.presignPutWithChecksum(objectKey, keySha)
+          : await media.presignPut(objectKey),
+      );
     } catch (e) {
       sendObjectStoreError(res, "media_presign_put_failed", e, { tenant_id: act.tenantId });
     }

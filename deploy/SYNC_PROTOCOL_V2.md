@@ -21,24 +21,37 @@ through the same licence/activation checks as v1 (`401 token_superseded`,
 The device identity is the activation's `(tenant_id, machine_fingerprint)`; nothing in the body can
 change it.
 
+### Media uploads from phones
+
+For a phone (device class `mobile`), `presign-put` answers a URL bound to the file's content: the
+object key must end with the file's SHA-256 (64 lowercase hex; otherwise `400 presign_put_failed`),
+and the answer carries `headers: { "x-amz-checksum-sha256": "<base64 of that SHA-256>" }`. The PUT
+must send exactly these headers (they are signed); the store refuses other bytes. Desktops get an
+unbound URL as before (no `headers`), until their uploader sends the header.
+
 ### Phones removed by their administrator
 
 A phone removed from the customer's desktop (`POST /api/v1/mobile-devices/:id/revoke`, or
 `revoke-person`) gets `403 device_wipe_required` on every route except, for 168 hours
-(`WIPE_UPLOAD_WINDOW_HOURS`), these three (POST):
+(`WIPE_UPLOAD_WINDOW_HOURS`), these three (POST). They stay open while the tenant is suspended or
+the licence is revoked or expired (those checks do not apply to them):
 
 - `/api/v1/sync/exchange`: v2 only, push only (no inbound items, conflicts or user snapshots; the
   checkpoint does not move). Its `media_manifest` is recorded as usual.
 - `/api/v1/sync/media/presign-put`: only for a file of its own work: an `object_key` this phone
   reported in a `media_manifest` entry with the same `content_sha256`, whose `media_attachments`
-  record this phone pushed, and the key must be `{env}/media/{tenant}/{parent_entity_type}/{parent_entity_sync_id}/{content_sha256}`
-  matching the body. Otherwise `403 media_not_from_this_device`. So: exchange first (record +
-  manifest), then presign-put. Same limits as any device (15-minute URL, 32 MiB per object at the
-  media route). `presign-get` stays refused (`device_wipe_required`).
+  record this phone pushed; the key must be
+  `{env}/media/{tenant}/{parent_entity_type}/{parent_entity_sync_id}/{content_sha256}` matching the
+  body. Otherwise `403 media_not_from_this_device`. `409 media_already_stored` when another device
+  announced the same key or the object already exists: content-addressed, the phone counts the
+  file as uploaded. So: exchange first (record + manifest), then presign-put, then the PUT with the
+  returned `headers`. Same limits as any phone (15-minute URL, 32 MiB per object at the media route,
+  bytes bound to the SHA-256). `presign-get` stays refused (`device_wipe_required`).
 - `/api/v1/mobile-device/wipe-confirmed`: optional strict body
-  `{ "dropped": { "total": <int >= 0>, "by_kind": { "<kind, 1-64 chars>": <int >= 0>, ... at most 32 } } }`
-  (what was erased unsent, kept in the `mobile_device_wiped` audit entry); `{}` or no body is
-  accepted; anything else is `400 invalid_request` and changes nothing.
+  `{ "dropped": { "total": <int >= 0>, "by_kind": { "<kind: [a-z0-9_]{1,64}>": <int >= 0>, ... at most 32 } } }`
+  with `total` at least the sum of `by_kind` (what was erased unsent, kept in the
+  `mobile_device_wiped` audit entry, kinds sorted); `{}` or no body is accepted; anything else is
+  `400 invalid_request` and changes nothing.
 
 `403 activation_revoked` tells a phone to erase without uploading only when it carries the marker:
 `{ "error": "activation_revoked", "message": "...", "wipe": "without_upload", "reason": "lost" | "upload_window_closed" }`
@@ -46,7 +59,6 @@ A phone removed from the customer's desktop (`POST /api/v1/mobile-devices/:id/re
 comes before the tenant and licence checks. Every other `activation_revoked` (no activation row, e.g.
 after a database restore; a vendor revocation; a released slot) has no `wipe` field: the phone locks
 and keeps its data.
-
 
 ## 2. Entity registry
 

@@ -5,14 +5,15 @@
  * - the phone redeems the QR token or the typed code once (case, dashes and look-alike letters
  *   ignored), within 15 minutes, unless cancelled; it gets a device token, a signed mobile envelope
  *   and its person / site binding; an enrolled phone cannot take a second enrolment;
- * - a redeem whose answer was lost is answered again for the same phone only (same token, no second
- *   slot, a "replayed" audit event), within the enrolment's 15 minutes, never once revoked; two
+ * - every redeem carries the app's redeem_nonce; a redeem whose answer was lost is answered again
+ *   only for the same phone with the same nonce (same token, no second slot, a "replayed" audit
+ *   event with the request's address), within the enrolment's 15 minutes, never once revoked; two
  *   concurrent redeems of one secret give one activation;
  * - the desktop lists its phones (person, site, enrolled by / at, last sync) and revokes one, or every
  *   phone of a disabled person; the slot is free at once; the revoked phone may only upload (push
- *   only: nothing comes back), presign uploads of the files of its own work (never downloads, never
- *   another device's files) and confirm its wipe (with what it dropped), then its token is refused
- *   everywhere;
+ *   only: nothing comes back), presign uploads of the files of its own work (never downloads; a key
+ *   another device announced counts as already stored), also while its tenant is suspended, and
+ *   confirm its wipe (with what it dropped), then its token is refused everywhere;
  * - activation_revoked carries the erase marker (wipe: without_upload) only for a phone reported lost
  *   or past its upload window; a missing activation row, a vendor revocation and a released slot
  *   answer without it;
@@ -76,14 +77,23 @@ try {
     issued_by_label: "Admin Principal",
   });
   const issue = (desk, n) => api.call("POST", "/api/v1/mobile-enrolments", desk, person(n));
-  const redeem = (secret, fingerprint) =>
-    api.call("POST", "/api/v1/mobile-enrolments/redeem", null, {
-      ...secret,
-      machine_fingerprint: fingerprint,
-      machine_label: "Mobile (test)",
-      app_version: "1.2.3",
-      device_class: "mobile",
-    });
+  // The app's redeem_nonce: one per install here (the app makes one per secret and reuses it).
+  const nonceOf = (fingerprint) => createHash("sha256").update(`nonce:${fingerprint}`).digest("base64url");
+  const redeem = (secret, fingerprint, { nonce = nonceOf(fingerprint), headers = {} } = {}) =>
+    api.call(
+      "POST",
+      "/api/v1/mobile-enrolments/redeem",
+      null,
+      {
+        ...secret,
+        machine_fingerprint: fingerprint,
+        machine_label: "Mobile (test)",
+        app_version: "1.2.3",
+        device_class: "mobile",
+        ...(nonce === null ? {} : { redeem_nonce: nonce }),
+      },
+      headers,
+    );
   const status = (desk, id) => api.call("GET", `/api/v1/mobile-enrolments/${id}`, desk);
   const actor = { actor_sync_id: "user-admin", actor_label: "Admin Principal" };
   const refresh = (token) => api.call("POST", "/api/v1/activation/policy-refresh", token, { device_class: "mobile" });
@@ -143,6 +153,9 @@ try {
     device_class: "desktop",
   });
   assert.equal(asDesktop.status, 400, "only phones redeem");
+  const noNonce = await redeem({ token: e1.json.token }, "fp-phone-x", { nonce: null });
+  assert.deepEqual([noNonce.status, noNonce.json.error], [400, "invalid_body"], "redeem_nonce is required");
+  assert.equal((await redeem({ token: e1.json.token }, "fp-phone-x", { nonce: "too-short" })).status, 400);
 
   // ── Redeem with the typed code (lower case, no dash, O for 0, L for 1) ─────────────────────
   const typed = e1.json.code.replace("-", "").toLowerCase().replace(/0/g, "o").replace(/1/g, "l");
@@ -166,7 +179,7 @@ try {
   // Replay: the answer was lost on mobile data; the same phone presents the same enrolment again
   // (here its QR token after the typed code: either secret of that enrolment).
   // (Redeems and claims share a limit of 30 per address per 15 minutes: this test stays below it.)
-  const p1Again = await redeem({ token: e1.json.token }, "fp-phone-1");
+  const p1Again = await redeem({ token: e1.json.token }, "fp-phone-1", { headers: { "X-Forwarded-For": "203.0.113.9" } });
   assert.equal(p1Again.status, 200, p1Again.text);
   assert.equal(p1Again.json.activation_token, tokenP1, "the same activation and token");
   assert.deepEqual(p1Again.json.enrolment, p1.json.enrolment, "the same binding, the original enrolled_at");
@@ -176,6 +189,25 @@ try {
   const st1 = (await status(a.desk, e1.json.enrolment_id)).json;
   assert.equal(st1.status, "redeemed");
   assert.ok(st1.device_id);
+  const [replayAudit] = await api.su(
+    "SELECT payload_canonical_sha256 FROM audit_records WHERE action_code = 'mobile_enrolment_redeem_replayed' ORDER BY sequence DESC LIMIT 1",
+  );
+  assert.equal(
+    replayAudit.payload_canonical_sha256,
+    createHash("sha256")
+      .update(JSON.stringify({ enrolment_id: e1.json.enrolment_id, activation_id: st1.device_id, person_sync_id: "user-1", site_sync_id: "site-nord", request_ip: "203.0.113.9" }))
+      .digest("hex"),
+    "the replayed audit entry records the request's address",
+  );
+  // A leaked QR plus the phone's fingerprint is not enough: another install has another nonce.
+  const otherClient = await redeem({ token: e1.json.token }, "fp-phone-1", {
+    nonce: createHash("sha256").update("another install").digest("base64url"),
+    headers: { "X-Forwarded-For": "198.51.100.4" },
+  });
+  assert.deepEqual([otherClient.status, otherClient.json.error], [404, "enrolment_invalid"], otherClient.text);
+  assert.ok(!otherClient.text.includes(tokenP1));
+  const [stored1] = await api.su("SELECT redeem_nonce_sha256 FROM mobile_enrolments WHERE id = $1", [e1.json.enrolment_id]);
+  assert.equal(stored1.redeem_nonce_sha256, createHash("sha256").update(nonceOf("fp-phone-1")).digest("hex"), "only the nonce's hash is kept");
 
   // Single use: neither the code nor the QR token works again.
   assert.equal((await redeem({ code: e1.json.code }, "fp-phone-9")).status, 404);
@@ -334,7 +366,7 @@ try {
     ["announced without its record", await presignPut(tokenP1, "work_orders", "wo-1", shaAlone, keyAlone)],
     ["never announced", await presignPut(tokenP1, "work_orders", "wo-1", sha("other"), mediaKey("work_orders", "wo-1", sha("other")))],
     ["key not matching the body", await presignPut(tokenP1, "work_orders", "wo-2", shaPhone, keyPhone)],
-    ["non-canonical key", await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, `${keyPhone}/x`)],
+    ["non-canonical key", await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, `ci/media/${a.tenant.id}/work_orders/x/wo-1/${shaPhone}`)],
   ]) {
     assert.equal(r.status, 403, `${label}: ${r.text}`);
     assert.equal(r.json.error, "media_not_from_this_device", label);
@@ -342,9 +374,31 @@ try {
   const getRefused = await api.call("POST", "/api/v1/sync/media/presign-get", tokenP1, { object_key: keyPhone });
   assert.equal(getRefused.status, 403, getRefused.text);
   assert.equal(getRefused.json.error, "device_wipe_required", "a removed phone downloads nothing");
-  // The ownership check is for removed phones only: an enrolled phone is not limited by it.
+  // The phone announces another device's file (key and hash known from earlier pulls) with a
+  // record of its own: never a URL for it; that file counts as already stored.
+  const hijack = await exchange(tokenP1, {
+    ...v2([item("media_attachments", "ma-phone-3", { object_key: keyDesk })]),
+    media_manifest: [{ entity_sync_id: "ma-phone-3", content_sha256: shaDesk, object_key: keyDesk, byte_size: 13 }],
+  });
+  assert.equal(hijack.status, 200, hijack.text);
+  const hijackPut = await presignPut(tokenP1, "equipment", "eq-after-revoke", shaDesk, keyDesk);
+  assert.deepEqual([hijackPut.status, hijackPut.json.error], [409, "media_already_stored"], hijackPut.text);
+  // The ownership check is for removed phones only: an enrolled phone is not limited by it, but a
+  // phone's key must end with the file's SHA-256 (its URL is bound to that hash).
   const activePut = await presignPut(tokenP3, "equipment", "eq-after-revoke", shaDesk, keyDesk);
   assert.equal(activePut.status, 503, activePut.text);
+  const notContentKey = await presignPut(tokenP3, "equipment", "eq-1", shaDesk, `ci/media/${a.tenant.id}/equipment/eq-1/photo.jpg`);
+  assert.equal(notContentKey.status, 400, notContentKey.text);
+
+  // A suspended tenant does not stop the final upload (nor the files), only everything else.
+  await api.su("UPDATE tenants SET is_active = 0 WHERE id = $1", [a.tenant.id]);
+  const suspendedUpload = await exchange(tokenP1, v2([item("equipment", "eq-while-suspended", { code: "EQ-S" })]));
+  assert.equal(suspendedUpload.status, 200, suspendedUpload.text);
+  assert.equal(suspendedUpload.json.acknowledged_items.length, 1);
+  assert.equal((await presignPut(tokenP1, "work_orders", "wo-1", shaPhone, keyPhone)).status, 503, "past the guard while suspended");
+  assert.equal((await refresh(tokenP1)).json.error, "device_wipe_required");
+  assert.equal((await refresh(tokenP3)).json.error, "tenant_inactive", "an enrolled phone of the suspended tenant is stopped");
+  await api.su("UPDATE tenants SET is_active = 1 WHERE id = $1", [a.tenant.id]);
 
   const replay = await exchange(tokenP1, beforeRevoke);
   assert.equal(replay.status, 200, replay.text);
@@ -364,6 +418,9 @@ try {
     { dropped: { total: 1, by_kind: { ["k".repeat(65)]: 1 } } },
     { dropped: { total: 1, by_kind: Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`kind_${i}`, 1])) } },
     { dropped: { total: 1, by_kind: {}, extra: 1 } },
+    { dropped: { total: 1, by_kind: { Work_Orders: 1 } } },
+    { dropped: { total: 1, by_kind: { "work orders": 1 } } },
+    { dropped: { total: 2, by_kind: { work_orders: 2, media_attachments: 1 } } },
     { dropped_total: 1 },
   ]) {
     const r = await wipe(tokenP1, bad);
@@ -372,9 +429,10 @@ try {
   const [notWipedYet] = await api.su("SELECT wiped_at FROM machine_activations WHERE id = $1", [d1.device_id]);
   assert.equal(notWipedYet.wiped_at, null, "an invalid confirmation changes nothing");
   assert.equal((await refresh(tokenP1)).json.error, "device_wipe_required");
-  const dropped = { total: 3, by_kind: { work_orders: 1, media_attachments: 2 } };
-  const wiped = await wipe(tokenP1, { dropped });
+  const wiped = await wipe(tokenP1, { dropped: { total: 4, by_kind: { work_orders: 1, media_attachments: 2 } } });
   assert.equal(wiped.status, 200, wiped.text);
+  // Audited with the kinds sorted, whatever order the phone sent them in.
+  const dropped = { total: 4, by_kind: { media_attachments: 2, work_orders: 1 } };
   const [wipedAudit] = await api.su(
     "SELECT payload_canonical_sha256 FROM audit_records WHERE action_code = 'mobile_device_wiped' ORDER BY sequence DESC LIMIT 1",
   );
@@ -527,7 +585,7 @@ try {
   const counts = Object.fromEntries(audits.map((r) => [r.action_code, r.n]));
   assert.equal(counts.mobile_enrolment_issued, 10, JSON.stringify(counts));
   assert.equal(counts.mobile_enrolment_redeemed, 6, JSON.stringify(counts));
-  assert.equal(counts.mobile_enrolment_redeem_replayed, 2, JSON.stringify(counts));
+  assert.equal(counts.mobile_enrolment_redeem_replayed, 2, JSON.stringify(counts), "refused replays are not audited");
   assert.equal(counts.mobile_enrolment_cancelled, 2, JSON.stringify(counts));
   assert.equal(counts.mobile_device_revoked, 4, JSON.stringify(counts));
   assert.equal(counts.mobile_device_wiped, 1, JSON.stringify(counts));

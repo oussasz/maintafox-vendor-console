@@ -544,7 +544,13 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
       sendValidationError(res, parsed, "body");
       return;
     }
-    const dropped = parsed.data.dropped ?? null;
+    // Kinds sorted: the audited payload does not depend on the order the phone sent them in.
+    const dropped = parsed.data.dropped
+      ? {
+          total: parsed.data.dropped.total,
+          by_kind: Object.fromEntries(Object.entries(parsed.data.dropped.by_kind).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+        }
+      : null;
     if (!act.wipeOnly) {
       res.status(409).json({ error: "wipe_not_requested" });
       return;

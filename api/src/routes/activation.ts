@@ -32,7 +32,7 @@ import {
 } from "../app/mobile-enrolment.js";
 import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
 import { resolveForceUpdatePolicy } from "../app/force-update.js";
-import { newId, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { newId, sha256Hex, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { DEVICE_TOKEN_ROTATE_AFTER_SECONDS, signDeviceActivationToken } from "../auth-tokens.js";
 import { editionExists, loadCapabilitiesJsonForSign } from "../edition-catalog-store.js";
 import { parseEditionId } from "../edition-catalog.js";
@@ -531,12 +531,13 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
    * Answers like a claim (summary, signed envelope, device token) plus the binding.
    *
    * Replay (an answer lost on mobile data): the same secret presented again by the phone that spent
-   * it gets the same answer (its activation's current token, the binding with the original
+   * it, with the same `redeem_nonce` (its SHA-256 is kept with the redemption), gets the same answer (its activation's current token, the binding with the original
    * enrolled_at), with no second slot and a `mobile_enrolment_redeem_replayed` audit event instead
    * of a second "redeemed". Only while the enrolment's original lifetime runs (expires_at, 15
    * minutes from issue: the secret is never accepted after the time the administrator was shown),
-   * and only while that activation is still this enrolment's, active, on a valid licence. Any other
-   * fingerprint, a later replay or a revoked phone: 404 enrolment_invalid as before.
+   * and only while that activation is still this enrolment's, active, on a valid licence of an
+   * active tenant. Any other fingerprint or nonce, a later replay or a revoked phone: 404
+   * enrolment_invalid as before. The replayed audit entry records the request's address.
    */
   app.post(
     "/api/v1/mobile-enrolments/redeem",
@@ -572,6 +573,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         return;
       }
       const nowIso = new Date().toISOString();
+      const nonceSha256 = sha256Hex(input.redeem_nonce);
       const outcome = await db.tx(async () => {
         // Without the tenant scope (unknown secret) this finds nothing.
         const found = await db.get<{ id: string }>(
@@ -584,7 +586,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         await db.lockXact("mobile-enrolment", found.id);
         const enrolment = await db.get<EnrolmentRow>(
           `SELECT id, tenant_id, license_id, person_sync_id, person_label, site_sync_id, site_label,
-                  issued_by_label, expires_at, cancelled_at, redeemed_at, activation_id
+                  issued_by_label, expires_at, cancelled_at, redeemed_at, activation_id, redeem_nonce_sha256
            FROM mobile_enrolments WHERE id = ?`,
           found.id,
         );
@@ -597,7 +599,8 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
 
         if (enrolment.redeemed_at) {
           // Spent already: only the phone that spent it gets its answer again (see above).
-          const spentBy = enrolment.activation_id
+          const sameInstall = enrolment.redeem_nonce_sha256 === nonceSha256;
+          const spentBy = sameInstall && enrolment.activation_id
             ? await db.get<{
                 id: string;
                 license_id: string;
@@ -614,6 +617,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
                 input.machine_fingerprint,
               )
             : undefined;
+          // lic.is_active is the tenant's (LICENSE_SELECT: t.is_active): a suspended tenant gets no replay.
           const licenceValid =
             lic != null &&
             lic.is_active === 1 &&
@@ -738,10 +742,11 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         // Spent only while still open: a cancel that won the race leaves it untouched, and this
         // refusal rolls the phone's activation above back.
         const spent = await db.run(
-          `UPDATE mobile_enrolments SET redeemed_at = ?, activation_id = ?
+          `UPDATE mobile_enrolments SET redeemed_at = ?, activation_id = ?, redeem_nonce_sha256 = ?
            WHERE id = ? AND redeemed_at IS NULL AND cancelled_at IS NULL AND expires_at > now()`,
           nowIso,
           activationId,
+          nonceSha256,
           enrolment.id,
         );
         if (spent.changes !== 1) throw new EnrolmentNoLongerOpen();
@@ -785,6 +790,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
           activation_id: activationId,
           person_sync_id: enrolment.person_sync_id,
           site_sync_id: enrolment.site_sync_id,
+          ...(replayed ? { request_ip: req.ip ?? null } : {}),
         },
       });
       res.json({

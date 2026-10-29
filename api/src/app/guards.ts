@@ -88,10 +88,10 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
    *
    * activation_revoked carries `wipe: "without_upload"` and `reason: "lost" | "upload_window_closed"`
    * only for a phone removed by its customer's administrator that may not upload
-   * (wipeWithoutUploadReason); that answer comes before the tenant and licence checks, since such a
-   * phone erases whatever their state. Every other activation_revoked (no activation row, e.g.
-   * after a restore; a vendor revocation; a released slot) has no marker: the phone locks and keeps
-   * its data.
+   * (wipeWithoutUploadReason). That answer, and the upload allowance of a phone still in its
+   * window (wipeOnly), come before the tenant and licence checks. Every other activation_revoked
+   * (no activation row, e.g. after a restore; a vendor revocation; a released slot) has no marker:
+   * the phone locks and keeps its data.
    */
   async function activationAuthMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
     const h = req.headers.authorization;
@@ -156,30 +156,14 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       deny(403, "activation_revoked", { ...wipeWithoutUploadBody(wipeReason) });
       return;
     }
-    if (row.tenant_is_active !== 1) {
-      deny(403, "tenant_inactive");
-      return;
-    }
-    if (row.license_revoked_at) {
-      deny(403, "license_revoked");
-      return;
-    }
-    if (row.license_expires_at && new Date(row.license_expires_at) <= new Date()) {
-      deny(403, "license_expired");
-      return;
-    }
     // A phone removed by its customer's administrator (routes/mobile-enrolment.ts) keeps three routes
     // until it confirms its wipe, for WIPE_UPLOAD_WINDOW_HOURS: the final upload of its pending
     // work (sync exchange, push only, and presign-put for its files) and the wipe confirmation.
-    // Everything else answers device_wipe_required. A phone reported lost, or one past the window,
-    // was answered above (activation_revoked with the wipe marker).
+    // Everything else answers device_wipe_required. This comes before the tenant and licence
+    // checks: a suspended tenant or a lapsed licence must not cost the phone its field work. A phone
+    // reported lost, or one past the window, was answered above (activation_revoked with the marker).
     let wipeOnly = false;
-    if (row.revoked_at) {
-      if (!finalUploadOpen(row)) {
-        // A vendor revocation or a released slot (or a desktop): no wipe marker, the device keeps its data.
-        deny(403, "activation_revoked");
-        return;
-      }
+    if (row.revoked_at && finalUploadOpen(row)) {
       const path = req.path.toLowerCase();
       if (req.method !== "POST" || !WIPE_ONLY_PATHS.has(path)) {
         structuredLog("activation_auth_denied", {
@@ -194,6 +178,25 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
         return;
       }
       wipeOnly = true;
+    }
+    if (!wipeOnly) {
+      if (row.tenant_is_active !== 1) {
+        deny(403, "tenant_inactive");
+        return;
+      }
+      if (row.license_revoked_at) {
+        deny(403, "license_revoked");
+        return;
+      }
+      if (row.license_expires_at && new Date(row.license_expires_at) <= new Date()) {
+        deny(403, "license_expired");
+        return;
+      }
+      if (row.revoked_at) {
+        // A vendor revocation or a released slot (or a desktop): no wipe marker, the device keeps its data.
+        deny(403, "activation_revoked");
+        return;
+      }
     }
     if (!wipeOnly && row.policy_refresh_requested_at && req.path.toLowerCase().startsWith("/api/v1/sync/")) {
       deny(401, "policy_refresh_required");

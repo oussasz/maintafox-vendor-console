@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { startControlApi } from "./lib/control-api.mjs";
 import { TEST_ENTITLEMENT_PUBLIC_KEY_HEX } from "./lib/test-signing-key.mjs";
@@ -145,6 +145,7 @@ try {
       machine_fingerprint: fingerprint,
       app_version: "1.2.3",
       device_class: "mobile",
+      redeem_nonce: randomBytes(32).toString("base64url"),
     });
   };
 
