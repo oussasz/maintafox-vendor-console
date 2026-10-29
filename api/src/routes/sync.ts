@@ -14,6 +14,7 @@ import {
 } from "../app/device-class.js";
 import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } from "../app/http.js";
 import { getMediaStore, sendObjectStoreError } from "../app/media.js";
+import { DEVICE_WIPE_REQUIRED_BODY } from "../app/mobile-enrolment.js";
 import { structuredLog } from "../app/runtime.js";
 import { assertTenantOwnsObjectKey, buildTenantMediaObjectKey } from "../storage/object-store.js";
 import {
@@ -141,6 +142,11 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     }
     const syncAct = { tenantId: act.tenantId, licenseId: act.licenseId, machineFingerprint: act.machineFingerprint };
     const protocolVersion = (req.body as { protocol_version?: unknown } | undefined)?.protocol_version;
+    // A phone being wiped uploads with protocol v2 only (the field app's protocol), push only.
+    if (act.wipeOnly && protocolVersion !== "v2") {
+      res.status(403).json({ ...DEVICE_WIPE_REQUIRED_BODY });
+      return;
+    }
     try {
       if (protocolVersion === "v2") {
         const parsed = SyncExchangeBodyV2.safeParse(req.body);
@@ -148,7 +154,9 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
           res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
           return;
         }
-        if (!(await deviceMaySync(res, act, parsed.data.device_class, "exchange_v2"))) return;
+        // The final upload of a phone being wiped is accepted even if its licence no longer
+        // counts phones: its pending field work is not lost. The class still has to match.
+        if (act.wipeOnly ? !deviceClassMatches(res, act, parsed.data.device_class, "exchange_v2_final_upload") : !(await deviceMaySync(res, act, parsed.data.device_class, "exchange_v2"))) return;
         const outcome = await runSyncExchangeV2(
           db,
           { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret, cipher: payloadCipher },
@@ -156,6 +164,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
           req.body,
           parsed.data,
           structuredLog,
+          { pushOnly: act.wipeOnly },
         );
         if (outcome.replayed) res.setHeader("X-Idempotent-Replay", "true");
         res.json(outcome.response);

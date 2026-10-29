@@ -156,7 +156,12 @@ export async function runSyncExchangeV2(
   rawBody: unknown,
   body: SyncExchangeRequestV2,
   log: (event: string, fields: Record<string, unknown>) => void,
+  opts: { pushOnly?: boolean } = {},
 ): Promise<SyncExchangeV2Outcome> {
+  // pushOnly: the final upload of a phone removed by its administrator (activationAuthMiddleware
+  // wipeOnly). Its outbox is processed as usual, but nothing goes back: no inbound changes, no
+  // conflicting server values, no user snapshots, and its checkpoint does not move forward.
+  const pushOnly = opts.pushOnly === true;
   // Request-level checks that need no database run before the transaction opens.
   const requestHash = sha256Hex(canonicalJson(rawBody));
   const requestSeq = resolveRequestCheckpoint(deps.checkpointSecret, act, body.checkpoint_token);
@@ -389,25 +394,31 @@ export async function runSyncExchangeV2(
       });
     }
 
-    const newUsers = await recordDeviceUsers(db, {
-      tenantId: act.tenantId,
-      machineFingerprint: act.machineFingerprint,
-      userSyncIds: currentUsers,
-    });
+    const newUsers = pushOnly
+      ? []
+      : await recordDeviceUsers(db, {
+          tenantId: act.tenantId,
+          machineFingerprint: act.machineFingerprint,
+          userSyncIds: currentUsers,
+        });
 
-    const candidates = await listDeltaForDevice(db, deps.cipher, {
-      tenantId: act.tenantId,
-      machineFingerprint: act.machineFingerprint,
-      afterSeq: requestSeq,
-      userSyncIds: currentUsers,
-      limit: SYNC_INBOUND_BATCH_LIMIT + 1,
-    });
+    const candidates = pushOnly
+      ? []
+      : await listDeltaForDevice(db, deps.cipher, {
+          tenantId: act.tenantId,
+          machineFingerprint: act.machineFingerprint,
+          afterSeq: requestSeq,
+          userSyncIds: currentUsers,
+          limit: SYNC_INBOUND_BATCH_LIMIT + 1,
+        });
     const has_more = candidates.length > SYNC_INBOUND_BATCH_LIMIT;
     const inbound_items = candidates.slice(0, SYNC_INBOUND_BATCH_LIMIT);
     // With nothing more to deliver, jump to the high-water mark so skipped rows never stall the device.
-    const nextSeq = has_more
-      ? inbound_items[inbound_items.length - 1]!.server_seq
-      : Math.max(requestSeq, await tenantStateHighWater(db, act.tenantId));
+    const nextSeq = pushOnly
+      ? requestSeq
+      : has_more
+        ? inbound_items[inbound_items.length - 1]!.server_seq
+        : Math.max(requestSeq, await tenantStateHighWater(db, act.tenantId));
     const checkpoint_token = signCheckpointToken(deps.checkpointSecret, {
       tenantId: act.tenantId,
       machineFingerprint: act.machineFingerprint,
@@ -461,7 +472,9 @@ export async function runSyncExchangeV2(
       checkpoint_token,
       acknowledged_items,
       rejected_items,
-      conflict_items,
+      // A conflict carries the server's current values: not sent to a phone being wiped (the
+      // conflict itself is kept in sync_conflict_log for review on the desktop).
+      conflict_items: pushOnly ? [] : conflict_items,
       inbound_items,
       has_more,
       user_snapshot_required: newUsers,

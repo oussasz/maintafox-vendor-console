@@ -13,6 +13,7 @@ import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
 import type { DeviceClass } from "./device-class.js";
+import { DEVICE_WIPE_REQUIRED_BODY } from "./mobile-enrolment.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
@@ -62,6 +63,9 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     db.runInScope(scope, next);
   }
 
+  /** Routes a phone removed by its administrator may still call before its wipe (POST only). */
+  const WIPE_ONLY_PATHS = new Set(["/api/v1/sync/exchange", "/api/v1/mobile-device/wipe-confirmed"]);
+
   /** `last_seen_at` is written at most this often per device (the sync heartbeat runs every ~15 s). */
   const LAST_SEEN_TOUCH_INTERVAL_MS = 60_000;
 
@@ -88,7 +92,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     // The token is verified: from here on only this tenant's rows are visible.
     const scope = tenantScope(claims.tenantId);
     const row = await db.runInScope(scope, () => db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
-                a.policy_refresh_requested_at, a.device_class,
+                a.policy_refresh_requested_at, a.device_class, a.revocation_kind, a.wiped_at,
                 l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
                 t.is_active AS tenant_is_active
          FROM machine_activations a
@@ -102,6 +106,8 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
           last_seen_at: string;
           policy_refresh_requested_at: string | null;
           device_class: DeviceClass;
+          revocation_kind: string | null;
+          wiped_at: string | null;
           license_revoked_at: string | null;
           license_expires_at: string | null;
           tenant_is_active: number;
@@ -138,11 +144,31 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       deny(403, "license_expired");
       return;
     }
+    // A phone removed by its customer's administrator (routes/mobile-enrolment.ts) keeps two routes
+    // until it confirms its wipe: the final upload of its pending work (sync exchange, push only)
+    // and the wipe confirmation. Everything else answers device_wipe_required.
+    let wipeOnly = false;
     if (row.revoked_at) {
-      deny(403, "activation_revoked");
-      return;
+      if (row.revocation_kind !== "tenant_admin" || row.wiped_at) {
+        deny(403, "activation_revoked");
+        return;
+      }
+      const path = req.path.toLowerCase();
+      if (req.method !== "POST" || !WIPE_ONLY_PATHS.has(path)) {
+        structuredLog("activation_auth_denied", {
+          status: 403,
+          reason: "device_wipe_required",
+          tenant_id: claims.tenantId,
+          license_id: claims.licenseId,
+          machine_fingerprint: claims.machineFingerprint,
+          path: req.path,
+        });
+        res.status(403).json({ ...DEVICE_WIPE_REQUIRED_BODY });
+        return;
+      }
+      wipeOnly = true;
     }
-    if (row.policy_refresh_requested_at && req.path.toLowerCase().startsWith("/api/v1/sync/")) {
+    if (!wipeOnly && row.policy_refresh_requested_at && req.path.toLowerCase().startsWith("/api/v1/sync/")) {
       deny(401, "policy_refresh_required");
       return;
     }
@@ -160,6 +186,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       deviceClass: row.device_class,
       token,
       tokenIssuedAt: claims.issuedAt,
+      wipeOnly,
     };
     db.runInScope(scope, next);
   }

@@ -44,7 +44,10 @@ export function observeActivationOutcome(
     | "slot_limit_reached"
     | "activation_revoked"
     | "device_class_mismatch"
-    | "mobile_not_licensed",
+    | "mobile_not_licensed"
+    | "mobile_enrolment_required"
+    | "enrolment_invalid"
+    | "already_enrolled",
 ): void {
   if (reason === "ok") {
     observabilityWindow.activation_success_total += 1;
