@@ -395,7 +395,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
   async function revokePhones(
     act: ActivationAuthContext,
     where: { deviceId: string } | { personSyncId: string },
-    actor: { actor_sync_id: string; actor_label: string },
+    actor: { actor_sync_id: string | null; actor_label: string },
     reason: RevokeReason,
   ): Promise<{ revoked: RevokedPhone[]; cancelledEnrolments: string[] }> {
     return db.tx(async () => {
@@ -456,7 +456,7 @@ export function registerMobileEnrolmentRoutes(app: express.Express, ctx: ApiCont
   async function auditRevocations(
     act: ActivationAuthContext,
     result: { revoked: RevokedPhone[]; cancelledEnrolments: string[] },
-    actorSyncId: string,
+    actorSyncId: string | null,
     reason: RevokeReason,
   ): Promise<void> {
     for (const r of result.revoked) {

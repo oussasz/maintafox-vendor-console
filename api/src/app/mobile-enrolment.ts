@@ -102,8 +102,17 @@ export const ActorBody = z
 /** Desktop -> server: revoke one phone. `lost`: the phone is lost or stolen, no final upload. */
 export const RevokeDeviceBody = ActorBody.extend({ lost: z.boolean().optional() }).strict();
 
-/** Desktop -> server: a disabled user's phones are all revoked. */
-export const RevokePersonBody = ActorBody.extend({ person_sync_id: SyncId }).strict();
+/**
+ * Desktop -> server: a disabled user's phones are all revoked. `actor_sync_id` may be null: the
+ * desktop also revokes automatically (a person found disabled there, with no known actor yet).
+ */
+export const RevokePersonBody = z
+  .object({
+    actor_sync_id: SyncId.nullable(),
+    actor_label: Label,
+    person_sync_id: SyncId,
+  })
+  .strict();
 
 /** Phone -> server: exactly one of the QR token or the typed code. */
 export const RedeemEnrolmentBody = z

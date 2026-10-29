@@ -298,7 +298,11 @@ try {
   assert.equal(byPerson.status, 200, byPerson.text);
   assert.equal(byPerson.json.revoked_device_ids.length, 1);
   assert.equal((await refresh(tokenP3)).json.error, "device_wipe_required");
-  const byPersonOpen = await api.call("POST", "/api/v1/mobile-devices/revoke-person", a.desk, { ...actor, person_sync_id: "user-5" });
+  // An automatic revocation by the desktop may name no actor (null), never an empty one.
+  const emptyActor = await api.call("POST", "/api/v1/mobile-devices/revoke-person", a.desk, { actor_sync_id: "", actor_label: "Automatique", person_sync_id: "user-5" });
+  assert.equal(emptyActor.status, 400, emptyActor.text);
+  const byPersonOpen = await api.call("POST", "/api/v1/mobile-devices/revoke-person", a.desk, { actor_sync_id: null, actor_label: "Automatique", person_sync_id: "user-5" });
+  assert.equal(byPersonOpen.status, 200, byPersonOpen.text);
   assert.deepEqual(byPersonOpen.json.revoked_device_ids, []);
   assert.deepEqual(byPersonOpen.json.cancelled_enrolment_ids, [e5.json.enrolment_id], "a disabled person's QR is cancelled");
   assert.equal((await redeem({ token: e5.json.token }, "fp-phone-5")).status, 404);
