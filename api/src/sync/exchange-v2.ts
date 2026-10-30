@@ -156,7 +156,12 @@ export async function runSyncExchangeV2(
   rawBody: unknown,
   body: SyncExchangeRequestV2,
   log: (event: string, fields: Record<string, unknown>) => void,
+  opts: { pushOnly?: boolean } = {},
 ): Promise<SyncExchangeV2Outcome> {
+  // pushOnly: the final upload of a phone removed by its administrator (activationAuthMiddleware
+  // wipeOnly). Its outbox is processed as usual, but nothing goes back: no inbound changes, no
+  // conflicting server values, no user snapshots, and its checkpoint does not move forward.
+  const pushOnly = opts.pushOnly === true;
   // Request-level checks that need no database run before the transaction opens.
   const requestHash = sha256Hex(canonicalJson(rawBody));
   const requestSeq = resolveRequestCheckpoint(deps.checkpointSecret, act, body.checkpoint_token);
@@ -197,8 +202,24 @@ export async function runSyncExchangeV2(
         protocol_version: "v2",
         server_batch_id: stored.server_batch_id,
       });
+      const replayed = JSON.parse(deps.cipher.open(stored.response_json, storedResponseAad)) as SyncExchangeResponseV2;
+      // A phone removed since that first answer gets its acknowledgements again, but nothing that
+      // first answer sent back (it may hold inbound rows, conflicting values or user snapshots).
       return {
-        response: JSON.parse(deps.cipher.open(stored.response_json, storedResponseAad)) as SyncExchangeResponseV2,
+        response: pushOnly
+          ? {
+              ...replayed,
+              checkpoint_token: signCheckpointToken(deps.checkpointSecret, {
+                tenantId: act.tenantId,
+                machineFingerprint: act.machineFingerprint,
+                seq: requestSeq,
+              }),
+              inbound_items: [],
+              conflict_items: [],
+              user_snapshot_required: [],
+              has_more: false,
+            }
+          : replayed,
         replayed: true,
       };
     }
@@ -389,25 +410,31 @@ export async function runSyncExchangeV2(
       });
     }
 
-    const newUsers = await recordDeviceUsers(db, {
-      tenantId: act.tenantId,
-      machineFingerprint: act.machineFingerprint,
-      userSyncIds: currentUsers,
-    });
+    const newUsers = pushOnly
+      ? []
+      : await recordDeviceUsers(db, {
+          tenantId: act.tenantId,
+          machineFingerprint: act.machineFingerprint,
+          userSyncIds: currentUsers,
+        });
 
-    const candidates = await listDeltaForDevice(db, deps.cipher, {
-      tenantId: act.tenantId,
-      machineFingerprint: act.machineFingerprint,
-      afterSeq: requestSeq,
-      userSyncIds: currentUsers,
-      limit: SYNC_INBOUND_BATCH_LIMIT + 1,
-    });
+    const candidates = pushOnly
+      ? []
+      : await listDeltaForDevice(db, deps.cipher, {
+          tenantId: act.tenantId,
+          machineFingerprint: act.machineFingerprint,
+          afterSeq: requestSeq,
+          userSyncIds: currentUsers,
+          limit: SYNC_INBOUND_BATCH_LIMIT + 1,
+        });
     const has_more = candidates.length > SYNC_INBOUND_BATCH_LIMIT;
     const inbound_items = candidates.slice(0, SYNC_INBOUND_BATCH_LIMIT);
     // With nothing more to deliver, jump to the high-water mark so skipped rows never stall the device.
-    const nextSeq = has_more
-      ? inbound_items[inbound_items.length - 1]!.server_seq
-      : Math.max(requestSeq, await tenantStateHighWater(db, act.tenantId));
+    const nextSeq = pushOnly
+      ? requestSeq
+      : has_more
+        ? inbound_items[inbound_items.length - 1]!.server_seq
+        : Math.max(requestSeq, await tenantStateHighWater(db, act.tenantId));
     const checkpoint_token = signCheckpointToken(deps.checkpointSecret, {
       tenantId: act.tenantId,
       machineFingerprint: act.machineFingerprint,
@@ -434,8 +461,13 @@ export async function runSyncExchangeV2(
       now,
     );
 
+    // A manifest entry belongs to the device that first reported it (the one that stored the
+    // file): a device announces only its own uploads, so another device's report of the same
+    // media record is ignored, never a takeover (a removed phone could otherwise claim another
+    // device's file and get an upload URL for it). The owner's own re-reports still update it.
+    let mediaManifestIgnored = 0;
     for (const entry of mediaManifest) {
-      await db.run(
+      const written = await db.get<{ ok: number }>(
         `INSERT INTO sync_media_manifest
            (tenant_id, entity_sync_id, content_sha256, object_key, byte_size, reported_by_machine_fingerprint, reported_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -444,7 +476,9 @@ export async function runSyncExchangeV2(
            object_key = EXCLUDED.object_key,
            byte_size = EXCLUDED.byte_size,
            reported_by_machine_fingerprint = EXCLUDED.reported_by_machine_fingerprint,
-           reported_at = EXCLUDED.reported_at`,
+           reported_at = EXCLUDED.reported_at
+         WHERE sync_media_manifest.reported_by_machine_fingerprint = EXCLUDED.reported_by_machine_fingerprint
+         RETURNING 1 AS ok`,
         act.tenantId,
         entry.entity_sync_id,
         entry.content_sha256,
@@ -453,6 +487,7 @@ export async function runSyncExchangeV2(
         act.machineFingerprint,
         now,
       );
+      if (!written) mediaManifestIgnored += 1;
     }
 
     const response: SyncExchangeResponseV2 = {
@@ -461,7 +496,9 @@ export async function runSyncExchangeV2(
       checkpoint_token,
       acknowledged_items,
       rejected_items,
-      conflict_items,
+      // A conflict carries the server's current values: not sent to a phone being wiped (the
+      // conflict itself is kept in sync_conflict_log for review on the desktop).
+      conflict_items: pushOnly ? [] : conflict_items,
       inbound_items,
       has_more,
       user_snapshot_required: newUsers,
@@ -496,6 +533,7 @@ export async function runSyncExchangeV2(
       server_batch_id: serverBatchId,
       device_class: body.device_class,
       media_manifest_count: mediaManifest.length,
+      media_manifest_ignored: mediaManifestIgnored,
       user_snapshot_required: newUsers.length,
       // Never include payload bodies; entity types only.
       entity_types: body.outbox_batch.map((i) =>

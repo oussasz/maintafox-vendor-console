@@ -18,9 +18,21 @@ import {
 } from "../app/device-class.js";
 import { activationRateLimiter, deviceRateLimiter, type ActivationAuthContext } from "../app/http.js";
 import { observeActivationOutcome } from "../app/observability.js";
+import {
+  ALREADY_ENROLLED_BODY,
+  finalUploadOpen,
+  WIPE_PENDING_BODY,
+  appendEnrolmentAudit,
+  ENROLMENT_INVALID_BODY,
+  enrolmentSecretTenantScopeMiddleware,
+  MOBILE_ENROLMENT_REQUIRED_BODY,
+  redeemSecretHash,
+  RedeemEnrolmentBody,
+  type EnrolmentRow,
+} from "../app/mobile-enrolment.js";
 import { licenceKeyTenantScopeMiddleware } from "../app/scope.js";
 import { resolveForceUpdatePolicy } from "../app/force-update.js";
-import { newId, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
+import { newId, sha256Hex, structuredLog, type ForceUpdateMode } from "../app/runtime.js";
 import { DEVICE_TOKEN_ROTATE_AFTER_SECONDS, signDeviceActivationToken } from "../auth-tokens.js";
 import { editionExists, loadCapabilitiesJsonForSign } from "../edition-catalog-store.js";
 import { parseEditionId } from "../edition-catalog.js";
@@ -93,13 +105,8 @@ function resolveEnvelopeValidity(lic: ActivationLicenseRow): {
   };
 }
 
-type ActivationValidateFailure = { status: number; body: Record<string, unknown>; reason: string };
-
-export function registerActivationRoutes(app: express.Express, ctx: ApiContext): void {
-  const { db, activationAuthMiddleware, countActiveActivations } = ctx;
-
-  async function loadLicenseForActivation(licenseKey: string): Promise<ActivationLicenseRow | undefined> {
-    return await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.max_mobile_devices, l.expires_at, l.revoked_at,
+/** The licence row a device request reads (with its tenant's update and offline policy). */
+const LICENSE_SELECT = `SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.max_mobile_devices, l.expires_at, l.revoked_at,
                 l.update_channel, t.rollout_cohort,
                 COALESCE(t.edition, 'core') AS edition,
                 COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
@@ -110,8 +117,22 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
                 COALESCE(t.is_initialized, 0) AS is_initialized,
                 COALESCE(t.has_demo_data, 0) AS has_demo_data
          FROM license_keys l
-         JOIN tenants t ON t.id = l.tenant_id
-         WHERE l.license_key = ?`, licenseKey) as ActivationLicenseRow | undefined;
+         JOIN tenants t ON t.id = l.tenant_id`;
+
+/** Thrown inside the redeem transaction to roll it back when its enrolment was closed meanwhile. */
+class EnrolmentNoLongerOpen extends Error {}
+
+type ActivationValidateFailure = { status: number; body: Record<string, unknown>; reason: string };
+
+export function registerActivationRoutes(app: express.Express, ctx: ApiContext): void {
+  const { db, activationAuthMiddleware, countActiveActivations, appendAuditRecord } = ctx;
+
+  async function loadLicenseForActivation(licenseKey: string): Promise<ActivationLicenseRow | undefined> {
+    return await db.get(`${LICENSE_SELECT} WHERE l.license_key = ?`, licenseKey) as ActivationLicenseRow | undefined;
+  }
+
+  async function loadLicenseById(licenseId: string, tenantId: string): Promise<ActivationLicenseRow | undefined> {
+    return await db.get(`${LICENSE_SELECT} WHERE l.id = ? AND l.tenant_id = ?`, licenseId, tenantId) as ActivationLicenseRow | undefined;
   }
 
   /** State of the (channel, cohort) a device follows; no governance row means active. */
@@ -236,8 +257,8 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
 
   async function validateLicenseForActivation(
     lic: ActivationLicenseRow | undefined,
-    input: z.infer<typeof ActivationClaimBody>,
-    opts: { reserveSlot: boolean },
+    input: { machine_fingerprint: string; device_class?: DeviceClass },
+    opts: { reserveSlot: boolean; via: "licence_key" | "enrolment" },
   ): Promise<
     { ok: true; lic: ActivationLicenseRow; deviceClass: DeviceClass } | { ok: false; failure: ActivationValidateFailure }
   > {
@@ -272,6 +293,15 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         }
       | undefined;
     const deviceClass = requestedDeviceClass(input.device_class);
+
+    // Phones join only through an enrolment issued by the customer's administrator (redeem below),
+    // never with the licence key: the key path would give a phone a slot without a person and site.
+    if (deviceClass === "mobile" && opts.via === "licence_key") {
+      return {
+        ok: false,
+        failure: { status: 403, body: { ...MOBILE_ENROLMENT_REQUIRED_BODY }, reason: "mobile_enrolment_required" },
+      };
+    }
 
     // An operator-revoked machine stays revoked until an operator reinstates it: presenting the
     // licence key again (preview or claim) must not undo the revocation.
@@ -349,7 +379,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     }
     const input = parsed.data;
     const lic = await loadLicenseForActivation(input.license_key.trim());
-    const validated = await validateLicenseForActivation(lic, input, { reserveSlot: false });
+    const validated = await validateLicenseForActivation(lic, input, { reserveSlot: false, via: "licence_key" });
     if (!validated.ok) {
       observeActivationOutcome(validated.failure.reason as Parameters<typeof observeActivationOutcome>[0]);
       structuredLog("activation_preview_failed", {
@@ -401,7 +431,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
         await db.lockXact("activation-device", `${lic.tenant_id}:${input.machine_fingerprint}`);
         current = await loadLicenseForActivation(input.license_key.trim());
       }
-      const validated = await validateLicenseForActivation(current, input, { reserveSlot: true });
+      const validated = await validateLicenseForActivation(current, input, { reserveSlot: true, via: "licence_key" });
       if (!validated.ok) return { ok: false as const, failure: validated.failure };
 
       const resolvedPolicy = await resolveActivationPolicy(validated.lic, input.app_version);
@@ -493,6 +523,296 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
     });
   });
 
+  /**
+   * A phone joins with an enrolment its administrator issued (routes/mobile-enrolment.ts), never
+   * with the licence key. The secret (QR token or typed code) is spent here, at most once: the
+   * enrolment, the licence, the mobile slot and this phone are checked under the same locks as a
+   * claim, and the phone's activation is created bound to the enrolment's person and site.
+   * Answers like a claim (summary, signed envelope, device token) plus the binding.
+   *
+   * Replay (an answer lost on mobile data): the same secret presented again by the phone that spent
+   * it, with the same `redeem_nonce` (its SHA-256 is kept with the redemption), gets the same answer (its activation's current token, the binding with the original
+   * enrolled_at), with no second slot and a `mobile_enrolment_redeem_replayed` audit event instead
+   * of a second "redeemed". Only while the enrolment's original lifetime runs (expires_at, 15
+   * minutes from issue: the secret is never accepted after the time the administrator was shown),
+   * and only while that activation is still this enrolment's, active, on a valid licence of an
+   * active tenant. Any other fingerprint or nonce, a later replay or a revoked phone: 404
+   * enrolment_invalid as before. The replayed audit entry records the request's address.
+   */
+  app.post(
+    "/api/v1/mobile-enrolments/redeem",
+    activationRateLimiter,
+    enrolmentSecretTenantScopeMiddleware(db),
+    async (req, res) => {
+      const startedAt = Date.now();
+      const parsed = RedeemEnrolmentBody.safeParse(req.body);
+      if (!parsed.success) {
+        observeActivationOutcome("invalid_body");
+        res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
+        return;
+      }
+      const input = parsed.data;
+      const secretHash = redeemSecretHash(input);
+      const refuse = (failure: ActivationValidateFailure) => {
+        observeActivationOutcome(failure.reason as Parameters<typeof observeActivationOutcome>[0]);
+        structuredLog("mobile_enrolment_redeem_failed", {
+          reason: failure.reason,
+          status: failure.status,
+          duration_ms: Date.now() - startedAt,
+          machine_fingerprint: input.machine_fingerprint,
+        });
+        res.status(failure.status).json(failure.body);
+      };
+      const invalid: ActivationValidateFailure = {
+        status: 404,
+        body: { ...ENROLMENT_INVALID_BODY },
+        reason: "enrolment_invalid",
+      };
+      if (!secretHash) {
+        refuse(invalid);
+        return;
+      }
+      const nowIso = new Date().toISOString();
+      const nonceSha256 = sha256Hex(input.redeem_nonce);
+      const outcome = await db.tx(async () => {
+        // Without the tenant scope (unknown secret) this finds nothing.
+        const found = await db.get<{ id: string }>(
+          "SELECT id FROM mobile_enrolments WHERE token_hash = ? OR code_hash = ?",
+          secretHash,
+          secretHash,
+        );
+        if (!found) return { ok: false as const, failure: invalid };
+        // The enrolment's own lock, then the same order as a claim (licence slots, then the device).
+        await db.lockXact("mobile-enrolment", found.id);
+        const enrolment = await db.get<EnrolmentRow>(
+          `SELECT id, tenant_id, license_id, person_sync_id, person_label, site_sync_id, site_label,
+                  issued_by_label, expires_at, cancelled_at, redeemed_at, activation_id, redeem_nonce_sha256
+           FROM mobile_enrolments WHERE id = ?`,
+          found.id,
+        );
+        if (!enrolment || enrolment.cancelled_at || new Date(enrolment.expires_at) <= new Date()) {
+          return { ok: false as const, failure: invalid };
+        }
+        await db.lockXact("license-slots", enrolment.license_id);
+        await db.lockXact("activation-device", `${enrolment.tenant_id}:${input.machine_fingerprint}`);
+        const lic = await loadLicenseById(enrolment.license_id, enrolment.tenant_id);
+
+        if (enrolment.redeemed_at) {
+          // Spent already: only the phone that spent it gets its answer again (see above).
+          const sameInstall = enrolment.redeem_nonce_sha256 === nonceSha256;
+          const spentBy = sameInstall && enrolment.activation_id
+            ? await db.get<{
+                id: string;
+                license_id: string;
+                device_class: DeviceClass;
+                revoked_at: string | null;
+                enrolment_id: string | null;
+                activation_token: string;
+                enrolled_at: string | Date | null;
+              }>(
+                `SELECT id, license_id, device_class, revoked_at, enrolment_id, activation_token, enrolled_at
+                 FROM machine_activations WHERE id = ? AND tenant_id = ? AND machine_fingerprint = ?`,
+                enrolment.activation_id,
+                enrolment.tenant_id,
+                input.machine_fingerprint,
+              )
+            : undefined;
+          // lic.is_active is the tenant's (LICENSE_SELECT: t.is_active): a suspended tenant gets no replay.
+          const licenceValid =
+            lic != null &&
+            lic.is_active === 1 &&
+            !lic.revoked_at &&
+            !(lic.expires_at && new Date(lic.expires_at) <= new Date()) &&
+            lic.max_mobile_devices > 0;
+          if (
+            !spentBy ||
+            spentBy.revoked_at != null ||
+            spentBy.device_class !== "mobile" ||
+            spentBy.enrolment_id !== enrolment.id ||
+            spentBy.license_id !== enrolment.license_id ||
+            !licenceValid
+          ) {
+            return { ok: false as const, failure: invalid };
+          }
+          return {
+            ok: true as const,
+            replayed: true as const,
+            validated: { lic },
+            resolvedPolicy: await resolveActivationPolicy(lic, input.app_version),
+            activationToken: spentBy.activation_token,
+            enrolment,
+            activationId: spentBy.id,
+            enrolledAt: new Date(spentBy.enrolled_at ?? enrolment.redeemed_at).toISOString(),
+          };
+        }
+
+        // A phone that is enrolled and active must be removed first: an enrolment never moves a
+        // working phone to another person.
+        const current = await db.get<{
+          id: string;
+          revoked_at: string | null;
+          device_class: DeviceClass;
+          revocation_kind: string | null;
+          revoke_reason: string | null;
+          wiped_at: string | null;
+        }>(
+          `SELECT id, revoked_at, device_class, revocation_kind, revoke_reason, wiped_at
+           FROM machine_activations WHERE tenant_id = ? AND machine_fingerprint = ?`,
+          enrolment.tenant_id,
+          input.machine_fingerprint,
+        );
+        if (current && current.revoked_at == null && current.device_class === "mobile") {
+          return {
+            ok: false as const,
+            failure: { status: 409, body: { ...ALREADY_ENROLLED_BODY }, reason: "already_enrolled" },
+          };
+        }
+        // A removed phone still holding its previous person's data must finish its wipe first.
+        if (current && finalUploadOpen(current)) {
+          return {
+            ok: false as const,
+            failure: { status: 409, body: { ...WIPE_PENDING_BODY }, reason: "wipe_pending" },
+          };
+        }
+        const validated = await validateLicenseForActivation(
+          lic,
+          { machine_fingerprint: input.machine_fingerprint, device_class: "mobile" },
+          { reserveSlot: true, via: "enrolment" },
+        );
+        if (!validated.ok) return { ok: false as const, failure: validated.failure };
+
+        const resolvedPolicy = await resolveActivationPolicy(validated.lic, input.app_version);
+        const activationToken = signDeviceActivationToken(JWT_SECRET, {
+          tenantId: validated.lic.tenant_id,
+          licenseId: validated.lic.id,
+          machineFingerprint: input.machine_fingerprint,
+        });
+        const activationId = current?.id ?? newId("act");
+        if (current) {
+          // A revoked or released row of this phone is reused (a desktop row was refused above as
+          // device_class_mismatch); the binding and the wipe state start afresh.
+          await db.run(
+            `UPDATE machine_activations
+             SET license_id = ?, machine_label = ?, app_version = ?, activation_token = ?, last_seen_at = ?,
+                 revoked_at = NULL, revocation_kind = NULL, revoked_by_label = NULL, revoked_by_sync_id = NULL,
+                 revoke_reason = NULL,
+                 wiped_at = NULL, policy_refresh_requested_at = NULL,
+                 enrolment_id = ?, person_sync_id = ?, person_label = ?, site_sync_id = ?, site_label = ?,
+                 enrolled_by_label = ?, enrolled_at = ?
+             WHERE id = ?`,
+            validated.lic.id,
+            input.machine_label ?? null,
+            input.app_version ?? null,
+            activationToken,
+            nowIso,
+            enrolment.id,
+            enrolment.person_sync_id,
+            enrolment.person_label,
+            enrolment.site_sync_id,
+            enrolment.site_label,
+            enrolment.issued_by_label,
+            nowIso,
+            activationId,
+          );
+        } else {
+          await db.run(
+            `INSERT INTO machine_activations
+              (id, tenant_id, license_id, machine_fingerprint, device_class, machine_label, app_version, activation_token,
+               activated_at, last_seen_at, enrolment_id, person_sync_id, person_label, site_sync_id, site_label,
+               enrolled_by_label, enrolled_at)
+             VALUES (?, ?, ?, ?, 'mobile', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            activationId,
+            validated.lic.tenant_id,
+            validated.lic.id,
+            input.machine_fingerprint,
+            input.machine_label ?? null,
+            input.app_version ?? null,
+            activationToken,
+            nowIso,
+            nowIso,
+            enrolment.id,
+            enrolment.person_sync_id,
+            enrolment.person_label,
+            enrolment.site_sync_id,
+            enrolment.site_label,
+            enrolment.issued_by_label,
+            nowIso,
+          );
+        }
+        // Spent only while still open: a cancel that won the race leaves it untouched, and this
+        // refusal rolls the phone's activation above back.
+        const spent = await db.run(
+          `UPDATE mobile_enrolments SET redeemed_at = ?, activation_id = ?, redeem_nonce_sha256 = ?
+           WHERE id = ? AND redeemed_at IS NULL AND cancelled_at IS NULL AND expires_at > now()`,
+          nowIso,
+          activationId,
+          nonceSha256,
+          enrolment.id,
+        );
+        if (spent.changes !== 1) throw new EnrolmentNoLongerOpen();
+        return {
+          ok: true as const,
+          replayed: false as const,
+          validated,
+          resolvedPolicy,
+          activationToken,
+          enrolment,
+          activationId,
+          enrolledAt: nowIso,
+        };
+      }).catch((e: unknown) => {
+        if (e instanceof EnrolmentNoLongerOpen) return { ok: false as const, failure: invalid };
+        throw e;
+      });
+      if (!outcome.ok) {
+        refuse(outcome.failure);
+        return;
+      }
+      const { validated, resolvedPolicy, activationToken, enrolment, activationId, enrolledAt, replayed } = outcome;
+      const event = replayed ? "mobile_enrolment_redeem_replayed" : "mobile_enrolment_redeemed";
+      observeActivationOutcome("ok");
+      structuredLog(event, {
+        status: 200,
+        tenant_id: validated.lic.tenant_id,
+        license_id: validated.lic.id,
+        enrolment_id: enrolment.id,
+        machine_fingerprint: input.machine_fingerprint,
+        duration_ms: Date.now() - startedAt,
+      });
+      await appendEnrolmentAudit(db, appendAuditRecord, {
+        action_code: event,
+        actor: `device:${input.machine_fingerprint}`,
+        tenantId: validated.lic.tenant_id,
+        licenseId: validated.lic.id,
+        machineFingerprint: input.machine_fingerprint,
+        payload: {
+          enrolment_id: enrolment.id,
+          activation_id: activationId,
+          person_sync_id: enrolment.person_sync_id,
+          site_sync_id: enrolment.site_sync_id,
+          ...(replayed ? { request_ip: req.ip ?? null } : {}),
+        },
+      });
+      res.json({
+        ...(await buildActivationSummary(validated.lic, input, "mobile", resolvedPolicy, {
+          includeEnvelope: true,
+          persistLineage: true,
+        })),
+        activated_device_count: await countActiveActivations(validated.lic.id, "mobile"),
+        activation_token: activationToken,
+        // Who may use this phone, and where. The phone keeps it with its device credential.
+        enrolment: {
+          enrolment_id: enrolment.id,
+          person_sync_id: enrolment.person_sync_id,
+          person_label: enrolment.person_label,
+          site_sync_id: enrolment.site_sync_id,
+          site_label: enrolment.site_label,
+          enrolled_at: enrolledAt,
+        },
+      });
+    },
+  );
+
   app.post("/api/v1/activation/policy-refresh", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
     const activation = (req as express.Request & { activation?: ActivationAuthContext }).activation;
     if (!activation) {
@@ -510,19 +830,7 @@ export function registerActivationRoutes(app: express.Express, ctx: ApiContext):
       res.status(400).json({ error: "invalid_body", details: parsedBody.error.flatten() });
       return;
     }
-    const licRow = await db.get(`SELECT l.id, l.tenant_id, l.license_key, l.max_machines, l.max_mobile_devices, l.expires_at, l.revoked_at,
-                l.update_channel, t.rollout_cohort,
-                COALESCE(t.edition, 'core') AS edition,
-                COALESCE(t.entitlement_lineage, 0) AS entitlement_lineage,
-                t.force_min_app_version, t.force_update_mode, t.force_update_reason, t.is_active,
-                t.offline_grace_hours, t.trust_revocation_disconnects_immediately,
-                t.reconnect_requires_fresh_heartbeat,
-                t.display_name AS tenant_display_name, t.slug AS tenant_slug,
-                COALESCE(t.is_initialized, 0) AS is_initialized,
-                COALESCE(t.has_demo_data, 0) AS has_demo_data
-         FROM license_keys l
-         JOIN tenants t ON t.id = l.tenant_id
-         WHERE l.id = ? AND l.tenant_id = ?`, activation.licenseId, activation.tenantId) as ActivationLicenseRow | undefined;
+    const licRow = await loadLicenseById(activation.licenseId, activation.tenantId);
     if (!licRow || licRow.is_active !== 1) {
       res.status(404).json({ error: "license_not_found" });
       return;

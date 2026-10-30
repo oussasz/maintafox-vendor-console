@@ -171,4 +171,9 @@ export type ActivationAuthContext = {
   token: string;
   /** Token issue time, seconds since epoch. */
   tokenIssuedAt: number;
+  /**
+   * A phone removed by its administrator, not yet wiped: only its final upload (push only) and
+   * its wipe confirmation are accepted (activationAuthMiddleware).
+   */
+  wipeOnly: boolean;
 };

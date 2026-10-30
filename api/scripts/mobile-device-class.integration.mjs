@@ -4,6 +4,8 @@
  * - max_mobile_devices is 0 (mobile not licensed) until an operator sets it, which is validated
  *   (0..1000) and audited; a request without device_class is a desktop, so existing desktops work
  *   unchanged;
+ * - phones join only through an administrator's enrolment (mobile-enrolment.integration.mjs covers
+ *   it in detail): the licence key path refuses them with 403 mobile_enrolment_required;
  * - a fingerprint keeps its class (claim, preview, policy refresh and every sync route refuse the
  *   other class with 409 device_class_mismatch);
  * - the device learns its class from the response and from the signed envelope (policy_json);
@@ -11,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { startControlApi } from "./lib/control-api.mjs";
 import { TEST_ENTITLEMENT_PUBLIC_KEY_HEX } from "./lib/test-signing-key.mjs";
@@ -115,11 +117,43 @@ try {
   const [rowA] = await api.su("SELECT device_class FROM machine_activations WHERE machine_fingerprint = $1", [desktopA]);
   assert.equal(rowA.device_class, "desktop");
 
-  // ── Phone on a licence with 0 mobile devices: 403 mobile_not_licensed ───────────────────────
+  // ── Phones never join with the licence key ──────────────────────────────────────────────────
   for (const r of [await preview("fp-phone-1-0001", "mobile"), await claim("fp-phone-1-0001", "mobile")]) {
     assert.equal(r.status, 403, r.text);
-    assert.equal(r.json.error, "mobile_not_licensed");
+    assert.equal(r.json.error, "mobile_enrolment_required");
     assert.equal(typeof r.json.message, "string");
+  }
+
+  // Phones join through an enrolment issued from an activated desktop.
+  let personSeq = 0;
+  const issueFor = (deskToken) => {
+    personSeq += 1;
+    return api.call("POST", "/api/v1/mobile-enrolments", deskToken, {
+      person_sync_id: `person-${personSeq}`,
+      person_label: `Technicien ${personSeq}`,
+      site_sync_id: "site-1",
+      site_label: "Usine 1",
+      issued_by_sync_id: "admin-1",
+      issued_by_label: "Admin",
+    });
+  };
+  const enrolPhone = async (fingerprint) => {
+    const issued = await issueFor(tokenA);
+    if (issued.status !== 201) return issued;
+    return api.call("POST", "/api/v1/mobile-enrolments/redeem", null, {
+      token: issued.json.token,
+      machine_fingerprint: fingerprint,
+      app_version: "1.2.3",
+      device_class: "mobile",
+      redeem_nonce: randomBytes(32).toString("base64url"),
+    });
+  };
+
+  // ── Licence with 0 mobile devices: 403 mobile_not_licensed ──────────────────────────────────
+  {
+    const r = await enrolPhone("fp-phone-1-0001");
+    assert.equal(r.status, 403, r.text);
+    assert.equal(r.json.error, "mobile_not_licensed");
   }
   assert.equal((await api.su("SELECT count(*)::int AS n FROM machine_activations WHERE device_class = 'mobile'"))[0].n, 0);
 
@@ -157,11 +191,7 @@ try {
 
   // ── Phones claim their own slots; desktops keep theirs ──────────────────────────────────────
   const phone1 = "fp-phone-1-0001";
-  const previewPhone = await preview(phone1, "mobile");
-  assert.equal(previewPhone.status, 200, previewPhone.text);
-  assert.equal(previewPhone.json.device_class, "mobile");
-  assert.equal(previewPhone.json.device_limit, 2);
-  const claimP1 = await claim(phone1, "mobile");
+  const claimP1 = await enrolPhone(phone1);
   assert.equal(claimP1.status, 200, claimP1.text);
   assert.equal(claimP1.json.device_class, "mobile");
   assert.equal(claimP1.json.device_limit, 2);
@@ -177,19 +207,17 @@ try {
   assert.equal(desktopB.status, 409, desktopB.text);
   assert.deepEqual(desktopB.json, { error: "slot_limit_reached", device_class: "desktop", limit: 1, max_machines: 1 });
 
-  const claimP2 = await claim("fp-phone-2-0001", "mobile");
+  const claimP2 = await enrolPhone("fp-phone-2-0001");
   assert.equal(claimP2.status, 200, claimP2.text);
   assert.equal(claimP2.json.activated_device_count, 2);
-  const phone3 = await claim("fp-phone-3-0001", "mobile");
+  const phone3 = await enrolPhone("fp-phone-3-0001");
   assert.equal(phone3.status, 409, phone3.text);
   assert.deepEqual(phone3.json, { error: "slot_limit_reached", device_class: "mobile", limit: 2, max_mobile_devices: 2 });
 
   // ── A fingerprint keeps its class ───────────────────────────────────────────────────────────
   for (const r of [await claim(desktopA, "mobile"), await preview(desktopA, "mobile")]) {
-    assert.equal(r.status, 409, r.text);
-    assert.equal(r.json.error, "device_class_mismatch");
-    assert.equal(r.json.device_class, "desktop");
-    assert.equal(r.json.requested_device_class, "mobile");
+    assert.equal(r.status, 403, r.text);
+    assert.equal(r.json.error, "mobile_enrolment_required", "a desktop cannot turn into a phone with the key");
   }
   for (const r of [await claim(phone1), await claim(phone1, "desktop")]) {
     assert.equal(r.status, 409, r.text);
@@ -204,10 +232,7 @@ try {
     "no activation was re-classed",
   );
   // A refused re-class did not supersede the phone's token.
-  const reclaimP1 = await claim(phone1, "mobile");
-  assert.equal(reclaimP1.status, 200, "a phone holding its slot claims again");
-  const tokenP1b = reclaimP1.json.activation_token;
-  assert.equal((await refresh(tokenP1, { device_class: "mobile" })).json.error, "token_superseded");
+  const tokenP1b = tokenP1;
 
   // ── Policy refresh checks the class ─────────────────────────────────────────────────────────
   const refreshA = await refresh(tokenA);
@@ -306,7 +331,7 @@ try {
       await privileged(`MACHINE-${action.toUpperCase()}`, "machine_trust_change"),
     );
   assert.equal((await machineAction("fp-phone-2-0001", "revoke")).status, 200);
-  assert.equal((await claim("fp-phone-3-0001", "mobile")).status, 200, "the revoked phone's slot is free for another phone");
+  assert.equal((await enrolPhone("fp-phone-3-0001")).status, 200, "the revoked phone's slot is free for another phone");
   const reinstate = await machineAction("fp-phone-2-0001", "reinstate");
   assert.equal(reinstate.status, 409, reinstate.text);
   assert.deepEqual(reinstate.json, { error: "slot_limit_reached", device_class: "mobile", limit: 2, max_mobile_devices: 2 });
@@ -333,7 +358,7 @@ try {
     assert.equal(r.json.error, "mobile_not_licensed");
   }
   assert.equal((await sync("exchange", tokenA, v2("desktop"))).status, 200, "the desktop still syncs");
-  assert.equal((await claim(phone1, "mobile")).json.error, "mobile_not_licensed");
+  assert.equal((await enrolPhone("fp-phone-4-0001")).json.error, "mobile_not_licensed");
   assert.equal((await refresh(tokenA)).status, 200, "the desktop is not affected");
 
   // ── A licence can be issued with phones ─────────────────────────────────────────────────────

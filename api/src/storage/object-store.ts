@@ -240,6 +240,35 @@ export class TenantMediaObjectStore {
     return { url, method: "PUT", bucket: this.config.bucket, object_key: objectKey, expires_in_seconds: expiresInSeconds };
   }
 
+  /**
+   * Presigned PUT bound to the content: `x-amz-checksum-sha256` (base64 of the SHA-256) stays a
+   * signed header (not hoisted into the query string), so the URL works only when the client sends
+   * exactly that header (`headers` in the result), and the store refuses a body whose SHA-256
+   * differs (S3 / Garage checksum check). The URL can therefore store only the announced bytes.
+   */
+  async presignPutWithChecksum(
+    objectKey: string,
+    contentSha256Hex: string,
+    expiresInSeconds = PRESIGNED_URL_TTL_SECONDS,
+  ): Promise<PresignResult & { headers: Record<string, string> }> {
+    if (!/^[0-9a-f]{64}$/.test(contentSha256Hex)) throw new Error("content_sha256 must be 64 lowercase hex characters");
+    await this.assertBucket();
+    const checksum = Buffer.from(contentSha256Hex, "hex").toString("base64");
+    const cmd = new PutObjectCommand({ Bucket: this.config.bucket, Key: objectKey, ChecksumSHA256: checksum });
+    const url = await getSignedUrl(this.signer, cmd, {
+      expiresIn: expiresInSeconds,
+      unhoistableHeaders: new Set(["x-amz-checksum-sha256"]),
+    });
+    return {
+      url,
+      method: "PUT",
+      bucket: this.config.bucket,
+      object_key: objectKey,
+      expires_in_seconds: expiresInSeconds,
+      headers: { "x-amz-checksum-sha256": checksum },
+    };
+  }
+
   async presignGet(objectKey: string, expiresInSeconds = PRESIGNED_URL_TTL_SECONDS): Promise<PresignResult> {
     await this.assertBucket();
     const cmd = new GetObjectCommand({ Bucket: this.config.bucket, Key: objectKey });

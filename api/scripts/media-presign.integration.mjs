@@ -3,7 +3,9 @@
  * (deploy/SYNC_EXCHANGE.md): POST /api/v1/sync/media/presign-put -> PUT the bytes to the presigned
  * URL -> POST /api/v1/sync/media/presign-get -> GET the presigned URL returns the exact bytes.
  * Also: one tenant can neither read nor write another tenant's keys, a tampered URL is refused by
- * the object store, a missing bucket is reported, never created by the API, and the pre-start
+ * the object store, a phone removed by its administrator uploads the files of its own final upload
+ * (and nothing else, never a download, never over a stored file) through a URL bound to the file's
+ * SHA-256 (other bytes and a PUT without the checksum header are refused), a missing bucket is reported, never created by the API, and the pre-start
  * check (api/src/tools/object-store-check.ts) passes only with a working store and settings.
  *
  * Public route: desktops never reach the store directly. Every URL is signed for
@@ -370,6 +372,163 @@ try {
   assert.equal(listed.status, 403, `presigned bucket listing through the route: ${listed.status}`);
   await listed.arrayBuffer();
   assert.equal(await rawStatus(`/${presignedQuery}`), 403, "bucket-level request at / through the route");
+
+  // A phone removed by its administrator uploads the files of its final upload through the same
+  // route: only files of its own work that it announced, and it downloads nothing.
+  {
+    const t = await api.call("POST", "/api/v1/tenants", admin, { slug: "media-phone", display_name: "Media phone" });
+    const l = await api.call("POST", "/api/v1/licenses", admin, { tenant_id: t.json.id, max_machines: 1, max_mobile_devices: 1 });
+    assert.equal(l.status, 201, l.text);
+    const desk = await api.claimDevice(l.json.license_key, "media-phone-desk");
+    const enrolment = await api.call("POST", "/api/v1/mobile-enrolments", desk, {
+      person_sync_id: "user-1",
+      person_label: "Technicien",
+      site_sync_id: "site-1",
+      site_label: "Usine",
+      issued_by_sync_id: "user-admin",
+      issued_by_label: "Admin",
+    });
+    assert.equal(enrolment.status, 201, enrolment.text);
+    const phone = await api.call("POST", "/api/v1/mobile-enrolments/redeem", null, {
+      token: enrolment.json.token,
+      machine_fingerprint: "media-phone-1",
+      device_class: "mobile",
+      redeem_nonce: randomBytes(32).toString("base64url"),
+    });
+    assert.equal(phone.status, 200, phone.text);
+    const phoneToken = phone.json.activation_token;
+    const deviceId = (await api.call("GET", "/api/v1/mobile-devices", desk)).json.devices[0].device_id;
+    const revoked = await api.call("POST", `/api/v1/mobile-devices/${deviceId}/revoke`, desk, {
+      actor_sync_id: "user-admin",
+      actor_label: "Admin",
+    });
+    assert.equal(revoked.status, 200, revoked.text);
+
+    // A file the desktop already stored (its own upload, not in any manifest).
+    const deskPhoto = randomBytes(32 * 1024 + 5);
+    const deskKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(deskPhoto)}`;
+    const deskPut = await api.call("POST", "/api/v1/sync/media/presign-put", desk, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(deskPhoto),
+      object_key: deskKey,
+    });
+    assert.equal(deskPut.status, 200, deskPut.text);
+    assert.equal(deskPut.json.headers, undefined, "desktops keep unbound URLs");
+    assert.ok((await fetch(deskPut.json.url, { method: "PUT", body: deskPhoto })).ok);
+    const exists = (key) =>
+      s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key })).then(
+        () => true,
+        (e) => (e?.$metadata?.httpStatusCode === 404 ? false : Promise.reject(e)),
+      );
+
+    // A file the desktop announced but has not uploaded yet.
+    const pendingPhoto = randomBytes(16 * 1024 + 1);
+    const pendingKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(pendingPhoto)}`;
+
+    const deskAnnounce = await api.call("POST", "/api/v1/sync/exchange", desk, {
+      protocol_version: "v2",
+      idempotency_key: `v2-${randomBytes(8).toString("hex")}`,
+      checkpoint_token: null,
+      current_user_sync_ids: [],
+      device_class: "desktop",
+      outbox_batch: [],
+      media_manifest: [{ entity_sync_id: "ma-desk-pending", content_sha256: sha256(pendingPhoto), object_key: pendingKey, byte_size: pendingPhoto.length }],
+    });
+    assert.equal(deskAnnounce.status, 200, deskAnnounce.text);
+
+    const fieldPhoto = randomBytes(64 * 1024 + 3);
+    const fieldKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(fieldPhoto)}`;
+    const mediaItem = (entitySyncId, objectKey) => {
+      const payloadJson = JSON.stringify({ object_key: objectKey });
+      return {
+        idempotency_key: `item-${randomBytes(8).toString("hex")}`,
+        entity_type: "media_attachments",
+        entity_sync_id: entitySyncId,
+        operation: "create",
+        row_version: 1,
+        base_row_version: null,
+        payload_json: payloadJson,
+        payload_hash: sha256(payloadJson),
+      };
+    };
+    const finalUpload = await api.call("POST", "/api/v1/sync/exchange", phoneToken, {
+      protocol_version: "v2",
+      idempotency_key: `v2-${randomBytes(8).toString("hex")}`,
+      checkpoint_token: null,
+      current_user_sync_ids: [],
+      device_class: "mobile",
+      outbox_batch: [mediaItem("ma-field-1", fieldKey), mediaItem("ma-field-2", deskKey), mediaItem("ma-field-3", pendingKey)],
+      media_manifest: [
+        { entity_sync_id: "ma-field-1", content_sha256: sha256(fieldPhoto), object_key: fieldKey, byte_size: fieldPhoto.length },
+        // The desktop's stored file, announced by the phone with a record of its own.
+        { entity_sync_id: "ma-field-2", content_sha256: sha256(deskPhoto), object_key: deskKey, byte_size: deskPhoto.length },
+        { entity_sync_id: "ma-field-3", content_sha256: sha256(pendingPhoto), object_key: pendingKey, byte_size: pendingPhoto.length },
+      ],
+    });
+    assert.equal(finalUpload.status, 200, finalUpload.text);
+    assert.equal(finalUpload.json.acknowledged_items.length, 3, finalUpload.text);
+
+    const presignField = () =>
+      api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+        parent_entity_type: "work_orders",
+        parent_entity_sync_id: "wo-field",
+        content_sha256: sha256(fieldPhoto),
+        object_key: fieldKey,
+      });
+    const fieldPut = await presignField();
+    assert.equal(fieldPut.status, 200, fieldPut.text);
+    assert.deepEqual(fieldPut.json.headers, { "x-amz-checksum-sha256": createHash("sha256").update(fieldPhoto).digest("base64") });
+    // The URL is bound to the content: without the checksum header the signature fails; with it,
+    // other bytes are refused by the store. Nothing is stored either way.
+    const noHeader = await fetch(fieldPut.json.url, { method: "PUT", body: fieldPhoto });
+    assert.ok(!noHeader.ok, `PUT without the checksum header: ${noHeader.status}`);
+    await noHeader.arrayBuffer();
+    const otherBytes = await fetch(fieldPut.json.url, { method: "PUT", body: randomBytes(fieldPhoto.length), headers: fieldPut.json.headers });
+    assert.ok(!otherBytes.ok, `PUT of other bytes under a bound URL: ${otherBytes.status}`);
+    await otherBytes.arrayBuffer();
+    assert.equal(await exists(fieldKey), false, "nothing stored by the refused PUTs");
+    const fieldPutRes = await fetch(fieldPut.json.url, { method: "PUT", body: fieldPhoto, headers: fieldPut.json.headers });
+    assert.ok(fieldPutRes.ok, `removed phone's PUT through the route: ${fieldPutRes.status} ${await fieldPutRes.text()}`);
+    assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: fieldKey }))).ContentLength, fieldPhoto.length);
+
+    // Announced by the desktop too but not stored yet: the phone gets a URL (bound to the hash, it
+    // can only store those same bytes), never "already stored", or the photo would be lost.
+    const pendingPut = await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(pendingPhoto),
+      object_key: pendingKey,
+    });
+    assert.equal(pendingPut.status, 200, pendingPut.text);
+    assert.ok((await fetch(pendingPut.json.url, { method: "PUT", body: pendingPhoto, headers: pendingPut.json.headers })).ok);
+
+    // Already on the server: the phone gets no URL, it counts the file as uploaded (a retry after
+    // a lost answer; or another device's stored file it announced, which it can never replace).
+    for (const r of [
+      await presignField(),
+      await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+        parent_entity_type: "work_orders",
+        parent_entity_sync_id: "wo-field",
+        content_sha256: sha256(deskPhoto),
+        object_key: deskKey,
+      }),
+    ]) {
+      assert.deepEqual([r.status, r.json?.error], [409, "media_already_stored"], r.text);
+    }
+    assert.equal(sha256(Buffer.from(await (await fetch((await api.call("POST", "/api/v1/sync/media/presign-get", desk, { object_key: deskKey })).json.url)).arrayBuffer())), sha256(deskPhoto), "the desktop's file is intact");
+
+    const otherKey = `dev/media/${t.json.id}/work_orders/wo-field/${sha256(photo)}`;
+    const notAnnounced = await api.call("POST", "/api/v1/sync/media/presign-put", phoneToken, {
+      parent_entity_type: "work_orders",
+      parent_entity_sync_id: "wo-field",
+      content_sha256: sha256(photo),
+      object_key: otherKey,
+    });
+    assert.deepEqual([notAnnounced.status, notAnnounced.json?.error], [403, "media_not_from_this_device"], notAnnounced.text);
+    const download = await api.call("POST", "/api/v1/sync/media/presign-get", phoneToken, { object_key: fieldKey });
+    assert.deepEqual([download.status, download.json?.error], [403, "device_wipe_required"], download.text);
+  }
 
   // The object is still there.
   assert.equal((await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: put.json.object_key }))).ContentLength, photo.length);
