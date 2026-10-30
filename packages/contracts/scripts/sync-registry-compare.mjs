@@ -41,7 +41,11 @@ export function compareServerToDesktop(serverDoc, desktopView) {
     if (server.has(e.entity_type)) problems.push(`${e.entity_type}: listed twice in the server registry`);
     server.set(e.entity_type, e);
   }
-  const desk = new Map(desktopView.entity_types.map((e) => [e.entity_type, e]));
+  const desk = new Map();
+  for (const e of desktopView.entity_types) {
+    if (desk.has(e.entity_type)) problems.push(`${e.entity_type}: listed twice in the desktop registry`);
+    desk.set(e.entity_type, e);
+  }
   for (const [type, d] of desk) {
     const s = server.get(type);
     if (!s) {

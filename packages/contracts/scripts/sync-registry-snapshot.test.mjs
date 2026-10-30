@@ -34,4 +34,13 @@ describe("sync entity registry vs desktop snapshot", () => {
     expect(problems).toMatch(/articles: scope user on the server, tenant on the desktop/);
     expect(problems).toMatch(/schedule_break_ins: staged by the desktop, missing from the server registry/);
   });
+
+  it("reports a type listed twice on either side", () => {
+    const dupServer = structuredClone(server);
+    dupServer.entity_types.push({ ...dupServer.entity_types[0] });
+    expect(compareServerToDesktop(dupServer, snapshot).join("\n")).toMatch(/listed twice in the server registry/);
+    const dupSnapshot = structuredClone(snapshot);
+    dupSnapshot.entity_types.push({ ...dupSnapshot.entity_types[0], append_only: !dupSnapshot.entity_types[0].append_only });
+    expect(compareServerToDesktop(server, dupSnapshot).join("\n")).toMatch(/listed twice in the desktop registry/);
+  });
 });
