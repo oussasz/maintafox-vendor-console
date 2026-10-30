@@ -1,77 +1,66 @@
 /**
  * Drift check: the server's sync entity registry (shared/sync-entity-registry.v2.json, read by the
  * API's validator) against the desktop's allowlist (maintafox-desktop
- * shared/sync/server-entity-allowlist.v2.json, what the desktop stages for sync v2).
+ * shared/sync/server-entity-allowlist.v2.json, what the desktop stages for sync v2) and its entity
+ * registry (shared/sync/entity-registry.json, generated from registry.rs).
  *
  *   node packages/contracts/scripts/sync-registry-drift.mjs --desktop <maintafox-desktop checkout>
+ *   node packages/contracts/scripts/sync-registry-drift.mjs --desktop <checkout> --write-snapshot
  *
  * Fails when an entity type is on one side only or has another scope: a type only the desktop has
  * would be refused by the server (unknown_entity_type); a type only the server has is dead.
- * Also fails when a server entry's `append_only` flag differs from the desktop entity registry
- * (shared/sync/entity-registry.json, generated from registry.rs): append_only must be true exactly
- * for conflict_policy "append_only" (the server refuses deletes of those types). A type the desktop
- * registry does not list (a local-only table) must be append_only false.
+ * Also fails when a server entry's `append_only` flag differs from the desktop's conflict_policy:
+ * append_only must be true exactly for conflict_policy "append_only" (the server refuses deletes of
+ * those types). A type the desktop registry does not list (a local-only table) must be false.
+ *
+ * It also fails when packages/contracts/desktop-sync-registry.snapshot.json no longer matches the
+ * desktop: that snapshot is what `pnpm test` checks the server registry against without a desktop
+ * checkout (sync-registry-snapshot.test.mjs). --write-snapshot rewrites it from the desktop.
  * CI runs it against the desktop repository (.github/workflows/ci.yml, contracts-drift).
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareServerToDesktop, desktopRegistryView } from "./sync-registry-compare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_REGISTRY = join(here, "../../../shared/sync-entity-registry.v2.json");
+const SNAPSHOT = join(here, "../desktop-sync-registry.snapshot.json");
 const DESKTOP_REL = "shared/sync/server-entity-allowlist.v2.json";
 const DESKTOP_REGISTRY_REL = "shared/sync/entity-registry.json";
 
 const i = process.argv.indexOf("--desktop");
 const desktop = i >= 0 ? process.argv[i + 1] : undefined;
 if (!desktop) {
-  console.error("usage: node packages/contracts/scripts/sync-registry-drift.mjs --desktop <maintafox-desktop checkout>");
+  console.error("usage: node packages/contracts/scripts/sync-registry-drift.mjs --desktop <maintafox-desktop checkout> [--write-snapshot]");
   process.exit(2);
 }
 
-/** entity_type → scope, refusing a duplicate entry. */
-function scopes(path) {
-  const doc = JSON.parse(readFileSync(path, "utf8"));
-  const out = new Map();
-  for (const e of doc.entity_types) {
-    if (out.has(e.entity_type)) throw new Error(`${path}: ${e.entity_type} is listed twice`);
-    out.set(e.entity_type, e.scope);
-  }
-  return { protocol: doc.protocol_version, types: out };
+const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+const view = desktopRegistryView(readJson(join(desktop, DESKTOP_REL)), readJson(join(desktop, DESKTOP_REGISTRY_REL)));
+
+if (process.argv.includes("--write-snapshot")) {
+  const doc = {
+    description:
+      "Desktop sync registry the server must mirror: maintafox-desktop shared/sync/server-entity-allowlist.v2.json (types, scopes) and shared/sync/entity-registry.json (append_only = conflict_policy append_only). Written by packages/contracts/scripts/sync-registry-drift.mjs --write-snapshot; never edit by hand.",
+    ...view,
+  };
+  writeFileSync(SNAPSHOT, `${JSON.stringify(doc, null, 2)}\n`);
+  console.log(`snapshot written: ${view.entity_types.length} entity types`);
 }
 
-const server = scopes(SERVER_REGISTRY);
-const desk = scopes(join(desktop, DESKTOP_REL));
-const problems = [];
-if (server.protocol !== desk.protocol) problems.push(`protocol_version: server ${server.protocol}, desktop ${desk.protocol}`);
-for (const [type, scope] of desk.types) {
-  if (!server.types.has(type)) problems.push(`${type}: staged by the desktop, missing from the server registry (refused as unknown_entity_type)`);
-  else if (server.types.get(type) !== scope) problems.push(`${type}: scope ${server.types.get(type)} on the server, ${scope} on the desktop`);
-}
-for (const type of server.types.keys()) {
-  if (!desk.types.has(type)) problems.push(`${type}: in the server registry, not in the desktop allowlist`);
-}
-
-// append_only flag of every server entry against the desktop's conflict policy.
-const serverDoc = JSON.parse(readFileSync(SERVER_REGISTRY, "utf8"));
-const deskRegistry = JSON.parse(readFileSync(join(desktop, DESKTOP_REGISTRY_REL), "utf8"));
-const deskAppendOnly = new Set(deskRegistry.entities.filter((e) => e.conflict_policy === "append_only").map((e) => e.entity_type));
-let appendOnlyCount = 0;
-for (const e of serverDoc.entity_types) {
-  if (typeof e.append_only !== "boolean") {
-    problems.push(`${e.entity_type}: append_only missing in the server registry (must be ${deskAppendOnly.has(e.entity_type)})`);
-    continue;
-  }
-  if (e.append_only) appendOnlyCount += 1;
-  if (e.append_only !== deskAppendOnly.has(e.entity_type)) {
-    problems.push(`${e.entity_type}: append_only ${e.append_only} on the server, conflict_policy ${deskAppendOnly.has(e.entity_type) ? "append_only" : "not append_only"} on the desktop`);
-  }
+const serverDoc = readJson(SERVER_REGISTRY);
+const problems = compareServerToDesktop(serverDoc, view);
+const snapshot = readJson(SNAPSHOT);
+if (snapshot.protocol_version !== view.protocol_version || JSON.stringify(snapshot.entity_types) !== JSON.stringify(view.entity_types)) {
+  problems.push("packages/contracts/desktop-sync-registry.snapshot.json: stale against the desktop; rerun with --write-snapshot and commit it");
 }
 
 if (problems.length > 0) {
   console.error(`sync registry drift (${problems.length}):\n  ${problems.join("\n  ")}`);
   process.exit(1);
 }
+const appendOnlyCount = serverDoc.entity_types.filter((e) => e.append_only).length;
 console.log(
-  `sync registry aligned with the desktop: ${server.types.size} entity types, same scopes, same append_only flags (${appendOnlyCount} append-only)`,
+  `sync registry aligned with the desktop: ${view.entity_types.length} entity types, same scopes, same append_only flags (${appendOnlyCount} append-only); snapshot up to date`,
 );

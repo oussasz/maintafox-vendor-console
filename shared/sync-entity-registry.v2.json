@@ -581,7 +581,7 @@
     {
       "entity_type": "di_review_events",
       "scope": "tenant",
-      "append_only": false
+      "append_only": true
     },
     {
       "entity_type": "di_sla_rules",
@@ -661,7 +661,7 @@
     {
       "entity_type": "work_order_verifications",
       "scope": "tenant",
-      "append_only": false
+      "append_only": true
     },
     {
       "entity_type": "capacity_rules",
@@ -696,7 +696,7 @@
     {
       "entity_type": "schedule_break_ins",
       "scope": "tenant",
-      "append_only": false
+      "append_only": true
     },
     {
       "entity_type": "schedule_candidates",
