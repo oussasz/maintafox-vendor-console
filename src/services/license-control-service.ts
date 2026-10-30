@@ -120,7 +120,7 @@ const ActivationClaimResultSchema = z.object({
   has_demo_data: z.boolean().optional(),
   capabilities_digest: z.string().nullable().optional(),
   feature_flags_digest: z.string().nullable().optional(),
-  entitlement_envelope: z.record(z.unknown()).optional(),
+  entitlement_envelope: z.record(z.string(), z.unknown()).optional(),
 });
 
 const ActivationTenantStatusSchema = z.object({

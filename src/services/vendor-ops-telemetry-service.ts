@@ -59,7 +59,7 @@ const DeviceTimelineSchema = z.object({
     z.object({
       at: z.string(),
       kind: z.enum(["exchange", "rejection", "conflict", "resync_requested", "resync_completed", "operator_action"]),
-      detail: z.record(z.unknown()),
+      detail: z.record(z.string(), z.unknown()),
     }),
   ),
 });
