@@ -58,10 +58,12 @@ const CORE_MODULES: ModuleCapabilityKey[] = [
   "reference",
 ];
 
-const PROFESSIONAL_EXTRA: ModuleCapabilityKey[] = ["planning", "pm", "permits", "inspections"];
+// Training and certifications go with permits: a desktop permit checks the certifications of each
+// permit role, so the edition that sells permits must let the plant record and renew them (owner
+// decision 2026-11-02). Desktop `edition-capability-catalog.ts` mirrors this split.
+const PROFESSIONAL_EXTRA: ModuleCapabilityKey[] = ["planning", "pm", "permits", "inspections", "training"];
 
 const ENTERPRISE_EXTRA: ModuleCapabilityKey[] = [
-  "training",
   "reports",
   "rams",
   "finance",
