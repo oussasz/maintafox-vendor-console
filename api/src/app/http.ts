@@ -110,7 +110,7 @@ export const deviceRateLimiter = rateLimit({
 
 export function sendValidationError(
   res: express.Response,
-  parsed: z.SafeParseError<unknown>,
+  parsed: z.ZodSafeParseError<unknown>,
   source: "body" | "query" | "params" = "body",
 ): void {
   res.status(400).json({

@@ -21,7 +21,8 @@ const SlickPayUserInfoSchema = z
     phone: z.string().min(6).max(32).optional(),
     email: z.string().email().optional(),
     address: z.string().min(1).max(256).optional(),
-    contact_id: z.string().uuid().optional(),
+    /** guid(): any 8-4-4-4-12 hex id, as zod 3's uuid() accepted (zod 4's uuid() also checks RFC 9562 bits). */
+    contact_id: z.string().guid().optional(),
     /** Company / organization aliases accepted from the public website. */
     company: z.string().min(2).max(128).optional(),
     company_name: z.string().min(2).max(128).optional(),
