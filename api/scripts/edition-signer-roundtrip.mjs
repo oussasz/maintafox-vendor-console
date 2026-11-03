@@ -31,7 +31,7 @@ assert.equal(parseEditionId("enterprise"), "enterprise");
 assert.equal(capabilitiesJsonForEdition("core").includes('"planning":false'), true);
 assert.equal(capabilitiesJsonForEdition("core").includes('"training":false'), true);
 assert.equal(capabilitiesJsonForEdition("professional").includes('"planning":true'), true);
-assert.equal(capabilitiesJsonForEdition("professional").includes('"training":false'), true);
+assert.equal(capabilitiesJsonForEdition("professional").includes('"training":true'), true);
 assert.equal(capabilitiesJsonForEdition("enterprise").includes('"finance":true'), true);
 assert.equal(capabilitiesJsonForEdition("enterprise").includes('"training":true'), true);
 

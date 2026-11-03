@@ -107,7 +107,8 @@ const envelope = buildSignedEntitlementEnvelope({
 assert.equal(envelope.tier, "professional");
 assert.ok(envelope.capabilities_json.includes('"permits":false'));
 assert.ok(envelope.capabilities_json.includes('"planning":true'));
-assert.ok(envelope.capabilities_json.includes('"training":false'));
+// Training is in the Professional factory map (with permits) and the PATCH above kept it.
+assert.ok(envelope.capabilities_json.includes('"training":true'));
 
 // Custom edition create + delete
 const customCaps = serializeCapabilitiesMap({
