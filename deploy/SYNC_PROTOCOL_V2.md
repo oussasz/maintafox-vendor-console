@@ -295,6 +295,52 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
 - Conflicts are logged in `sync_conflict_log`, device positions in `sync_device_checkpoint`,
   reported users in `sync_device_user`, media manifests in `sync_media_manifest`.
 
+## 11. Per-user signed changes (signature cutover)
+
+The server proves WHO made a change: each change is signed by its maker's Ed25519 key (one key per
+user and PC), verified against the server's key directory, and delivered with the verified
+signatures. Accounts, grants and roles are judged at ingest with the desktop's plant-wide rules, so
+the mirror only holds authority data made by people allowed to make it.
+
+- **Cutover**: `signature_cutover_seq` (every v2 exchange and snapshot response) is the first
+  `server_seq` judged by these rules; rows below it are legacy and judged by the PCs as before.
+- **Registry** (§2): entries may carry `author_fields: [{field, guards[]}]` (wire names; `guards` are
+  the columns the author vouches for), `authority: "adm.users" | "adm.roles"`, and
+  `server_only: true` (`user_signing_keys`, published by the server; a device push is refused
+  `server_only_entity_type`).
+- **Enrolment**: `POST /api/v1/sync/user-keys/enrol` (device bearer token)
+  `{user_sync_id, public_key, password, proof_signature}`. `public_key` = base64 raw 32-byte Ed25519
+  key; `key_id` = hex of the first 16 bytes of SHA-256(raw key); `proof_signature` = base64 Ed25519
+  signature of the encoding below over (`mfx-user-key-enrol-v1`, tenant_id, user_sync_id, key_id,
+  machine_fingerprint). The password is checked against the server's judged copy of the account
+  (argon2id PHC within m ≤ 65536 KiB, t ≤ 4, p ≤ 4) and is never stored or logged. Refusals:
+  `403 enrolment_refused` (one code for unknown/inactive user, built-in `admin` with its default
+  password, wrong password or proof), `429 enrolment_locked` (5 failures in 15 min for that user on
+  this PC; other PCs only get a growing delay, max 30 s), `409 key_already_enrolled`. Success
+  `{key_id, enrolled_seq}`; the key is published as a `user_signing_keys` row.
+- **Signed message**: ASCII tag then each field as `<u32 big-endian byte length><UTF-8 bytes>`:
+  `mfx-sync-sig-v1`, tenant_id, entity_type, entity_sync_id, operation, row_version,
+  base_row_version (empty when null), SHA-256 hex of `payload_json` (recomputed by every verifier),
+  signer user_sync_id, key_id.
+- **Item fields** (§3): `signatures: [{user_sync_id, key_id, signature}]` (0..8, distinct users; the
+  first is the maker); `recovery_code` only on the two items of a vendor recovery.
+- **Item rules** (after §3.1, in order): signatures verify with an enrolled, unrevoked key of that
+  user (`signature_invalid`, `signing_key_unknown`, `signing_key_revoked`); types with author fields
+  or `authority` need a maker (`signature_required`); every author field set or changed, or whose
+  guarded columns changed, names a signer (`author_not_signer`); authority types need the maker to
+  hold the right plant-wide in the server's state, administrator-only for administrator rights, no
+  self-grant, takeover guard (`authority_refused`); a change that would leave no lasting
+  administrator is refused (`last_administrator_required`). Exceptions: the tenant's founding
+  administrator (one unsigned `is_admin` account create from the PC of the first activation, before
+  any other PC pushes) and the vendor recovery unit (two items with the same signed code from the
+  code's PC, at most 7 days after issue, consumed once; `recovery_refused`). Protocol v1 refuses
+  types that must be signed (`signature_required`) and server-only types.
+- **Delivery**: inbound and snapshot items carry `signatures` (empty for unsigned and legacy rows);
+  conflict items carry `server_signatures`.
+- **Revocation**: an accepted `user_accounts` change that disables or deletes a user or changes
+  their `password_hash` revokes all their keys from that item's `server_seq`; an operator can revoke
+  one key (`deploy/SYNC_OPERATIONS.md`). Revocations are published as `user_signing_keys` rows.
+
 ## Changelog
 
 - 2026-10-10: first version.
@@ -311,3 +357,6 @@ A background job runs every `SYNC_RETENTION_INTERVAL_MINUTES`:
   `rejected_items` shape). Server-side only: accepted deletes and overwrites of attachment types are
   archived and can be restored by an operator as a new server-originated change
   (`deploy/SYNC_OPERATIONS.md`).
+- 2026-11-13: §11 per-user signed changes (sync-signing-design.md v9): enrolment endpoint, item
+  `signatures` / `recovery_code`, new rejection codes, delivered `signatures`, `signature_cutover_seq`,
+  registry `author_fields` / `authority` / `server_only`. Old PCs keep syncing unsigned ordinary rows.
