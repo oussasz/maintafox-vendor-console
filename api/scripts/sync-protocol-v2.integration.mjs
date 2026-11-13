@@ -397,7 +397,8 @@ async function run() {
       for (let i = 0; i < 20; i += 1) {
         if ((await v1([])).inbound_items.length === 0) break;
       }
-      await v1(Array.from({ length: 350 }, (_, i) => item("work_orders", `wo-v1-own-${i}`, 1, null, { n: i })));
+      // equipment: v1 refuses types with author fields (work orders carry approvers).
+      await v1(Array.from({ length: 350 }, (_, i) => item("equipment", `wo-v1-own-${i}`, 1, null, { n: i })));
       await exchange(B, [item("work_orders", "wo-for-v1", 1, null, { from: "B" })]);
       assert.ok(
         (await v1([])).inbound_items.some((i) => i.entity_sync_id === "wo-for-v1"),
