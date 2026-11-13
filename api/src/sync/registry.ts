@@ -12,7 +12,12 @@ import { z } from "zod";
 export type SyncEntityScope = "tenant" | "user";
 
 export type AuthorField = { readonly field: string; readonly guards: readonly string[] };
-export type AuthorityRight = "adm.users" | "adm.roles";
+/**
+ * Rights the server judges as a plant-wide holder (authority.ts `holdsTenantRight`). The takeover
+ * rules of authority.ts apply to the user and role administration types only.
+ */
+export const AUTHORITY_RIGHTS = ["adm.users", "adm.roles", "adm.settings", "org.admin"] as const;
+export type AuthorityRight = (typeof AUTHORITY_RIGHTS)[number];
 
 export const SYNC_ENTITY_REGISTRY_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -47,7 +52,7 @@ const RegistryFile = z
               )
               .optional(),
             /** Authority data (accounts, grants, roles): the right the maker must hold plant-wide. */
-            authority: z.enum(["adm.users", "adm.roles"]).optional(),
+            authority: z.enum(AUTHORITY_RIGHTS).optional(),
             /** Published by the server only; a device push of this type is refused. */
             server_only: z.boolean().optional(),
           })

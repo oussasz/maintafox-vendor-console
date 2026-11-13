@@ -1,0 +1,48 @@
+{
+  "$comment": "Per-user sync signing cross-language vector (sync-signing-design.md v9 §7). Shared by the desktop (auth::signing_keys tests) and the sync server (vendor-console api). Regenerate only with a new tag.",
+  "seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+  "public_key_b64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+  "key_id": "21fe31dfa154a261626bf854046fd227",
+  "changes": [
+    {
+      "input": {
+        "tenant_id": "tenant-0001",
+        "entity_type": "work_permits",
+        "entity_sync_id": "0f8e2d6c-3b1a-4e5f-8c7d-2a9b0e1f3c4d",
+        "operation": "update",
+        "row_version": 7,
+        "base_row_version": 6,
+        "payload_json": "{\"approved_by_sync_id\":\"5b1c7e2a-0d4f-4c1e-9a3b-6f2d8e7c1a90\",\"label\":\"Vanne étanche\"}",
+        "signer_user_sync_id": "5b1c7e2a-0d4f-4c1e-9a3b-6f2d8e7c1a90",
+        "key_id": "21fe31dfa154a261626bf854046fd227"
+      },
+      "message_hex": "0000000f6d66782d73796e632d7369672d76310000000b74656e616e742d303030310000000c776f726b5f7065726d6974730000002430663865326436632d336231612d346535662d386337642d326139623065316633633464000000067570646174650000000137000000013600000040366534383864346333363330343361303862313264396136396433326437663431316265666437653639316665363363313233313139663563623532353762370000002435623163376532612d306434662d346331652d396133622d366632643865376331613930000000203231666533316466613135346132363136323662663835343034366664323237",
+      "signature_b64": "WVL5iJ1+PfWYGHR5uP/Zh07qguzRPIppuprozwJVsigRzdAtlaSMs5QogYS+KT73FEgcZgeOeGS6KF4wezMaBA=="
+    },
+    {
+      "input": {
+        "tenant_id": "tenant-0001",
+        "entity_type": "work_permits",
+        "entity_sync_id": "0f8e2d6c-3b1a-4e5f-8c7d-2a9b0e1f3c4d",
+        "operation": "create",
+        "row_version": 1,
+        "base_row_version": null,
+        "payload_json": "{\"approved_by_sync_id\":\"5b1c7e2a-0d4f-4c1e-9a3b-6f2d8e7c1a90\",\"label\":\"Vanne étanche\"}",
+        "signer_user_sync_id": "5b1c7e2a-0d4f-4c1e-9a3b-6f2d8e7c1a90",
+        "key_id": "21fe31dfa154a261626bf854046fd227"
+      },
+      "message_hex": "0000000f6d66782d73796e632d7369672d76310000000b74656e616e742d303030310000000c776f726b5f7065726d6974730000002430663865326436632d336231612d346535662d386337642d3261396230653166336334640000000663726561746500000001310000000000000040366534383864346333363330343361303862313264396136396433326437663431316265666437653639316665363363313233313139663563623532353762370000002435623163376532612d306434662d346331652d396133622d366632643865376331613930000000203231666533316466613135346132363136323662663835343034366664323237",
+      "signature_b64": "ITH+iLINbSrFzNtcnqvjPwdDjkldohB4pWMG+Sj7W4HjTMwPfmQStlpdoAIReaQ35g69ycSJFv3mb3Uu5GL3Bg=="
+    }
+  ],
+  "enrol": {
+    "input": {
+      "tenant_id": "tenant-0001",
+      "user_sync_id": "5b1c7e2a-0d4f-4c1e-9a3b-6f2d8e7c1a90",
+      "key_id": "21fe31dfa154a261626bf854046fd227",
+      "machine_fingerprint": "fp-3c9a7e"
+    },
+    "message_hex": "000000156d66782d757365722d6b65792d656e726f6c2d76310000000b74656e616e742d303030310000002435623163376532612d306434662d346331652d396133622d3666326438653763316139300000002032316665333164666131353461323631363236626638353430343666643232370000000966702d336339613765",
+    "signature_b64": "hQOs6eyh7sfpU9VAuzAkorMbWVzdLA63NyYVXfAmK33MRvOi0ZdS37tqzncnUIgHTUbzgSItGC9J2LpgUcLcDg=="
+  }
+}

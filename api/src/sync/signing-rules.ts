@@ -376,7 +376,11 @@ export async function judgeItem(
   if (bad) return bad;
   const signers = new Set(signatures.map((s) => s.user_sync_id));
   const authority = registry.authorityOf(item.entity_type);
-  const needsMaker = authority !== undefined || registry.authorFieldsOf(item.entity_type).length > 0;
+  // Rule 3: an authority change always needs its maker's signature. Other types may arrive
+  // unsigned (a scheduler or background write); rule 4 below still refuses any author field the
+  // item sets or changes, or whose guarded column it changes, without that person's signature.
+  const needsMaker = authority !== undefined;
+  const authorChecked = needsMaker || registry.authorFieldsOf(item.entity_type).length > 0;
   if (needsMaker && signatures.length === 0) {
     return fail(
       "signature_required",
@@ -387,7 +391,7 @@ export async function judgeItem(
   if (item.operation !== "delete") {
     // Every operation that carries a row (create, update, upsert, archive) is author-checked; a
     // type that must be signed carries an object payload.
-    if (needsMaker && !payload) {
+    if (authorChecked && !payload) {
       return fail("invalid_payload", `${item.entity_type} payload_json must be a JSON object`);
     }
     if (payload) {

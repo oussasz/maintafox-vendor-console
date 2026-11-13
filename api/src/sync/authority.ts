@@ -17,6 +17,7 @@
 import type { Database } from "../db/database.js";
 import { deliveredPayload } from "./store.js";
 import type { PayloadCipher } from "./payload-crypto.js";
+import type { AuthorityRight } from "./registry.js";
 
 export const ELEVATED_ADMIN_ROLES: ReadonlySet<string> = new Set(["Administrator", "Superadmin"]);
 export const ADMIN_RIGHTS: ReadonlySet<string> = new Set(["adm.users", "adm.roles"]);
@@ -269,7 +270,7 @@ export type AuthorityItem = {
   previous: Payload | null;
   /** The item creates the entity again over the server's tombstone of it. */
   recreatesDeleted: boolean;
-  right: "adm.users" | "adm.roles";
+  right: AuthorityRight;
 };
 
 /**

@@ -451,19 +451,24 @@ async function run() {
       badBytes.signatures[0].signature = Buffer.alloc(64, 7).toString("base64");
       const twice = signed(T, event("sse-twice", "u-tech"), techKeyB, techKeyB);
       const good = TECH(event("sse-good", "u-tech"));
-      assert.deepEqual(await push(B, [forged, unsigned, otherUsersKey, badBytes, twice, good]), [
+      // Rule 3 needs a signature for authority types only: an unsigned change of an author type is
+      // refused by rule 4 as soon as it names an author, and accepted when it names nobody (a
+      // scheduler or background write).
+      const background = event("sse-background", null);
+      assert.deepEqual(await push(B, [forged, unsigned, otherUsersKey, badBytes, twice, good, background]), [
         "author_not_signer",
-        "signature_required",
+        "author_not_signer",
         "signing_key_unknown",
         "signature_invalid",
         "signature_invalid",
+        "ack",
         "ack",
       ]);
       const [state] = await sql(
         "SELECT COUNT(*)::int AS c FROM sync_entity_state WHERE tenant_id = $1 AND entity_sync_id LIKE 'sse-%'",
         [T],
       );
-      assert.equal(state.c, 1, "refused items never enter the mirror");
+      assert.equal(state.c, 2, "refused items never enter the mirror (the signed and the background change do)");
       const delivered = (await pullAll(A)).find((i) => i.entity_sync_id === "sse-good");
       assert.ok(delivered, "the signed change reaches the other PC");
       assert.deepEqual(delivered.signatures, good.signatures, "with its verified signatures");
@@ -734,7 +739,7 @@ async function run() {
         assert.equal(res.acknowledged_items.length, 0);
         assert.deepEqual(
           res.rejected_items.map((r) => r.rejection_code),
-          ["signature_required", "duplicate_item_in_batch", "recovery_refused"],
+          ["author_not_signer", "duplicate_item_in_batch", "recovery_refused"],
         );
         assert.equal(await isConsumed(code), false, "the code is not spent by a refused unit");
       }

@@ -16,9 +16,10 @@
  * - every accepted change of site_settings / site_setting_events / permit_types is kept with its
  *   sending device in sync_forensic_change_log, which retention never compacts.
  *
- * Per-user signing (sync-signing-design.md v9): types with author fields (media_attachments,
- * permit_types, site_setting_events) must be signed by an enrolled user key on v2 and are refused on
- * v1 (`signature_required`). The test founds the tenant's administrator from its first PC (before
+ * Per-user signing (sync-signing-design.md v9): types with author fields (request and work order
+ * attachments, permit_types, site_setting_events) are refused on v1 (`signature_required`); on v2
+ * this test signs them with an enrolled user key. media_attachments has no author field and stays
+ * writable on v1. The test founds the tenant's administrator from its first PC (before
  * any other push, the founding slot), enrols one key per pushing PC and signs those types itself.
  *
  * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY, TEST_S3_REGION, TEST_S3_PUBLIC_ENDPOINT
@@ -620,9 +621,12 @@ try {
   }
 
   // ── v1 delete with a LOWER version than the row it removes: archived; restore goes above both ──
-  const diPayload = JSON.stringify({ entity_sync_id: "di-att-1", file_name: "leak.pdf", relative_path: "di_attachments/7/leak.pdf" });
-  await exchangeV1(A, [item("di_attachments", "di-att-1", 7, null, diPayload, "upsert")]);
-  await exchangeV1(B, [item("di_attachments", "di-att-1", 1, null, JSON.stringify({ entity_sync_id: "di-att-1" }), "delete")]);
+  // (media_attachments: types with author fields, such as request attachments, are refused on v1.)
+  const diPayload = JSON.stringify({ entity_sync_id: "di-att-1", object_key: `test/media/${tenant.id}/di-att-1/leak` });
+  await exchangeV1(A, [item("media_attachments", "di-att-1", 7, null, diPayload, "upsert")]);
+  await exchangeV1(B, [item("media_attachments", "di-att-1", 1, null, JSON.stringify({ entity_sync_id: "di-att-1" }), "delete")]);
+  const v1Author = await exchangeV1(A, [item("di_attachments", "di-att-v1", 1, null, JSON.stringify({ entity_sync_id: "di-att-v1" }), "upsert")]);
+  assert.deepEqual(v1Author.rejected_items.map((r) => r.rejection_code), ["signature_required"], "author type refused on v1");
   const [v1Del] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'di-att-1'");
   assert.equal(v1Del.protocol_version, "v1", "a v1 delete is archived");
   assert.equal(v1Del.change_kind, "delete");
@@ -635,11 +639,11 @@ try {
   assert.equal(diBack.payload_json, diPayload);
 
   // ── ABA: v1 writes (version, payload) back to an earlier state; nothing is lost ──────────────
-  const P1 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/a.pdf" });
-  const P2 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/b.pdf" });
-  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
-  await exchangeV1(B, [item("work_order_attachments", "aba", 2, null, P2, "upsert")]);
-  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
+  const P1 = JSON.stringify({ entity_sync_id: "aba", object_key: `test/media/${tenant.id}/aba/a` });
+  const P2 = JSON.stringify({ entity_sync_id: "aba", object_key: `test/media/${tenant.id}/aba/b` });
+  await exchangeV1(A, [item("media_attachments", "aba", 1, null, P1, "upsert")]);
+  await exchangeV1(B, [item("media_attachments", "aba", 2, null, P2, "upsert")]);
+  await exchangeV1(A, [item("media_attachments", "aba", 1, null, P1, "upsert")]);
   const aba = await api.su(
     "SELECT id, prior_payload_raw, prior_row_version FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'aba' ORDER BY id",
   );
@@ -689,14 +693,8 @@ try {
   await exchange(A, [item("media_attachments", "c", 2, 1, cPayload("g1"), "upsert")]);
   for (let v = 3; v <= 10; v += 1) await exchange(A, [item("media_attachments", "c", v, v - 1, cPayload("g1"), "upsert")]);
   assert.equal((await pullAll(B)).find((i) => i.entity_sync_id === "c")?.row_version, 10, "a device holds v10");
-  // media_attachments has an author field: protocol v1 carries no signatures, so a v1 desktop can no
-  // longer write it (it used to lower the version here). Each v1 write is refused and changes nothing.
-  const v1Media = await exchangeV1(A, [
-    item("media_attachments", "c", 1, null, cPayload("g1"), "upsert"),
-    item("media_attachments", "c", 2, null, cPayload("junk"), "upsert"),
-  ]);
-  assert.deepEqual(v1Media.acknowledged_items, []);
-  assert.deepEqual(v1Media.rejected_items.map((r) => r.rejection_code), ["signature_required", "signature_required"]);
+  await exchangeV1(A, [item("media_attachments", "c", 1, null, cPayload("g1"), "upsert")]);
+  await exchangeV1(A, [item("media_attachments", "c", 2, null, cPayload("junk"), "upsert")]);
   // Compacting the log must not lose the high-water mark: drop this entity's log rows outright.
   await api.su("DELETE FROM sync_mirror_ingress WHERE tenant_id = $1 AND entity_sync_id = 'c'", [tenant.id]);
   const cG0 = (await api.su(
@@ -715,12 +713,7 @@ try {
   await exchange(A, [item("media_attachments", "e", 2, 1, eJunk, "upsert")]);
   const eEntry = (await list("?entity_type=media_attachments&entity_sync_id=e"))[0];
   assert.deepEqual(eEntry.current, { row_version: 2, payload_hash: sha256Hex(eJunk), deleted: false });
-  // A v1 delete of media_attachments is refused now (no signature on v1). The state change it used to
-  // make, only `deleted` flipping with the same version and payload hash, is made directly instead.
-  const v1Delete = await exchangeV1(B, [item("media_attachments", "e", 2, null, eJunk, "delete")]);
-  assert.deepEqual(v1Delete.acknowledged_items, []);
-  assert.equal(v1Delete.rejected_items[0].rejection_code, "signature_required");
-  await api.su("UPDATE sync_entity_state SET deleted = true WHERE tenant_id = $1 AND entity_sync_id = 'e'", [tenant.id]);
+  await exchangeV1(B, [item("media_attachments", "e", 2, null, eJunk, "delete")]);
   const eStale = await api.call("POST", restoreUrl(eEntry.id), token, expect(eEntry.current), privileged);
   assert.equal(eStale.status, 409, "same version and hash, but now deleted");
   assert.equal(eStale.json.error, "entity_changed_since_listing");
