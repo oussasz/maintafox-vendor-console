@@ -170,9 +170,11 @@ async function main() {
     });
     assert.equal(unknown.status, 404, "an unknown licence key finds nothing");
 
-    // Sync data for both tenants; alpha also pushes a user account (sensitive).
+    // Sync data for both tenants; alpha also pushes a user account (sensitive). Account changes
+    // must be signed (sync-signing-design.md §5); the one exception is the tenant's founding
+    // administrator pushed unsigned from its first-activated PC (§8), which alpha-device-1 is.
     const secretMarker = `pw-hash-${randomUUID()}`;
-    const account = item("user_accounts", "ua-1", { username: "tech1", password_hash: secretMarker });
+    const account = item("user_accounts", "ua-1", { username: "tech1", is_admin: 1, password_hash: secretMarker });
     const pushA = await exchange(tenants.alpha.devices[0], [account, item("equipment", "eq-a", { name: "Pump A" })]);
     assert.equal(pushA.response.acknowledged_items.length, 2, JSON.stringify(pushA.response));
     await exchange(tenants.beta.devices[0], [item("equipment", "eq-b", { name: "Pump B" })]);
