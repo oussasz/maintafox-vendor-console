@@ -292,7 +292,8 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
 
   /**
    * Reopens a brand-new tenant's founding-administrator slot closed by mistake (another PC pushed
-   * first), for the device of its first activation, only while the tenant has no account at all.
+   * first, or the tenant was activated before migration 022 but never synced an account), for the
+   * device of its first activation, only while the tenant has no account at all.
    */
   app.post("/api/v1/tenants/:tenantId/sync/founding-slot/reopen", authMiddleware, async (req, res) => {
     const { tenantId } = req.params;
@@ -320,7 +321,8 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
         if (accounts) return false;
         const row = await db.get<{ tenant_id: string }>(
           `UPDATE sync_tenant_founding SET slot_open = true, closed_at = NULL, closed_reason = NULL
-           WHERE tenant_id = ? AND NOT slot_open AND closed_reason = 'other_device_pushed' RETURNING tenant_id`,
+           WHERE tenant_id = ? AND NOT slot_open AND closed_reason IN ('other_device_pushed', 'existing_tenant')
+           RETURNING tenant_id`,
           tenantId,
         );
         return row !== undefined;

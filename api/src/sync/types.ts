@@ -144,6 +144,11 @@ export type SyncInboundItemV2 = {
   deleted: boolean;
   /** Verified by the server at ingest; empty for unsigned and legacy rows. */
   signatures: SyncSignature[];
+  /**
+   * Set when the server accepted the row without a maker signature: the tenant's founding
+   * administrator slot, or a vendor recovery unit (sync-signing-design.md §8).
+   */
+  server_attestation: "founding" | "recovery" | null;
 };
 
 export type SyncExchangeResponseV2 = {

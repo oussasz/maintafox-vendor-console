@@ -29,6 +29,8 @@ export const SERVER_ORIGIN = "server";
 
 /** Hard lockout per (tenant, user, device); growing delay per (tenant, user), never a lockout. */
 export const ENROL_DEVICE_MAX_FAILURES = 5;
+/** Failed attempts one PC may make across all users of the tenant in the same window. */
+export const ENROL_DEVICE_TOTAL_MAX_FAILURES = 20;
 export const ENROL_WINDOW_MINUTES = 15;
 export const ENROL_USER_DELAY_STEP_MS = 2000;
 export const ENROL_USER_DELAY_MAX_MS = 30000;
@@ -161,15 +163,32 @@ export type EnrolOutcome = { key_id: string; enrolled_seq: number };
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function recordAttempt(db: Database, act: ActivationSyncContext, userSyncId: string, succeeded: boolean) {
-  await db.run(
-    `INSERT INTO sync_user_key_enrol_attempts (tenant_id, user_sync_id, machine_fingerprint, attempted_at, succeeded)
-     VALUES ($1,$2,$3,now(),$4)`,
-    act.tenantId,
-    userSyncId,
-    act.machineFingerprint,
-    succeeded,
-  );
+/**
+ * At most this many Argon2 verifications run at once on this server process: each holds up to
+ * 64 MiB and runs on the event loop, so a paired PC cannot starve the other tenants.
+ */
+export const ENROL_ARGON2_CONCURRENCY = 2;
+let argon2Running = 0;
+const argon2Waiting: Array<() => void> = [];
+
+async function withArgon2Slot<T>(work: () => Promise<T>): Promise<T> {
+  if (argon2Running >= ENROL_ARGON2_CONCURRENCY) {
+    await new Promise<void>((resolve) => argon2Waiting.push(resolve));
+  } else {
+    argon2Running += 1;
+  }
+  try {
+    return await work();
+  } finally {
+    const next = argon2Waiting.shift();
+    if (next) next();
+    else argon2Running -= 1;
+  }
+}
+
+/** Turns this request's attempt row (recorded as failed before any check) into a success. */
+async function markAttemptSucceeded(db: Database, attemptId: string): Promise<void> {
+  await db.run("UPDATE sync_user_key_enrol_attempts SET succeeded = true WHERE id = $1::bigint", attemptId);
 }
 
 /** A refusal that must not tell which part failed (account, password or proof). */
@@ -190,28 +209,52 @@ export async function enrolUserKey(
   if (!rawPublicKey) throw new SyncRequestError(400, "validation_error", "public_key must be a base64 Ed25519 key.");
   const keyId = keyIdOf(rawPublicKey);
 
-  // 1. Rate limits before any hashing.
+  // 1. Rate limits before any hashing. The attempt is recorded as failed BEFORE the password is
+  //    checked (and turned into a success only after), under a per-PC lock, so parallel requests
+  //    cannot all see zero failures.
   const window = `${ENROL_WINDOW_MINUTES} minutes`;
-  const deviceFailures = await failures(
-    db,
-    `SELECT COUNT(*) AS n FROM sync_user_key_enrol_attempts
-     WHERE tenant_id = $1 AND user_sync_id = $2 AND machine_fingerprint = $3 AND NOT succeeded
-       AND attempted_at > now() - $4::interval`,
-    act.tenantId,
-    body.user_sync_id,
-    act.machineFingerprint,
-    window,
-  );
-  if (deviceFailures >= ENROL_DEVICE_MAX_FAILURES) {
-    throw new SyncRequestError(429, "enrolment_locked", "Too many failed attempts on this PC; try again later.");
-  }
+  const attemptId = await db.tx(async () => {
+    await db.get("SELECT pg_advisory_xact_lock(hashtext($1)) AS locked", `mfx-enrol:${act.tenantId}:${act.machineFingerprint}`);
+    const deviceFailures = await failures(
+      db,
+      `SELECT COUNT(*) AS n FROM sync_user_key_enrol_attempts
+       WHERE tenant_id = $1 AND user_sync_id = $2 AND machine_fingerprint = $3 AND NOT succeeded
+         AND attempted_at > now() - $4::interval`,
+      act.tenantId,
+      body.user_sync_id,
+      act.machineFingerprint,
+      window,
+    );
+    const deviceTotalFailures = await failures(
+      db,
+      `SELECT COUNT(*) AS n FROM sync_user_key_enrol_attempts
+       WHERE tenant_id = $1 AND machine_fingerprint = $2 AND NOT succeeded AND attempted_at > now() - $3::interval`,
+      act.tenantId,
+      act.machineFingerprint,
+      window,
+    );
+    if (deviceFailures >= ENROL_DEVICE_MAX_FAILURES || deviceTotalFailures >= ENROL_DEVICE_TOTAL_MAX_FAILURES) {
+      throw new SyncRequestError(429, "enrolment_locked", "Too many failed attempts on this PC; try again later.");
+    }
+    const row = await db.get<{ id: string | number }>(
+      `INSERT INTO sync_user_key_enrol_attempts (tenant_id, user_sync_id, machine_fingerprint, attempted_at, succeeded)
+       VALUES ($1,$2,$3,now(),false) RETURNING id`,
+      act.tenantId,
+      body.user_sync_id,
+      act.machineFingerprint,
+    );
+    if (!row) throw new Error("enrol attempt insert returned nothing");
+    return String(row.id);
+  });
   const userFailures = await failures(
     db,
     `SELECT COUNT(*) AS n FROM sync_user_key_enrol_attempts
-     WHERE tenant_id = $1 AND user_sync_id = $2 AND NOT succeeded AND attempted_at > now() - $3::interval`,
+     WHERE tenant_id = $1 AND user_sync_id = $2 AND NOT succeeded AND attempted_at > now() - $3::interval
+       AND id <> $4::bigint`,
     act.tenantId,
     body.user_sync_id,
     window,
+    attemptId,
   );
   if (userFailures > 0) await delay(Math.min(ENROL_USER_DELAY_MAX_MS, userFailures * ENROL_USER_DELAY_STEP_MS));
 
@@ -220,19 +263,17 @@ export async function enrolUserKey(
   const account = await livePayload(ctx, "user_accounts", body.user_sync_id);
   const phc = account && typeof account["password_hash"] === "string" ? account["password_hash"] : null;
   if (!accountUsable(account) || unchangedBuiltin(account) || phc === null || !checkArgon2idPhc(phc).ok) {
-    await recordAttempt(db, act, body.user_sync_id, false);
     throw refused();
   }
 
   // 3–4. Password, then proof of possession of the private key.
-  const passwordOk = await verifyArgon2idPassword(body.password, phc);
+  const passwordOk = await withArgon2Slot(() => verifyArgon2idPassword(body.password, phc));
   const proofOk = verifyEd25519(
     rawPublicKey,
     enrolProofMessage(act.tenantId, body.user_sync_id, keyId, act.machineFingerprint),
     body.proof_signature,
   );
   if (!passwordOk || !proofOk) {
-    await recordAttempt(db, act, body.user_sync_id, false);
     throw refused();
   }
 
@@ -241,7 +282,10 @@ export async function enrolUserKey(
     await lockTenantSync(db, act.tenantId);
     const current = await livePayload(ctx, "user_accounts", body.user_sync_id);
     if (!accountUsable(current) || current["password_hash"] !== phc) return "changed";
-    if (await getSigningKey(db, act.tenantId, keyId)) return "exists";
+    if (await getSigningKey(db, act.tenantId, keyId)) {
+      await markAttemptSucceeded(db, attemptId);
+      return "exists";
+    }
     const key = await db.get<SigningKeyRow>(
       `INSERT INTO sync_user_signing_keys (tenant_id, key_id, user_sync_id, public_key, machine_fingerprint, enrolled_at)
        VALUES ($1,$2,$3,$4,$5,now())
@@ -260,11 +304,10 @@ export async function enrolUserKey(
       keyId,
       seq,
     );
-    await recordAttempt(db, act, body.user_sync_id, true);
+    await markAttemptSucceeded(db, attemptId);
     return { key_id: keyId, enrolled_seq: seq };
   });
   if (outcome === "changed") {
-    await recordAttempt(db, act, body.user_sync_id, false);
     throw refused();
   }
   if (outcome === "exists") {

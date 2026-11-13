@@ -47,6 +47,14 @@ import {
 } from "./signing-rules.js";
 import { revokeUserKeys, signatureCutoverSeq } from "./user-keys.js";
 
+/** Types whose existing rows decide who is a plant administrator (auth/last_admin.rs). */
+const ADMINISTRATOR_SOURCE_TYPES: ReadonlySet<string> = new Set([
+  "user_accounts",
+  "user_scope_assignments",
+  "roles",
+  "role_permissions",
+]);
+
 /** JSON with object keys sorted recursively and no whitespace: the request-hash input. */
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -253,8 +261,31 @@ export async function runSyncExchangeV2(
     const signatureCutover = await signatureCutoverSeq(db);
     const authCtx: AuthorityCtx = { db, cipher: deps.cipher, tenantId: act.tenantId, now: assignmentClock(now) };
     if (body.outbox_batch.length > 0) await closeFoundingSlotForOtherDevice(db, act);
-    const recovery = await judgeRecoveryUnit(authCtx, act, body.outbox_batch, now);
+    let recovery = await judgeRecoveryUnit(authCtx, act, body.outbox_batch, now);
+    if (recovery.kind === "valid") {
+      // Both or neither (design §8): refuse the unit up front when either item could not be
+      // applied as a fresh create (format, an existing or tombstoned entity, a reused item key).
+      for (const unitItem of recovery.items) {
+        const format = validateOutboxItemV2(unitItem, deps.registry);
+        const existing = await getEntityState(db, deps.cipher, act.tenantId, unitItem.entity_type, unitItem.entity_sync_id);
+        const usedKey = await db.get<{ id: number }>(
+          "SELECT id FROM sync_mirror_ingress WHERE tenant_id = $1 AND idempotency_key = $2",
+          act.tenantId,
+          unitItem.idempotency_key,
+        );
+        if (!format.ok || existing !== undefined || usedKey !== undefined || unitItem.row_version !== 1) {
+          recovery = {
+            kind: "invalid",
+            items: recovery.items,
+            code: "recovery_refused",
+            message: "a recovery unit is applied whole: one of its items cannot be applied as a new row",
+          };
+          break;
+        }
+      }
+    }
     let recoveryConsumed = false;
+    let recoveryApplied = 0;
 
     const reject = async (item: SyncExchangeRequestV2["outbox_batch"][number], code: string, message: string) => {
       rejected_items.push(toRejectedV2(item, code, message));
@@ -379,9 +410,12 @@ export async function runSyncExchangeV2(
         await reject(item, judgement.code, judgement.message);
         continue;
       }
-      const authorityType = deps.registry.authorityOf(item.entity_type) !== undefined;
-      const adminsBefore = authorityType ? await lastingAdministratorCount(authCtx) : 0;
-      if (authorityType) await db.run("SAVEPOINT mfx_signed_item");
+      // Last administrator (auth/last_admin.rs): only a change to an existing account, grant, role
+      // or role right can remove an administrator, so only those are counted before and after.
+      const mayRemoveAdministrator =
+        previousPayload !== null && ADMINISTRATOR_SOURCE_TYPES.has(item.entity_type);
+      const adminsBefore = mayRemoveAdministrator ? await lastingAdministratorCount(authCtx) : 0;
+      if (mayRemoveAdministrator) await db.run("SAVEPOINT mfx_signed_item");
 
       const ingress: IngressInsert = {
         tenantId: act.tenantId,
@@ -398,6 +432,7 @@ export async function runSyncExchangeV2(
         receivedAt: nowIso,
         protocolVersion: "v2",
         signaturesJson: judgement.signaturesJson,
+        serverAttestation: judgement.attestation,
       };
       const serverSeq = await insertIngress(db, deps.cipher, ingress);
       if (serverSeq === null) {
@@ -407,8 +442,8 @@ export async function runSyncExchangeV2(
       // Archive of attachment deletes / forensic device log (adds rows only; before the state write).
       await recordAcceptedChange(db, deps.cipher, act, ingress, serverSeq);
       await upsertEntityState(db, deps.cipher, serverSeq, ingress);
-      if (authorityType) {
-        // Last administrator (auth/last_admin.rs): never leave the tenant without a lasting one.
+      if (mayRemoveAdministrator) {
+        // Never leave the tenant without a lasting administrator.
         if (adminsBefore > 0 && (await lastingAdministratorCount(authCtx)) === 0) {
           await db.run("ROLLBACK TO SAVEPOINT mfx_signed_item");
           await reject(item, "last_administrator_required", "this change would leave the plant without an administrator");
@@ -416,11 +451,14 @@ export async function runSyncExchangeV2(
         }
         await db.run("RELEASE SAVEPOINT mfx_signed_item");
       }
-      if (judgement.recovery && recovery.kind === "valid" && !recoveryConsumed) {
-        if (!(await consumeRecoveryCode(db, recovery.codeId, serverSeq, recovery.accountSyncId))) {
-          throw new SyncRequestError(409, "recovery_refused", "the recovery code was used meanwhile");
+      if (judgement.attestation === "recovery" && recovery.kind === "valid") {
+        recoveryApplied += 1;
+        if (!recoveryConsumed) {
+          if (!(await consumeRecoveryCode(db, recovery.codeId, serverSeq, recovery.accountSyncId))) {
+            throw new SyncRequestError(409, "recovery_refused", "the recovery code was used meanwhile");
+          }
+          recoveryConsumed = true;
         }
-        recoveryConsumed = true;
       }
       if (item.entity_type === "user_accounts") {
         const reason = revocationReason(item.operation, previousPayload, parsePayloadObject(item.payload_json));
@@ -435,6 +473,11 @@ export async function runSyncExchangeV2(
         server_seq: serverSeq,
         duplicate: false,
       });
+    }
+
+    if (recoveryConsumed && recoveryApplied !== 2) {
+      // Defensive: the pre-check above makes this unreachable. Rolls the whole exchange back.
+      throw new SyncRequestError(409, "recovery_refused", "a recovery unit must be applied whole");
     }
 
     const newUsers = await recordDeviceUsers(db, {

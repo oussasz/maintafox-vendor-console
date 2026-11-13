@@ -15,6 +15,7 @@ import { initialCheckpointToken, nextCheckpointToken, shouldAdvanceCheckpoint } 
 import { PayloadCipher, responseAad } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
 import { recordAcceptedChange } from "./attachment-archive.js";
+import { closeFoundingSlotForOtherDevice } from "./signing-rules.js";
 import { deliveredPayload, insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
 import {
   normalizePayloadHash,
@@ -50,6 +51,8 @@ export async function runSyncExchangeV1(
   const v1ResponseAad = responseAad(act.tenantId, "", body.idempotency_key);
   return db.tx(async () => {
     await lockTenantSync(db, act.tenantId);
+    // A push from any PC other than the founding one closes the founding slot (design §8).
+    if (body.outbox_batch.length > 0) await closeFoundingSlotForOtherDevice(db, act);
 
     const replay = await db.get<{ response_json: string; server_batch_id: string }>(
       `SELECT response_json, server_batch_id FROM sync_exchange_idempotency

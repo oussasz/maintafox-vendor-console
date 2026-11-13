@@ -326,8 +326,10 @@ the mirror only holds authority data made by people allowed to make it.
   first is the maker); `recovery_code` only on the two items of a vendor recovery.
 - **Item rules** (after §3.1, in order): signatures verify with an enrolled, unrevoked key of that
   user (`signature_invalid`, `signing_key_unknown`, `signing_key_revoked`); types with author fields
-  or `authority` need a maker (`signature_required`); every author field set or changed, or whose
-  guarded columns changed, names a signer (`author_not_signer`); authority types need the maker to
+  or `authority` need a maker (`signature_required`) and an object payload (`invalid_payload`); on
+  every operation but `delete`, every author field set or changed, or whose guarded columns
+  changed, names a signer, and an update may not empty an author field while a guarded column holds
+  a value (`author_not_signer`); authority types need the maker to
   hold the right plant-wide in the server's state, administrator-only for administrator rights, no
   self-grant, takeover guard (`authority_refused`); a change that would leave no lasting
   administrator is refused (`last_administrator_required`). Exceptions: the tenant's founding
@@ -335,8 +337,9 @@ the mirror only holds authority data made by people allowed to make it.
   any other PC pushes) and the vendor recovery unit (two items with the same signed code from the
   code's PC, at most 7 days after issue, consumed once; `recovery_refused`). Protocol v1 refuses
   types that must be signed (`signature_required`) and server-only types.
-- **Delivery**: inbound and snapshot items carry `signatures` (empty for unsigned and legacy rows);
-  conflict items carry `server_signatures`.
+- **Delivery**: inbound and snapshot items carry `signatures` (empty for unsigned and legacy rows)
+  and `server_attestation` (`"founding"` or `"recovery"` when the server accepted the row through
+  the founding slot or a recovery unit, else `null`); conflict items carry `server_signatures`.
 - **Revocation**: an accepted `user_accounts` change that disables or deletes a user or changes
   their `password_hash` revokes all their keys from that item's `server_seq`; an operator can revoke
   one key (`deploy/SYNC_OPERATIONS.md`). Revocations are published as `user_signing_keys` rows.

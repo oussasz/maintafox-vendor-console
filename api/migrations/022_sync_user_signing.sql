@@ -51,6 +51,12 @@ CREATE INDEX sync_user_key_enrol_attempts_user
 --    {user_sync_id, key_id, signature}); NULL = unsigned (legacy or a type that needs none).
 ALTER TABLE sync_mirror_ingress ADD COLUMN signatures_json TEXT NULL;
 ALTER TABLE sync_entity_state ADD COLUMN signatures_json TEXT NULL;
+--    How the server authenticated an accepted item that has no maker signature (founding
+--    administrator slot or vendor recovery unit, section 5); delivered so PCs can accept it.
+ALTER TABLE sync_mirror_ingress ADD COLUMN server_attestation TEXT NULL
+  CHECK (server_attestation IS NULL OR server_attestation IN ('founding', 'recovery'));
+ALTER TABLE sync_entity_state ADD COLUMN server_attestation TEXT NULL
+  CHECK (server_attestation IS NULL OR server_attestation IN ('founding', 'recovery'));
 
 -- 5. Founding administrator slot: one per tenant, ever, only from the device of the tenant's
 --    first activation. Closed for every tenant that already has data (their authority is legacy).

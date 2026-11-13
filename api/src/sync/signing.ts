@@ -1,5 +1,5 @@
 /**
- * Per-user signatures on sync changes (design: sync-signing-design.md v8, §3–§7).
+ * Per-user signatures on sync changes (design: sync-signing-design.md v9, §3–§7).
  *
  * Every verifier (this server and every PC) rebuilds the signed message from the item itself:
  * an ASCII tag, then each field as <u32 big-endian byte length><UTF-8 bytes>, so no field value
@@ -107,7 +107,7 @@ export type PhcCheck = { ok: true } | { ok: false; reason: string };
  * comes from a device, so oversized parameters would let a paired PC exhaust the server.
  */
 export function checkArgon2idPhc(phc: string): PhcCheck {
-  const m = /^\$argon2id\$v=19\$m=(\d{1,10}),t=(\d{1,3}),p=(\d{1,3})\$[A-Za-z0-9+/]{8,}\$[A-Za-z0-9+/]{16,}$/.exec(phc);
+  const m = /^\$argon2id\$v=19\$m=(\d{1,10}),t=(\d{1,3}),p=(\d{1,3})\$[A-Za-z0-9+/]{8,88}\$[A-Za-z0-9+/]{16,88}$/.exec(phc);
   if (!m) return { ok: false, reason: "not an argon2id v19 PHC string" };
   const memory = Number(m[1]);
   const time = Number(m[2]);

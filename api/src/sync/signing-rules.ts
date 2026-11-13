@@ -124,10 +124,14 @@ async function closeFoundingSlot(db: Database, tenantId: string, accountSyncId: 
 
 // ── Recovery unit (design §8) ───────────────────────────────────────────────────────────────
 
+/**
+ * The unit's items are held by identity (the exact objects of the batch), never by idempotency
+ * key: another item reusing a recovery item's key must not inherit the recovery exemption.
+ */
 export type RecoveryUnit =
   | { kind: "none" }
-  | { kind: "valid"; codeId: string; accountSyncId: string; itemKeys: Set<string> }
-  | { kind: "invalid"; itemKeys: Set<string>; code: string; message: string };
+  | { kind: "valid"; codeId: string; accountSyncId: string; items: ReadonlySet<SyncOutboxItemV2> }
+  | { kind: "invalid"; items: ReadonlySet<SyncOutboxItemV2>; code: string; message: string };
 
 function decodeRecoveryCode(code: string): { payloadJson: string; payload: AdminRecoveryPayload; signatureHex: string } | null {
   const parts = code.split(".");
@@ -153,11 +157,21 @@ export async function judgeRecoveryUnit(
 ): Promise<RecoveryUnit> {
   const items = batch.filter((i) => i.recovery_code !== undefined);
   if (items.length === 0) return { kind: "none" };
-  const itemKeys = new Set(items.map((i) => i.idempotency_key));
-  const invalid = (message: string): RecoveryUnit => ({ kind: "invalid", itemKeys, code: "recovery_refused", message });
+  const unitItems: ReadonlySet<SyncOutboxItemV2> = new Set(items);
+  const invalid = (message: string): RecoveryUnit => ({
+    kind: "invalid",
+    items: unitItems,
+    code: "recovery_refused",
+    message,
+  });
 
   const codes = new Set(items.map((i) => i.recovery_code));
   if (codes.size !== 1 || items.length !== 2) return invalid("a recovery is exactly two items carrying the same code");
+  for (const unitItem of items) {
+    if (batch.filter((i) => i.idempotency_key === unitItem.idempotency_key).length !== 1) {
+      return invalid("a recovery item's idempotency_key must be unique in the batch");
+    }
+  }
   const decoded = decodeRecoveryCode(items[0]!.recovery_code!);
   if (!decoded) return invalid("the recovery code is malformed");
   const { payload, payloadJson, signatureHex } = decoded;
@@ -227,7 +241,7 @@ export async function judgeRecoveryUnit(
   ) {
     return invalid("the recovery grant must give the Administrator role, plant-wide, to the recovered account");
   }
-  return { kind: "valid", codeId: payload.code_id, accountSyncId: account.entity_sync_id, itemKeys };
+  return { kind: "valid", codeId: payload.code_id, accountSyncId: account.entity_sync_id, items: unitItems };
 }
 
 /** Marks the code used by the unit; false when it was consumed meanwhile. */
@@ -292,10 +306,11 @@ export function checkAuthors(
     const guardsChanged = author.guards.some((g) => !same(payload[g], previous?.[g]));
     if (!fieldChanged && !guardsChanged) continue;
     if (blank(value)) {
-      // A create without this author is judged through its maker (and authority); an update may
-      // not change what the author vouches for while emptying or keeping the author empty.
-      if (previous !== null && guardsChanged && author.guards.some((g) => !blank(payload[g]))) {
-        return fail("author_not_signer", `${author.field} must name the signer when what it vouches for changes`);
+      // A create without this author is judged through its maker (and authority). On an update,
+      // the author may not be emptied, or left empty while what it vouches for changes, as long as
+      // any guarded column still holds a value (design §5 rule 4).
+      if (previous !== null && author.guards.some((g) => !blank(payload[g]))) {
+        return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
       }
       continue;
     }
@@ -306,8 +321,15 @@ export function checkAuthors(
   return null;
 }
 
+/**
+ * How an accepted item without a maker signature was authenticated by the server, delivered to the
+ * PCs so their own arrival checks can accept it: the tenant's founding administrator slot, or a
+ * vendor recovery unit.
+ */
+export type ServerAttestation = "founding" | "recovery";
+
 export type ItemJudgement =
-  | { ok: true; signaturesJson: string | null; founding: boolean; recovery: boolean }
+  | { ok: true; signaturesJson: string | null; attestation: ServerAttestation | null }
   | Fail;
 
 /**
@@ -325,13 +347,12 @@ export async function judgeItem(
   if (registry.isServerOnly(item.entity_type)) {
     return fail("server_only_entity_type", `${item.entity_type} is published by the server only`);
   }
-  const isDelete = item.operation === "delete" || item.operation === "archive";
   const payload = parsePayloadObject(item.payload_json);
   const signatures = item.signatures ?? [];
 
-  if (recovery.kind !== "none" && recovery.itemKeys.has(item.idempotency_key)) {
+  if (recovery.kind !== "none" && item.recovery_code !== undefined && recovery.items.has(item)) {
     if (recovery.kind === "invalid") return fail(recovery.code, recovery.message);
-    return { ok: true, signaturesJson: null, founding: false, recovery: true };
+    return { ok: true, signaturesJson: null, attestation: "recovery" };
   }
   if (item.recovery_code !== undefined) {
     return fail("recovery_refused", "recovery_code on an item outside the recovery unit");
@@ -339,7 +360,7 @@ export async function judgeItem(
 
   if (await isFoundingItem(ctx.db, act, item, payload, previous)) {
     await closeFoundingSlot(ctx.db, act.tenantId, item.entity_sync_id);
-    return { ok: true, signaturesJson: null, founding: true, recovery: false };
+    return { ok: true, signaturesJson: null, attestation: "founding" };
   }
 
   const bad = await verifySignatures(ctx.db, act, item, signatures);
@@ -354,9 +375,16 @@ export async function judgeItem(
     );
   }
 
-  if (!isDelete && payload) {
-    const authors = checkAuthors(registry, item.entity_type, payload, previous, signers);
-    if (authors) return authors;
+  if (item.operation !== "delete") {
+    // Every operation that carries a row (create, update, upsert, archive) is author-checked; a
+    // type that must be signed carries an object payload.
+    if (needsMaker && !payload) {
+      return fail("invalid_payload", `${item.entity_type} payload_json must be a JSON object`);
+    }
+    if (payload) {
+      const authors = checkAuthors(registry, item.entity_type, payload, previous, signers);
+      if (authors) return authors;
+    }
   }
 
   if (authority !== undefined) {
@@ -378,8 +406,7 @@ export async function judgeItem(
   return {
     ok: true,
     signaturesJson: signatures.length > 0 ? JSON.stringify(signatures) : null,
-    founding: false,
-    recovery: false,
+    attestation: null,
   };
 }
 

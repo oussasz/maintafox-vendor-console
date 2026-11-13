@@ -57,6 +57,8 @@ export type IngressInsert = {
   protocolVersion: "v1" | "v2";
   /** Verified signatures (JSON array of SyncSignature), or null when unsigned. */
   signaturesJson?: string | null;
+  /** How the server authenticated an unsigned authority item (founding slot / recovery unit). */
+  serverAttestation?: "founding" | "recovery" | null;
 };
 
 /** Appends to the log. Returns the new server_seq, or null when the item key already exists. */
@@ -65,8 +67,8 @@ export async function insertIngress(db: Database, cipher: PayloadCipher, input: 
     `INSERT INTO sync_mirror_ingress (
        tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
        payload_json, payload_hash, machine_fingerprint, received_at_rfc3339,
-       base_row_version, owner_user_sync_id, protocol_version, signatures_json
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       base_row_version, owner_user_sync_id, protocol_version, signatures_json, server_attestation
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
      RETURNING id`,
     input.tenantId,
@@ -83,6 +85,7 @@ export async function insertIngress(db: Database, cipher: PayloadCipher, input: 
     input.ownerUserSyncId,
     input.protocolVersion,
     input.signaturesJson ?? null,
+    input.serverAttestation ?? null,
   );
   return row ? row.id : null;
 }
@@ -101,8 +104,8 @@ export async function upsertEntityState(
     `INSERT INTO sync_entity_state (
        tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json,
        payload_hash, deleted, owner_user_sync_id, origin_machine_fingerprint, last_ingress_id, updated_at,
-       signatures_json
-     ) VALUES ($1,$2,$3,$4,$5,$6,mfx_try_jsonb($6),$7,$8,$9,$10,$11,now(),$12)
+       signatures_json, server_attestation
+     ) VALUES ($1,$2,$3,$4,$5,$6,mfx_try_jsonb($6),$7,$8,$9,$10,$11,now(),$12,$13)
      ON CONFLICT (tenant_id, entity_type, entity_sync_id) DO UPDATE SET
        row_version = EXCLUDED.row_version,
        operation = EXCLUDED.operation,
@@ -114,7 +117,8 @@ export async function upsertEntityState(
        origin_machine_fingerprint = EXCLUDED.origin_machine_fingerprint,
        last_ingress_id = EXCLUDED.last_ingress_id,
        updated_at = EXCLUDED.updated_at,
-       signatures_json = EXCLUDED.signatures_json`,
+       signatures_json = EXCLUDED.signatures_json,
+       server_attestation = EXCLUDED.server_attestation`,
     input.tenantId,
     input.entityType,
     input.entitySyncId,
@@ -127,6 +131,7 @@ export async function upsertEntityState(
     input.machineFingerprint,
     ingressId,
     input.signaturesJson ?? null,
+    input.serverAttestation ?? null,
   );
 }
 
@@ -204,6 +209,7 @@ type StateDeliveryRow = {
   owner_user_sync_id: string | null;
   deleted: boolean;
   signatures_json: string | null;
+  server_attestation: "founding" | "recovery" | null;
 };
 
 /** Stored signatures as delivered (an unsigned row delivers an empty list). */
@@ -229,11 +235,12 @@ export function toInboundItemV2(cipher: PayloadCipher, tenantId: string, row: St
     owner_user_sync_id: row.owner_user_sync_id,
     deleted: row.deleted,
     signatures: parseStoredSignatures(row.signatures_json),
+    server_attestation: row.server_attestation ?? null,
   };
 }
 
 const STATE_DELIVERY_COLUMNS = `last_ingress_id, entity_type, entity_sync_id, operation, row_version,
-  payload_raw, payload_hash, owner_user_sync_id, deleted, signatures_json`;
+  payload_raw, payload_hash, owner_user_sync_id, deleted, signatures_json, server_attestation`;
 
 /**
  * Collapsed delta for one device: latest state of every entity changed after `afterSeq`, excluding

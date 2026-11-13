@@ -202,3 +202,42 @@ file without `append_only` comes back with them). Re-deploying
 later needs the four tables and their trigger functions (`mfx_sync_attachment_archive_immutable`,
 `mfx_sync_forensic_log_append_only`) dropped first, which loses the archive, the restore log and the
 forensic log: export them first if they hold anything.
+
+# Per-user signing keys and the founding slot (sync-signing-design.md v9)
+
+Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an operator session, an
+`X-Operator-Reason` header and a `sync_repair` step-up token; each is recorded in the audit ledger
+(`audit_record_id` in the response) and is idempotent (`Idempotency-Key`).
+
+- `POST /api/v1/tenants/:tenantId/sync/user-keys/:keyId/revoke` — revokes one user signing key
+  (lost or stolen PC, departed user). Changes signed with it and ingested afterwards are refused
+  `signing_key_revoked`; the revocation reaches every PC as a `user_signing_keys` row. `404
+  key_not_found_or_already_revoked` otherwise. A password change, deactivation or deletion of the
+  user revokes all their keys by itself.
+- `POST /api/v1/tenants/:tenantId/sync/founding-slot/reopen` — reopens a tenant's founding
+  administrator slot (the PC of its first activation may then push one unsigned administrator
+  account) only while the tenant has no account on the server, when the slot was closed because
+  another PC pushed first or because the tenant was activated before migration 022.
+
+## Deploy checklist (022)
+
+1. **Before the deploy:** list each tenant's plant-wide administrators and `adm.users` /
+   `adm.roles` holders as the server holds them (they are trusted as they are: design §11), and have
+   the owner confirm them. Tenant-wide grants:
+   `SELECT tenant_id, payload_json->>'user_sync_id', payload_json->>'role_sync_id' FROM sync_entity_state WHERE entity_type = 'user_scope_assignments' AND NOT deleted AND payload_json->>'scope_type' = 'tenant'`;
+   accounts with `is_admin = 1` are in the sealed `user_accounts` payloads (opened by the API).
+2. **Migration** `022_sync_user_signing.sql` runs at API start (additive): key directory,
+   enrolment attempts, `signatures_json` / `server_attestation` columns, founding slots (closed for
+   every tenant already activated), recovery-code consumption (every earlier code marked used), and
+   the cutover sequence.
+3. **Environment:** nothing new.
+4. **Order:** server first, then every PC of a plant upgraded the same day. From the deploy, a
+   v0.9.2 PC's changes to accounts, grants, roles, permit-type safety settings, site rule events and
+   attachments are refused (`signature_required`: "mettre à jour ce PC"); its ordinary rows keep
+   syncing.
+5. Check: `SELECT cutover_seq FROM sync_signing_cutover` returns one row; an upgraded PC's first
+   sign-in enrols its user (`sync_user_key_enrolled` in the API log).
+
+**Rollback.** Remove version 22 from `schema_migrations` and start the previous images: they ignore
+the new tables and columns, and changes accepted under the signing rules are ordinary rows to them.
+Re-deploying later needs the new tables and the added columns dropped first.

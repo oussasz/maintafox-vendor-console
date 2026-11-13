@@ -127,6 +127,10 @@ export function validateOutboxItemV2(
       `entity_type '${item.entity_type}' is not in the sync entity registry (shared/sync-entity-registry.v2.json).`,
     );
   }
+  if (registry.isServerOnly(item.entity_type)) {
+    // Before idempotency and conflict checks: a device never writes these, whatever the version.
+    return fail("server_only_entity_type", `entity_type '${item.entity_type}' is published by the server only.`);
+  }
   const operation = validateOperationForType(item, registry);
   if (!operation.ok) return operation;
   const owner = item.owner_user_sync_id ?? null;

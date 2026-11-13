@@ -223,6 +223,16 @@ async function push(dev, items) {
   });
 }
 
+/** Like push, with each rejection's message: [outcome, message|null]. */
+async function pushDetailed(dev, items) {
+  const res = await exchange(dev, items);
+  return items.map((i) => {
+    if (res.acknowledged_items.some((a) => a.idempotency_key === i.idempotency_key)) return ["ack", null];
+    const r = res.rejected_items.find((x) => x.idempotency_key === i.idempotency_key);
+    return r ? [r.rejection_code, r.rejection_message] : ["missing", null];
+  });
+}
+
 async function enrol(dev, tenantId, key, password, proofKey = key) {
   const proof = edSign(
     null,
@@ -407,6 +417,19 @@ async function run() {
       assert.deepEqual([locked.status, locked.json.error], [429, "enrolment_locked"], "per-device lockout");
       const elsewhere = await enrol(A, T, newKey("u-lock"), lockPw);
       assert.equal(elsewhere.status, 200, "no per-user lockout");
+
+      // Parallel attempts cannot get past the per-device lockout (each is recorded before Argon2).
+      const statuses = await Promise.all(
+        Array.from({ length: 10 }, (_, i) => enrol(B, T, newKey("u-lock"), `parallel-${i}`).then((r) => r.status)),
+      );
+      assert.ok(statuses.every((s) => s === 429), `locked PC stays locked under parallel attempts: ${statuses}`);
+      const parUser = await account("par", "Par-Passw0rd-1");
+      assert.deepEqual(await push(A, [ADM(item("user_accounts", "u-par", 1, null, parUser))]), ["ack"]);
+      const parallel = await Promise.all(
+        Array.from({ length: 10 }, (_, i) => enrol(B, T, newKey("u-par"), `parallel-${i}`).then((r) => r.status)),
+      );
+      assert.equal(parallel.filter((s) => s === 403).length, 5, `exactly five guesses reach Argon2: ${parallel}`);
+      assert.equal(parallel.filter((s) => s === 429).length, 5);
     }
     const techKeyB = newKey("u-tech");
     assert.equal((await enrol(B, T, techKeyB, techPw)).status, 200);
@@ -477,7 +500,15 @@ async function run() {
       const blamed = TECH(
         item("permit_types", "pt-1", 3, 2, { ...p2, requires_three_person_removal: 0, three_person_changed_by_sync_id: "u-admin" }),
       );
-      assert.deepEqual(await push(B, [silent, blamed]), ["author_not_signer", "author_not_signer"], "a guarded change names its signer");
+      const emptied = TECH(item("permit_types", "pt-1", 3, 2, { ...p2, three_person_changed_by_sync_id: null }));
+      const archived = TECH(
+        item("permit_types", "pt-1", 3, 2, { ...p2, three_person_changed_by_sync_id: "u-admin" }, { operation: "archive" }),
+      );
+      assert.deepEqual(
+        await push(B, [silent, blamed, emptied, archived]),
+        ["author_not_signer", "author_not_signer", "author_not_signer", "author_not_signer"],
+        "a guarded change names its signer; the author is never emptied; archive is checked too",
+      );
 
       // Same item again: duplicate ack, nothing applied twice.
       const dup = await exchange(B, [update]);
@@ -525,6 +556,40 @@ async function run() {
         valid_to: null,
       };
       assert.deepEqual(await push(B, [TECH(item("user_scope_assignments", "usa-self", 1, null, grant))]), ["authority_refused"]);
+
+      // A user administrator (adm.users through a role, not an administrator) may grant ordinary
+      // roles to others, never to themself, and loses the right with a soft-deleted role.
+      const grantOf = (user, role) => ({ ...grant, user_sync_id: user, role_sync_id: role });
+      const uadmPw = "Uadm-Passw0rd-1";
+      assert.deepEqual(
+        await push(A, [
+          ADM(item("roles", "role-uadm", 1, null, { name: "User admins", deleted_at: null })),
+          ADM(item("role_permissions", "rp-uadm", 1, null, { role_sync_id: "role-uadm", permission_key: "adm.users", deleted_at: null })),
+          ADM(item("roles", "role-ops", 1, null, { name: "Operators", deleted_at: null })),
+          ADM(item("user_accounts", "u-uadm", 1, null, await account("uadm", uadmPw))),
+          ADM(item("user_scope_assignments", "usa-uadm", 1, null, grantOf("u-uadm", "role-uadm"))),
+        ]),
+        ["ack", "ack", "ack", "ack", "ack"],
+      );
+      const uadmKey = newKey("u-uadm");
+      assert.equal((await enrol(A, T, uadmKey, uadmPw)).status, 200);
+      const UADM = (it) => signed(T, it, uadmKey);
+      const [[selfCode, selfMessage], [otherCode]] = await pushDetailed(A, [
+        UADM(item("user_scope_assignments", "usa-uadm-self", 1, null, grantOf("u-uadm", "role-ops"))),
+        UADM(item("user_scope_assignments", "usa-par-ops", 1, null, grantOf("u-par", "role-ops"))),
+      ]);
+      assert.equal(selfCode, "authority_refused");
+      assert.match(selfMessage, /own account/, "refused as a self-grant");
+      assert.equal(otherCode, "ack", "an adm.users holder grants an ordinary role to someone else");
+      assert.deepEqual(
+        await push(A, [ADM(item("roles", "role-uadm", 2, 1, { name: "User admins", deleted_at: "2026-11-13T00:00:00Z" }))]),
+        ["ack"],
+      );
+      assert.deepEqual(
+        await push(A, [UADM(item("user_scope_assignments", "usa-lock-ops", 1, null, grantOf("u-lock", "role-ops")))]),
+        ["authority_refused"],
+        "a right held only through a soft-deleted role is gone",
+      );
       // The administrator's password is unchanged: they still enrol on the other PC.
       assert.equal((await enrol(B, T, newKey("u-admin"), adminPw)).status, 200);
       // Last administrator: the only one cannot disable themself.
@@ -596,13 +661,13 @@ async function run() {
         );
         return code;
       };
-      const unit = async (code, n) => [
+      const unit = async (code, n, grantId = `usa-rec-${n}`) => [
         item("user_accounts", `u-rec-${n}`, 1, null, await account(`rescue${n}`, "Rescue-Passw0rd-1"), {
           recovery_code: code.code,
         }),
         item(
           "user_scope_assignments",
-          `usa-rec-${n}`,
+          grantId,
           1,
           null,
           {
@@ -619,7 +684,45 @@ async function run() {
       ];
 
       const code = await issue();
+      const isConsumed = async (c) =>
+        (await sql("SELECT consumed_at FROM admin_recovery_codes WHERE code_id = $1", [c.payload.code_id]))[0].consumed_at !== null;
+
+      // Another item reusing a recovery item's idempotency key never inherits the exemption.
+      {
+        const [account0, grant0] = await unit(code, 0);
+        const smuggled = item(
+          "site_setting_events",
+          "sse-smuggled",
+          1,
+          null,
+          { setting_key: "self_approval", value: "off", changed_by_sync_id: "u-admin" },
+          { idempotency_key: account0.idempotency_key },
+        );
+        assert.deepEqual(await push(A, [smuggled, account0, grant0]), [
+          "signature_required",
+          "duplicate_item_in_batch",
+          "recovery_refused",
+        ]);
+        assert.equal(await isConsumed(code), false, "the code is not spent by a refused unit");
+      }
+      // Both or neither: a grant that cannot be applied as a new row refuses the whole unit.
+      {
+        assert.deepEqual(
+          await push(A, [ADM(item("user_scope_assignments", "usa-taken", 1, null, {
+            user_sync_id: "u-par", role_sync_id: "role-ops", scope_type: "tenant", is_emergency: 0, deleted_at: null, valid_from: null, valid_to: null,
+          }))]),
+          ["ack"],
+        );
+        // The grant's own row-version conflict comes first; the account is refused with the unit.
+        assert.deepEqual(await push(A, await unit(code, 7, "usa-taken")), ["recovery_refused", "conflict"]);
+        assert.equal(await isConsumed(code), false);
+        const [{ n }] = await sql("SELECT COUNT(*)::int AS n FROM sync_entity_state WHERE tenant_id = $1 AND entity_sync_id = 'u-rec-7'", [T]);
+        assert.equal(n, 0, "the account of a refused unit is not applied either");
+      }
+
       assert.deepEqual(await push(A, await unit(code, 1)), ["ack", "ack"], "a valid recovery unit is accepted");
+      const delivered = (await pullAll(B)).filter((i) => i.entity_sync_id === "u-rec-1" || i.entity_sync_id === "usa-rec-1");
+      assert.deepEqual(delivered.map((i) => i.server_attestation), ["recovery", "recovery"], "delivered with its attestation");
       const [consumed] = await sql(
         "SELECT consumed_at, consumed_entity_sync_id FROM admin_recovery_codes WHERE code_id = $1",
         [code.payload.code_id],

@@ -37,19 +37,17 @@ export const SELF_CHANGE_COLUMNS: ReadonlySet<string> = new Set([
   "force_password_change",
 ]);
 
-/** Columns whose change on an administrator's account needs a plant administrator (takeover guard). */
-export const CREDENTIAL_STATUS_COLUMNS: readonly string[] = [
-  "password_hash",
-  "password_changed_at",
-  "password_changed_by_sync_id",
-  "password_set_by_sync_id",
-  "password_set_at",
-  "force_password_change",
-  "is_active",
-  "deleted_at",
-  "is_admin",
-  "username",
-];
+/**
+ * Takeover guard: on the account of an administrator (or of a holder of an administration right),
+ * any change except these profile columns needs a plant administrator. Listing what is allowed,
+ * not what is guarded, keeps a new credential or link column guarded by default.
+ */
+export const ADMIN_ACCOUNT_PROFILE_COLUMNS: ReadonlySet<string> = new Set([
+  "display_name",
+  "email",
+  "phone",
+  "updated_at",
+]);
 
 export type AuthorityCtx = {
   db: Database;
@@ -84,6 +82,11 @@ function truthy(value: unknown): boolean {
 
 function isBlank(value: unknown): boolean {
   return value === null || value === undefined || value === "";
+}
+
+/** The distinct string values among `values`. */
+function strings(...values: unknown[]): string[] {
+  return [...new Set(values.filter((v): v is string => typeof v === "string" && v !== ""))];
 }
 
 /** Current (opened) payload of one live entity, or null when absent or deleted. */
@@ -126,7 +129,7 @@ async function permanentTenantAssignments(
        AND (payload_json->>'deleted_at') IS NULL
        AND COALESCE(payload_json->>'is_emergency', '0') IN ('0', 'false')
        AND ((payload_json->>'valid_from') IS NULL OR payload_json->>'valid_from' <= $3)
-       AND ((payload_json->>'valid_to') IS NULL OR payload_json->>'valid_to' >= $3)`,
+       AND ((payload_json->>'valid_to') IS NULL OR payload_json->>'valid_to' > $3)`,
     ctx.tenantId,
     userSyncId,
     ctx.now,
@@ -134,13 +137,18 @@ async function permanentTenantAssignments(
   return rows.filter((r): r is { role_sync_id: string; valid_to: unknown } => typeof r.role_sync_id === "string");
 }
 
-/** Rights granted by one role (its role_permissions rows), by permission name. */
+/**
+ * Rights granted by one role (its live role_permissions rows), by permission name; none when the
+ * role itself is absent or soft-deleted (desktop tenant_right_holder_condition).
+ */
 export async function roleRights(ctx: AuthorityCtx, roleSyncId: string): Promise<Set<string>> {
+  if ((await roleName(ctx, roleSyncId)) === null) return new Set();
   const rows = await ctx.db.all<{ permission_key: string | null }>(
     `SELECT payload_json->>'permission_key' AS permission_key
      FROM sync_entity_state
      WHERE tenant_id = $1 AND entity_type = 'role_permissions' AND NOT deleted
-       AND payload_json->>'role_sync_id' = $2`,
+       AND payload_json->>'role_sync_id' = $2
+       AND (payload_json->>'deleted_at') IS NULL`,
     ctx.tenantId,
     roleSyncId,
   );
@@ -248,7 +256,7 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
       }
       if (item.previous) {
         const touches =
-          isDelete || changedColumns(item.previous, next).some((c) => CREDENTIAL_STATUS_COLUMNS.includes(c));
+          isDelete || changedColumns(item.previous, next).some((c) => !ADMIN_ACCOUNT_PROFILE_COLUMNS.has(c));
         if (
           touches &&
           (truthy(item.previous["is_admin"]) ||
@@ -261,33 +269,31 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
       return OK;
     }
     case "user_scope_assignments": {
-      const subject = next["user_sync_id"] ?? item.previous?.["user_sync_id"];
-      const roleSyncId = next["role_sync_id"] ?? item.previous?.["role_sync_id"];
-      if (!isDelete && isBlank(next["deleted_at"]) && subject === maker) {
+      // Both sides of a change are judged: the grant as it was and as it becomes.
+      const subjects = strings(next["user_sync_id"], item.previous?.["user_sync_id"]);
+      const roleIds = strings(next["role_sync_id"], item.previous?.["role_sync_id"]);
+      if (!isDelete && isBlank(next["deleted_at"]) && next["user_sync_id"] === maker) {
         return refuse("nobody may grant a role to their own account");
       }
-      if (typeof roleSyncId === "string") {
+      for (const roleSyncId of roleIds) {
         const name = await roleName(ctx, roleSyncId);
         const rights = await roleRights(ctx, roleSyncId);
         if ((name !== null && ELEVATED_ADMIN_ROLES.has(name)) || [...rights].some((r) => ADMIN_RIGHTS.has(r))) {
           return needAdministrator("granting or changing an administration role");
         }
       }
-      if (
-        typeof subject === "string" &&
-        ((await isPlantAdministrator(ctx, subject)) || (await holdsAdminRight(ctx, subject)))
-      ) {
-        return needAdministrator("changing the roles of an administrator");
+      for (const subject of subjects) {
+        if ((await isPlantAdministrator(ctx, subject)) || (await holdsAdminRight(ctx, subject))) {
+          return needAdministrator("changing the roles of an administrator");
+        }
       }
       return OK;
     }
     case "role_permissions": {
-      const key = next["permission_key"] ?? item.previous?.["permission_key"];
-      if (typeof key === "string" && ADMIN_RIGHTS.has(key)) {
-        return needAdministrator("giving or removing an administration right");
+      for (const key of strings(next["permission_key"], item.previous?.["permission_key"])) {
+        if (ADMIN_RIGHTS.has(key)) return needAdministrator("giving or removing an administration right");
       }
-      const roleSyncId = next["role_sync_id"] ?? item.previous?.["role_sync_id"];
-      if (typeof roleSyncId === "string") {
+      for (const roleSyncId of strings(next["role_sync_id"], item.previous?.["role_sync_id"])) {
         const name = await roleName(ctx, roleSyncId);
         if (name !== null && ELEVATED_ADMIN_ROLES.has(name)) return needAdministrator("changing an administrator role");
       }
