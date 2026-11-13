@@ -770,7 +770,9 @@
           "field": "approved_by_sync_id",
           "guards": [
             "approved_at",
-            "approval_note",
+            "approval_note"
+          ],
+          "vouches": [
             "self_approved"
           ]
         },
