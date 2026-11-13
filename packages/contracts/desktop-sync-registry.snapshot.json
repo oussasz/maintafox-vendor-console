@@ -2246,6 +2246,12 @@
             "hse_approval_note",
             "hse_approved_at",
             "hse_self_approved"
+          ],
+          "vouches": [
+            "ppe_required",
+            "preventive_measures",
+            "risk_assessment",
+            "work_description"
           ]
         },
         {

@@ -11,7 +11,16 @@ import { z } from "zod";
 
 export type SyncEntityScope = "tenant" | "user";
 
-export type AuthorField = { readonly field: string; readonly guards: readonly string[] };
+/**
+ * `guards`: columns the author vouches for (changing one needs their signature; while one holds a
+ * claim the author may not be cleared). `vouches`: content the author approved (changing it needs
+ * their signature unless the same change clears the author, i.e. withdraws the approval).
+ */
+export type AuthorField = {
+  readonly field: string;
+  readonly guards: readonly string[];
+  readonly vouches?: readonly string[];
+};
 /**
  * Rights the server judges as a plant-wide holder (authority.ts `holdsTenantRight`). The takeover
  * rules of authority.ts apply to the user and role administration types only.
@@ -47,6 +56,7 @@ const RegistryFile = z
                   .object({
                     field: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/),
                     guards: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,127}$/)),
+                    vouches: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,127}$/)).optional(),
                   })
                   .strict(),
               )

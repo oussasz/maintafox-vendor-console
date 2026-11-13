@@ -308,7 +308,11 @@ async function verifySignatures(
   return null;
 }
 
-/** Rule 4: every author field set/changed, or whose guarded columns changed, names a signer. */
+/**
+ * Rule 4: every author field set/changed, or whose guarded or vouched columns changed, names a
+ * signer. Clearing the author withdraws what it vouched for (allowed), but not while a guarded
+ * column still holds a claim.
+ */
 export function checkAuthors(
   registry: SyncEntityRegistry,
   entityType: string,
@@ -320,7 +324,8 @@ export function checkAuthors(
     const value = payload[author.field];
     const fieldChanged = !same(value, previous?.[author.field]);
     const guardsChanged = author.guards.some((g) => !same(payload[g], previous?.[g]));
-    if (!fieldChanged && !guardsChanged) continue;
+    const vouchedChanged = (author.vouches ?? []).some((g) => !same(payload[g], previous?.[g]));
+    if (!fieldChanged && !guardsChanged && !vouchedChanged) continue;
     if (blank(value)) {
       // A create without this author is judged through its maker (and authority). On an update,
       // the author may not be emptied, or left empty while what it vouches for changes, as long as

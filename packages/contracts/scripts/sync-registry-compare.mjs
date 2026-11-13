@@ -9,7 +9,7 @@
  * (a local-only table) counts as not append-only.
  *
  * Per-user signing (sync-signing-design.md v9 §5): the allowlist also carries, per type,
- * `author_fields` ([{field, guards}]), `authority` ("adm.users" | "adm.roles") and `server_only`
+ * `author_fields` ([{field, guards, vouches?}]), `authority` ("adm.users" | "adm.roles") and `server_only`
  * (true for types only the server publishes). They must match the server registry exactly, or the
  * server would judge authors/authority on a stale list.
  */
@@ -19,7 +19,11 @@ export function signingFields(e) {
   const out = {};
   if (Array.isArray(e.author_fields) && e.author_fields.length > 0) {
     out.author_fields = e.author_fields
-      .map((a) => ({ field: a.field, guards: [...(a.guards ?? [])].sort() }))
+      .map((a) => ({
+        field: a.field,
+        guards: [...(a.guards ?? [])].sort(),
+        ...(Array.isArray(a.vouches) && a.vouches.length > 0 ? { vouches: [...a.vouches].sort() } : {}),
+      }))
       .sort((x, y) => (x.field < y.field ? -1 : x.field > y.field ? 1 : 0));
   }
   if (e.authority !== undefined && e.authority !== null) out.authority = e.authority;
