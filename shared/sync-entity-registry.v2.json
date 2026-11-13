@@ -1147,6 +1147,41 @@
       "entity_type": "audit_chain_stubs",
       "scope": "tenant",
       "append_only": true
+    },
+    {
+      "entity_type": "asset_corrective_actions",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "asset_five_why_analyses",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "equipment_isolation_points",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "permit_gas_tests",
+      "scope": "tenant",
+      "append_only": true
+    },
+    {
+      "entity_type": "permit_personal_locks",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "permit_workers",
+      "scope": "tenant",
+      "append_only": false
+    },
+    {
+      "entity_type": "wo_history_records",
+      "scope": "tenant",
+      "append_only": false
     }
   ]
 }
