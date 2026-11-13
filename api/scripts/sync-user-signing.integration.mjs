@@ -168,8 +168,9 @@ function signed(tenantId, it, ...keys) {
   return { ...it, signatures: keys.map((k) => signatureOf(tenantId, it, k)) };
 }
 
+/** A PC: its token, fingerprint, checkpoint and every inbound item it has been delivered. */
 function device(token, fp) {
-  return { token, fp, checkpoint: null };
+  return { token, fp, checkpoint: null, received: [] };
 }
 
 async function post(path, dev, body) {
@@ -199,6 +200,7 @@ async function exchange(dev, outbox = []) {
   });
   assert.equal(r.status, 200, `exchange failed: ${JSON.stringify(r.json)}`);
   dev.checkpoint = r.json.checkpoint_token;
+  dev.received.push(...r.json.inbound_items);
   return r.json;
 }
 
@@ -644,7 +646,9 @@ async function run() {
       );
       assert.deepEqual(await push(B, [late]), ["signing_key_revoked"], "a disabled user's key is refused");
       assert.equal((await enrol(B, T, newKey("u-tech"), techPw)).status, 403, "a disabled user cannot enrol");
-      const published = (await pullAll(A)).filter(
+      await pullAll(A);
+      // Delivered either in a pull or in the response to A's own push of the deactivation.
+      const published = A.received.filter(
         (i) => i.entity_type === "user_signing_keys" && i.entity_sync_id === techKeyB.keyId,
       );
       assert.ok(published.length > 0);
@@ -751,7 +755,8 @@ async function run() {
 
       const unit1 = await unit(code, 1);
       assert.deepEqual(await push(A, unit1), ["ack", "ack"], "a valid recovery unit is accepted");
-      const delivered = (await pullAll(B)).filter((i) => i.entity_sync_id === "u-rec-1" || i.entity_sync_id === "usa-rec-1");
+      await pullAll(B);
+      const delivered = B.received.filter((i) => i.entity_sync_id === "u-rec-1" || i.entity_sync_id === "usa-rec-1");
       assert.deepEqual(delivered.map((i) => i.server_attestation), ["recovery", "recovery"], "delivered with its attestation");
       const [consumed] = await sql(
         "SELECT consumed_at, consumed_entity_sync_id FROM admin_recovery_codes WHERE code_id = $1",
