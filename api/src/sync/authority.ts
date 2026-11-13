@@ -166,15 +166,17 @@ async function roleName(ctx: AuthorityCtx, roleSyncId: string): Promise<string |
  * name, or a live role_permissions row giving an administration right. Used to judge GRANTING or
  * REVIVING a role: a soft-deleted role keeps its rights rows and can be brought back.
  */
-async function roleCarriesAdministration(ctx: AuthorityCtx, roleSyncId: string): Promise<boolean> {
-  // A role the server has never seen could be created later with administration rights (a grant
-  // pushed ahead of its role): only a plant administrator may grant it.
-  const known = await ctx.db.get<{ one: number }>(
+/** Whether the server holds any state (live or tombstone) for this role id. */
+async function roleKnown(ctx: AuthorityCtx, roleSyncId: string): Promise<boolean> {
+  const row = await ctx.db.get<{ one: number }>(
     "SELECT 1 AS one FROM sync_entity_state WHERE tenant_id = $1 AND entity_type = 'roles' AND entity_sync_id = $2",
     ctx.tenantId,
     roleSyncId,
   );
-  if (!known) return true;
+  return row !== undefined;
+}
+
+async function roleCarriesAdministration(ctx: AuthorityCtx, roleSyncId: string): Promise<boolean> {
   const role = await livePayload(ctx, "roles", roleSyncId);
   if (role && typeof role["name"] === "string" && ELEVATED_ADMIN_ROLES.has(role["name"])) return true;
   const row = await ctx.db.get<{ one: number }>(
@@ -322,8 +324,10 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
         return refuse("nobody may grant a role to their own account");
       }
       for (const roleSyncId of roleIds) {
-        // Whatever the role's state: a soft-deleted role keeps its rights and can be revived.
-        if (await roleCarriesAdministration(ctx, roleSyncId)) {
+        // Whatever the role's state: a soft-deleted role keeps its rights and can be revived. A role
+        // id the server has never seen could arrive later with administration rights (a grant pushed
+        // ahead of its role), so granting it also needs a plant administrator.
+        if (!(await roleKnown(ctx, roleSyncId)) || (await roleCarriesAdministration(ctx, roleSyncId))) {
           return needAdministrator("granting or changing an administration role");
         }
       }
