@@ -11,6 +11,9 @@ import { z } from "zod";
 
 export type SyncEntityScope = "tenant" | "user";
 
+export type AuthorField = { readonly field: string; readonly guards: readonly string[] };
+export type AuthorityRight = "adm.users" | "adm.roles";
+
 export const SYNC_ENTITY_REGISTRY_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
   "../../../shared/sync-entity-registry.v2.json",
@@ -29,6 +32,24 @@ const RegistryFile = z
             scope: z.enum(["tenant", "user"]),
             /** History rows: the server refuses their delete/archive (validate.ts). Required on every entry. */
             append_only: z.boolean(),
+            /**
+             * Per-user signing (sync-signing-design.md §5): the wire fields naming the user who made
+             * part of the change, each with the columns that user vouches for.
+             */
+            author_fields: z
+              .array(
+                z
+                  .object({
+                    field: z.string().regex(/^[a-z][a-z0-9_]{0,127}$/),
+                    guards: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,127}$/)),
+                  })
+                  .strict(),
+              )
+              .optional(),
+            /** Authority data (accounts, grants, roles): the right the maker must hold plant-wide. */
+            authority: z.enum(["adm.users", "adm.roles"]).optional(),
+            /** Published by the server only; a device push of this type is refused. */
+            server_only: z.boolean().optional(),
           })
           .strict(),
       )
@@ -43,6 +64,12 @@ export type SyncEntityRegistry = {
   isAppendOnly(entityType: string): boolean;
   /** Entity types delivered to every device of a tenant. */
   tenantScopedTypes(): string[];
+  /** Author fields of a type (empty when it names no maker). */
+  authorFieldsOf(entityType: string): readonly AuthorField[];
+  /** The right a maker needs for an authority type, else undefined. */
+  authorityOf(entityType: string): AuthorityRight | undefined;
+  /** True for types only the server publishes. */
+  isServerOnly(entityType: string): boolean;
   readonly size: number;
 };
 
@@ -59,18 +86,27 @@ export function loadSyncEntityRegistry(path: string = SYNC_ENTITY_REGISTRY_PATH)
   }
   const scopes = new Map<string, SyncEntityScope>();
   const appendOnly = new Set<string>();
+  const authorFields = new Map<string, readonly AuthorField[]>();
+  const authority = new Map<string, AuthorityRight>();
+  const serverOnly = new Set<string>();
   for (const entry of parsed.data.entity_types) {
     if (scopes.has(entry.entity_type)) {
       throw new Error(`sync entity registry lists '${entry.entity_type}' twice`);
     }
     scopes.set(entry.entity_type, entry.scope);
     if (entry.append_only) appendOnly.add(entry.entity_type);
+    if (entry.author_fields && entry.author_fields.length > 0) authorFields.set(entry.entity_type, entry.author_fields);
+    if (entry.authority) authority.set(entry.entity_type, entry.authority);
+    if (entry.server_only) serverOnly.add(entry.entity_type);
   }
   return {
     version: parsed.data.registry_version,
     scopeOf: (entityType) => scopes.get(entityType),
     isAppendOnly: (entityType) => appendOnly.has(entityType),
     tenantScopedTypes: () => [...scopes].filter(([, scope]) => scope === "tenant").map(([type]) => type),
+    authorFieldsOf: (entityType) => authorFields.get(entityType) ?? [],
+    authorityOf: (entityType) => authority.get(entityType),
+    isServerOnly: (entityType) => serverOnly.has(entityType),
     size: scopes.size,
   };
 }

@@ -58,9 +58,20 @@ export type SyncExchangeResponse = {
 
 // ── v2 wire types (deploy/SYNC_PROTOCOL_V2.md) ──────────────────────────────
 
+/** One user's signature of a change (sync-signing-design.md §7). */
+export type SyncSignature = {
+  user_sync_id: string;
+  key_id: string;
+  signature: string;
+};
+
 export type SyncOutboxItemV2 = SyncOutboxItem & {
   base_row_version: number | null;
   owner_user_sync_id?: string | null;
+  /** First = the maker. Absent/empty = unsigned. */
+  signatures?: SyncSignature[];
+  /** Only on the two items of a vendor recovery unit. */
+  recovery_code?: string;
 };
 
 export type TenantConfigV2 = {
@@ -118,6 +129,7 @@ export type SyncConflictItemV2 = {
   server_payload_hash: string;
   server_owner_user_sync_id: string | null;
   server_deleted: boolean;
+  server_signatures: SyncSignature[];
 };
 
 export type SyncInboundItemV2 = {
@@ -130,6 +142,8 @@ export type SyncInboundItemV2 = {
   payload_hash: string;
   owner_user_sync_id: string | null;
   deleted: boolean;
+  /** Verified by the server at ingest; empty for unsigned and legacy rows. */
+  signatures: SyncSignature[];
 };
 
 export type SyncExchangeResponseV2 = {
@@ -143,6 +157,8 @@ export type SyncExchangeResponseV2 = {
   has_more: boolean;
   user_snapshot_required: string[];
   policy_metadata_json: string | null;
+  /** Rows with server_seq below this are legacy (unsigned rules); from it on, signing applies. */
+  signature_cutover_seq: number;
 };
 
 export type SyncSnapshotRequestV2 = {
@@ -159,6 +175,8 @@ export type SyncSnapshotResponseV2 = {
   has_more: boolean;
   next_page_token: string | null;
   checkpoint_token: string | null;
+  /** See SyncExchangeResponseV2.signature_cutover_seq. */
+  signature_cutover_seq: number;
 };
 
 export type ActivationSyncContext = {

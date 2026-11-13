@@ -141,7 +141,13 @@
     {
       "entity_type": "media_attachments",
       "scope": "tenant",
-      "append_only": true
+      "append_only": true,
+      "author_fields": [
+        {
+          "field": "uploaded_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "org_node_types",
@@ -176,7 +182,25 @@
     {
       "entity_type": "permit_types",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "author_fields": [
+        {
+          "field": "three_person_changed_by_sync_id",
+          "guards": [
+            "requires_three_person_removal",
+            "three_person_changed_at",
+            "three_person_change_reason"
+          ]
+        },
+        {
+          "field": "isolation_changed_by_sync_id",
+          "guards": [
+            "requires_energy_isolation",
+            "isolation_changed_at",
+            "isolation_change_reason"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "personnel",
@@ -236,7 +260,8 @@
     {
       "entity_type": "roles",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "adm.roles"
     },
     {
       "entity_type": "runtime_exposure_logs",
@@ -276,7 +301,26 @@
     {
       "entity_type": "user_accounts",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "adm.users",
+      "author_fields": [
+        {
+          "field": "password_changed_by_sync_id",
+          "guards": [
+            "password_hash",
+            "password_changed_at",
+            "password_set_by_sync_id",
+            "password_set_at"
+          ]
+        },
+        {
+          "field": "status_changed_by_sync_id",
+          "guards": [
+            "is_active",
+            "deleted_at"
+          ]
+        }
+      ]
     },
     {
       "entity_type": "user_dismissals",
@@ -291,7 +335,8 @@
     {
       "entity_type": "user_scope_assignments",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "adm.users"
     },
     {
       "entity_type": "warehouses",
@@ -351,7 +396,8 @@
     {
       "entity_type": "delegated_admin_policies",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "adm.users"
     },
     {
       "entity_type": "equipment_classes",
@@ -556,7 +602,8 @@
     {
       "entity_type": "role_permissions",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "adm.roles"
     },
     {
       "entity_type": "role_templates",
@@ -1091,7 +1138,13 @@
     {
       "entity_type": "site_setting_events",
       "scope": "tenant",
-      "append_only": true
+      "append_only": true,
+      "author_fields": [
+        {
+          "field": "changed_by_sync_id",
+          "guards": []
+        }
+      ]
     },
     {
       "entity_type": "site_settings",
@@ -1147,6 +1200,12 @@
       "entity_type": "audit_chain_stubs",
       "scope": "tenant",
       "append_only": true
+    },
+    {
+      "entity_type": "user_signing_keys",
+      "scope": "tenant",
+      "append_only": false,
+      "server_only": true
     }
   ]
 }

@@ -1146,6 +1146,11 @@
       "entity_type": "work_permits",
       "scope": "tenant",
       "append_only": false
+    },
+    {
+      "entity_type": "user_signing_keys",
+      "scope": "tenant",
+      "append_only": false
     }
   ]
 }

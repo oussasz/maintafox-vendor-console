@@ -18,6 +18,7 @@ import { structuredLog } from "../app/runtime.js";
 import { collectSyncHealth } from "../ops/sync-health.js";
 import { ARCHIVE_PAGE_MAX, checkRestorable, decodeCursor, emitRestore, listArchivedChanges } from "../sync/attachment-archive.js";
 import { lockTenantSync } from "../sync/store.js";
+import { revokeOneKey } from "../sync/user-keys.js";
 import { StepUpKinds } from "../vendor-auth/step-up-kinds.js";
 
 /** Default and maximum span of the timeline. */
@@ -256,6 +257,76 @@ export function registerSyncOperationsRoutes(app: express.Express, ctx: ApiConte
         guard.auditRecordId,
       );
       structuredLog("sync_device_resync_requested", { tenant_id: tenantId, machine_fingerprint: fp });
+      return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /** Revokes one user signing key (sync-signing-design.md §6); later changes signed with it are refused. */
+  app.post("/api/v1/tenants/:tenantId/sync/user-keys/:keyId/revoke", authMiddleware, async (req, res) => {
+    const { tenantId, keyId } = req.params;
+    const reason = req.header("X-Operator-Reason")?.trim() ?? "";
+    if (reason.length < PRIVILEGED_REASON_MIN_LENGTH) {
+      res.status(403).json({ error: "privileged_action_guard_failed", reason: "missing_reason_code" });
+      return;
+    }
+    if (!/^[0-9a-f]{32}$/.test(keyId)) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "sync_user_key_revoke",
+        action_category: "sync_repair",
+        step_up_kind: StepUpKinds.syncRepair,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId },
+        payload: { reason, key_id: keyId },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const revoked = await revokeOneKey(db, payloadCipher, tenantId, keyId);
+      if (!revoked) return { status: 404, body: { error: "key_not_found_or_already_revoked" } };
+      structuredLog("sync_user_key_revoked", { tenant_id: tenantId, key_id: keyId });
+      return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
+    });
+  });
+
+  /**
+   * Reopens a brand-new tenant's founding-administrator slot closed by mistake (another PC pushed
+   * first), for the device of its first activation, only while the tenant has no account at all.
+   */
+  app.post("/api/v1/tenants/:tenantId/sync/founding-slot/reopen", authMiddleware, async (req, res) => {
+    const { tenantId } = req.params;
+    const reason = req.header("X-Operator-Reason")?.trim() ?? "";
+    if (reason.length < PRIVILEGED_REASON_MIN_LENGTH) {
+      res.status(403).json({ error: "privileged_action_guard_failed", reason: "missing_reason_code" });
+      return;
+    }
+    await runIdempotent(req, res, async () => {
+      const guard = await requirePrivilegedAction(req, {
+        action_code: "sync_founding_slot_reopen",
+        action_category: "sync_repair",
+        step_up_kind: StepUpKinds.syncRepair,
+        scope_tenant_id: tenantId,
+        entity_refs: { tenant_id: tenantId },
+        payload: { reason },
+      });
+      if (!guard.ok) return { status: guard.status, body: guard.body };
+      const reopened = await db.tx(async () => {
+        await lockTenantSync(db, tenantId);
+        const accounts = await db.get<{ one: number }>(
+          "SELECT 1 AS one FROM sync_entity_state WHERE tenant_id = ? AND entity_type = 'user_accounts' LIMIT 1",
+          tenantId,
+        );
+        if (accounts) return false;
+        const row = await db.get<{ tenant_id: string }>(
+          `UPDATE sync_tenant_founding SET slot_open = true, closed_at = NULL, closed_reason = NULL
+           WHERE tenant_id = ? AND NOT slot_open AND closed_reason = 'other_device_pushed' RETURNING tenant_id`,
+          tenantId,
+        );
+        return row !== undefined;
+      });
+      if (!reopened) return { status: 409, body: { error: "founding_slot_not_reopenable" } };
+      structuredLog("sync_founding_slot_reopened", { tenant_id: tenantId });
       return { status: 200, body: { ok: true, audit_record_id: guard.auditRecordId } };
     });
   });

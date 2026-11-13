@@ -13,6 +13,7 @@ import type { SyncEntityRegistry } from "./registry.js";
 import {
   getEntityState,
   insertIngress,
+  parseStoredSignatures,
   listDeltaForDevice,
   lockTenantSync,
   logRejection,
@@ -36,6 +37,15 @@ import {
   type TenantConfigV2,
 } from "./types.js";
 import { shouldRedactPayloadLog, toRejectedV2, validateOutboxItemV2 } from "./validate.js";
+import { assignmentClock, lastingAdministratorCount, parsePayloadObject, type AuthorityCtx } from "./authority.js";
+import {
+  closeFoundingSlotForOtherDevice,
+  consumeRecoveryCode,
+  judgeItem,
+  judgeRecoveryUnit,
+  revocationReason,
+} from "./signing-rules.js";
+import { revokeUserKeys, signatureCutoverSeq } from "./user-keys.js";
 
 /** JSON with object keys sorted recursively and no whitespace: the request-hash input. */
 export function canonicalJson(value: unknown): string {
@@ -239,6 +249,13 @@ export async function runSyncExchangeV2(
     const conflict_items: SyncConflictItemV2[] = [];
     const keysInBatch = new Set<string>();
 
+    // Per-user signing (sync-signing-design.md v9): judged on the state as each item leaves it.
+    const signatureCutover = await signatureCutoverSeq(db);
+    const authCtx: AuthorityCtx = { db, cipher: deps.cipher, tenantId: act.tenantId, now: assignmentClock(now) };
+    if (body.outbox_batch.length > 0) await closeFoundingSlotForOtherDevice(db, act);
+    const recovery = await judgeRecoveryUnit(authCtx, act, body.outbox_batch, now);
+    let recoveryConsumed = false;
+
     const reject = async (item: SyncExchangeRequestV2["outbox_batch"][number], code: string, message: string) => {
       rejected_items.push(toRejectedV2(item, code, message));
       await logRejection(db, {
@@ -335,6 +352,7 @@ export async function runSyncExchangeV2(
           server_payload_hash: state.payload_hash,
           server_owner_user_sync_id: state.owner_user_sync_id,
           server_deleted: state.deleted,
+          server_signatures: parseStoredSignatures(state.signatures_json),
         });
         await db.run(
           `INSERT INTO sync_conflict_log
@@ -355,6 +373,16 @@ export async function runSyncExchangeV2(
         continue;
       }
 
+      const previousPayload = state && !state.deleted ? parsePayloadObject(state.payload_raw) : null;
+      const judgement = await judgeItem(authCtx, deps.registry, act, item, previousPayload, recovery);
+      if (!judgement.ok) {
+        await reject(item, judgement.code, judgement.message);
+        continue;
+      }
+      const authorityType = deps.registry.authorityOf(item.entity_type) !== undefined;
+      const adminsBefore = authorityType ? await lastingAdministratorCount(authCtx) : 0;
+      if (authorityType) await db.run("SAVEPOINT mfx_signed_item");
+
       const ingress: IngressInsert = {
         tenantId: act.tenantId,
         idempotencyKey: item.idempotency_key,
@@ -369,6 +397,7 @@ export async function runSyncExchangeV2(
         machineFingerprint: act.machineFingerprint,
         receivedAt: nowIso,
         protocolVersion: "v2",
+        signaturesJson: judgement.signaturesJson,
       };
       const serverSeq = await insertIngress(db, deps.cipher, ingress);
       if (serverSeq === null) {
@@ -378,6 +407,25 @@ export async function runSyncExchangeV2(
       // Archive of attachment deletes / forensic device log (adds rows only; before the state write).
       await recordAcceptedChange(db, deps.cipher, act, ingress, serverSeq);
       await upsertEntityState(db, deps.cipher, serverSeq, ingress);
+      if (authorityType) {
+        // Last administrator (auth/last_admin.rs): never leave the tenant without a lasting one.
+        if (adminsBefore > 0 && (await lastingAdministratorCount(authCtx)) === 0) {
+          await db.run("ROLLBACK TO SAVEPOINT mfx_signed_item");
+          await reject(item, "last_administrator_required", "this change would leave the plant without an administrator");
+          continue;
+        }
+        await db.run("RELEASE SAVEPOINT mfx_signed_item");
+      }
+      if (judgement.recovery && recovery.kind === "valid" && !recoveryConsumed) {
+        if (!(await consumeRecoveryCode(db, recovery.codeId, serverSeq, recovery.accountSyncId))) {
+          throw new SyncRequestError(409, "recovery_refused", "the recovery code was used meanwhile");
+        }
+        recoveryConsumed = true;
+      }
+      if (item.entity_type === "user_accounts") {
+        const reason = revocationReason(item.operation, previousPayload, parsePayloadObject(item.payload_json));
+        if (reason) await revokeUserKeys(db, deps.cipher, act.tenantId, item.entity_sync_id, reason, serverSeq);
+      }
       acknowledged_items.push({
         idempotency_key: item.idempotency_key,
         entity_type: item.entity_type,
@@ -466,6 +514,7 @@ export async function runSyncExchangeV2(
       has_more,
       user_snapshot_required: newUsers,
       policy_metadata_json: null,
+      signature_cutover_seq: signatureCutover,
     };
 
     await db.run(

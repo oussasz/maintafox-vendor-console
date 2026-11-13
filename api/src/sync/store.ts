@@ -4,7 +4,7 @@
  */
 import type { Database } from "../db/database.js";
 import { entityAad, isSensitiveSyncEntityType, PayloadCipher, responseAad, SENSITIVE_SYNC_ENTITY_TYPES } from "./payload-crypto.js";
-import type { SyncInboundItemV2, SyncOperation } from "./types.js";
+import type { SyncInboundItemV2, SyncOperation, SyncSignature } from "./types.js";
 
 /** The payload as stored: sealed for sensitive entity types, verbatim otherwise. */
 function storedPayload(
@@ -55,6 +55,8 @@ export type IngressInsert = {
   machineFingerprint: string;
   receivedAt: string;
   protocolVersion: "v1" | "v2";
+  /** Verified signatures (JSON array of SyncSignature), or null when unsigned. */
+  signaturesJson?: string | null;
 };
 
 /** Appends to the log. Returns the new server_seq, or null when the item key already exists. */
@@ -63,8 +65,8 @@ export async function insertIngress(db: Database, cipher: PayloadCipher, input: 
     `INSERT INTO sync_mirror_ingress (
        tenant_id, idempotency_key, entity_type, entity_sync_id, operation, row_version,
        payload_json, payload_hash, machine_fingerprint, received_at_rfc3339,
-       base_row_version, owner_user_sync_id, protocol_version
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       base_row_version, owner_user_sync_id, protocol_version, signatures_json
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
      RETURNING id`,
     input.tenantId,
@@ -80,6 +82,7 @@ export async function insertIngress(db: Database, cipher: PayloadCipher, input: 
     input.baseRowVersion,
     input.ownerUserSyncId,
     input.protocolVersion,
+    input.signaturesJson ?? null,
   );
   return row ? row.id : null;
 }
@@ -97,8 +100,9 @@ export async function upsertEntityState(
   await db.run(
     `INSERT INTO sync_entity_state (
        tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json,
-       payload_hash, deleted, owner_user_sync_id, origin_machine_fingerprint, last_ingress_id, updated_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,mfx_try_jsonb($6),$7,$8,$9,$10,$11,now())
+       payload_hash, deleted, owner_user_sync_id, origin_machine_fingerprint, last_ingress_id, updated_at,
+       signatures_json
+     ) VALUES ($1,$2,$3,$4,$5,$6,mfx_try_jsonb($6),$7,$8,$9,$10,$11,now(),$12)
      ON CONFLICT (tenant_id, entity_type, entity_sync_id) DO UPDATE SET
        row_version = EXCLUDED.row_version,
        operation = EXCLUDED.operation,
@@ -109,7 +113,8 @@ export async function upsertEntityState(
        owner_user_sync_id = EXCLUDED.owner_user_sync_id,
        origin_machine_fingerprint = EXCLUDED.origin_machine_fingerprint,
        last_ingress_id = EXCLUDED.last_ingress_id,
-       updated_at = EXCLUDED.updated_at`,
+       updated_at = EXCLUDED.updated_at,
+       signatures_json = EXCLUDED.signatures_json`,
     input.tenantId,
     input.entityType,
     input.entitySyncId,
@@ -121,6 +126,7 @@ export async function upsertEntityState(
     input.ownerUserSyncId,
     input.machineFingerprint,
     ingressId,
+    input.signaturesJson ?? null,
   );
 }
 
@@ -132,6 +138,7 @@ export type EntityStateRow = {
   deleted: boolean;
   owner_user_sync_id: string | null;
   last_ingress_id: number;
+  signatures_json: string | null;
 };
 
 /** Current state of one entity, payload opened. */
@@ -143,7 +150,8 @@ export async function getEntityState(
   entitySyncId: string,
 ): Promise<EntityStateRow | undefined> {
   const row = await db.get<EntityStateRow>(
-    `SELECT row_version, operation, payload_raw, payload_hash, deleted, owner_user_sync_id, last_ingress_id
+    `SELECT row_version, operation, payload_raw, payload_hash, deleted, owner_user_sync_id, last_ingress_id,
+            signatures_json
      FROM sync_entity_state
      WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3`,
     tenantId,
@@ -195,7 +203,19 @@ type StateDeliveryRow = {
   payload_hash: string;
   owner_user_sync_id: string | null;
   deleted: boolean;
+  signatures_json: string | null;
 };
+
+/** Stored signatures as delivered (an unsigned row delivers an empty list). */
+export function parseStoredSignatures(raw: string | null): SyncSignature[] {
+  if (raw === null) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value) ? (value as SyncSignature[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 export function toInboundItemV2(cipher: PayloadCipher, tenantId: string, row: StateDeliveryRow): SyncInboundItemV2 {
   return {
@@ -208,11 +228,12 @@ export function toInboundItemV2(cipher: PayloadCipher, tenantId: string, row: St
     payload_hash: row.payload_hash,
     owner_user_sync_id: row.owner_user_sync_id,
     deleted: row.deleted,
+    signatures: parseStoredSignatures(row.signatures_json),
   };
 }
 
 const STATE_DELIVERY_COLUMNS = `last_ingress_id, entity_type, entity_sync_id, operation, row_version,
-  payload_raw, payload_hash, owner_user_sync_id, deleted`;
+  payload_raw, payload_hash, owner_user_sync_id, deleted, signatures_json`;
 
 /**
  * Collapsed delta for one device: latest state of every entity changed after `afterSeq`, excluding

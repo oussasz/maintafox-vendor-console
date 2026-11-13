@@ -75,6 +75,27 @@ export function validateOperationForType(
   return { ok: true };
 }
 
+/**
+ * Protocol v1 carries no signatures (sync-signing-design.md §5): types whose changes must be
+ * signed (author fields, authority data) and server-only types are refused on v1.
+ */
+export function validateUnsignedProtocolType(
+  item: Pick<SyncOutboxItem, "entity_type">,
+  registry: SyncEntityRegistry,
+): ItemValidationOk | ItemValidationFail {
+  const entityType = item.entity_type.trim();
+  if (registry.isServerOnly(entityType)) {
+    return fail("server_only_entity_type", `entity_type '${entityType}' is published by the server only.`);
+  }
+  if (registry.authorityOf(entityType) !== undefined || registry.authorFieldsOf(entityType).length > 0) {
+    return fail(
+      "signature_required",
+      `entity_type '${entityType}' changes must be signed by the person who made them: update this PC.`,
+    );
+  }
+  return { ok: true };
+}
+
 /** v1 item rules (unchanged): any well-formed entity type is accepted. */
 export function validateOutboxItem(item: SyncOutboxItem): ItemValidationOk | ItemValidationFail {
   if (!ENTITY_TYPE_PATTERN.test(item.entity_type.trim())) {
