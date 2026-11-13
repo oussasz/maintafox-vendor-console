@@ -144,6 +144,7 @@ export type EntityStateRow = {
   owner_user_sync_id: string | null;
   last_ingress_id: number;
   signatures_json: string | null;
+  server_attestation: "founding" | "recovery" | null;
 };
 
 /** Current state of one entity, payload opened. */
@@ -156,7 +157,7 @@ export async function getEntityState(
 ): Promise<EntityStateRow | undefined> {
   const row = await db.get<EntityStateRow>(
     `SELECT row_version, operation, payload_raw, payload_hash, deleted, owner_user_sync_id, last_ingress_id,
-            signatures_json
+            signatures_json, server_attestation
      FROM sync_entity_state
      WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3`,
     tenantId,

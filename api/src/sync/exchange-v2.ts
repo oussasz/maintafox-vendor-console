@@ -384,6 +384,7 @@ export async function runSyncExchangeV2(
           server_owner_user_sync_id: state.owner_user_sync_id,
           server_deleted: state.deleted,
           server_signatures: parseStoredSignatures(state.signatures_json),
+          server_attestation: state.server_attestation ?? null,
         });
         await db.run(
           `INSERT INTO sync_conflict_log
@@ -405,7 +406,15 @@ export async function runSyncExchangeV2(
       }
 
       const previousPayload = state && !state.deleted ? parsePayloadObject(state.payload_raw) : null;
-      const judgement = await judgeItem(authCtx, deps.registry, act, item, previousPayload, recovery);
+      const judgement = await judgeItem(
+        authCtx,
+        deps.registry,
+        act,
+        item,
+        previousPayload,
+        recovery,
+        state !== undefined && state.deleted,
+      );
       if (!judgement.ok) {
         await reject(item, judgement.code, judgement.message);
         continue;
@@ -476,7 +485,8 @@ export async function runSyncExchangeV2(
     }
 
     if (recoveryConsumed && recoveryApplied !== 2) {
-      // Defensive: the pre-check above makes this unreachable. Rolls the whole exchange back.
+      // One unit item was not applied (e.g. an earlier item of this batch created its entity after
+      // the pre-check). Rolls the whole exchange back, the code consumption included.
       throw new SyncRequestError(409, "recovery_refused", "a recovery unit must be applied whole");
     }
 

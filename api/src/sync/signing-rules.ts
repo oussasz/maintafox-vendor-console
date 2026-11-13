@@ -227,6 +227,13 @@ export async function judgeRecoveryUnit(
   if (!truthy(accountPayload["is_active"]) || !blank(accountPayload["deleted_at"]) || truthy(accountPayload["is_admin"])) {
     return invalid("the recovered account must be an active, ordinary account");
   }
+  // Recovery items carry no maker signature: every "<who>_by_sync_id" attribution on the recovered
+  // account may only name the account itself.
+  for (const [field, author] of Object.entries(accountPayload)) {
+    if (field.endsWith("_by_sync_id") && !blank(author) && author !== account.entity_sync_id) {
+      return invalid("the recovered account may only name itself as an author");
+    }
+  }
   const roleSyncId = grantPayload["role_sync_id"];
   const role = typeof roleSyncId === "string" ? await livePayload(ctx, "roles", roleSyncId) : null;
   if (
@@ -343,6 +350,8 @@ export async function judgeItem(
   item: SyncOutboxItemV2,
   previous: Payload | null,
   recovery: RecoveryUnit,
+  /** The server holds a tombstone of this entity (previous is then null). */
+  tombstoned = false,
 ): Promise<ItemJudgement> {
   if (registry.isServerOnly(item.entity_type)) {
     return fail("server_only_entity_type", `${item.entity_type} is published by the server only`);
@@ -396,6 +405,7 @@ export async function judgeItem(
         operation: item.operation,
         payload,
         previous,
+        recreatesDeleted: tombstoned && previous === null && item.operation !== "delete",
         right: authority,
       },
       signatures[0]!.user_sync_id,

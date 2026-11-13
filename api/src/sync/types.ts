@@ -130,6 +130,7 @@ export type SyncConflictItemV2 = {
   server_owner_user_sync_id: string | null;
   server_deleted: boolean;
   server_signatures: SyncSignature[];
+  server_attestation: "founding" | "recovery" | null;
 };
 
 export type SyncInboundItemV2 = {

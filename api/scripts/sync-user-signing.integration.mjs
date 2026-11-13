@@ -366,6 +366,8 @@ async function run() {
       assert.ok(!dump.includes(adminPw), "passwords never stored");
     }
     const ADM = (it) => signed(T, it, adminKeyA);
+    /** Signs as u-ua2, a user and role administrator who is not a plant administrator (set below). */
+    let UA2 = null;
 
     // Accounts made by the administrator (signed, adm.users).
     const account = async (username, password, extra = {}) => ({
@@ -590,6 +592,31 @@ async function run() {
         ["authority_refused"],
         "a right held only through a soft-deleted role is gone",
       );
+
+      // A second user administrator (not an administrator) can neither grant the soft-deleted role
+      // that still carries adm.users, nor revive it.
+      const ua2Pw = "Ua2-Passw0rd-1";
+      assert.deepEqual(
+        await push(A, [
+          ADM(item("roles", "role-ua2", 1, null, { name: "User admins 2", deleted_at: null })),
+          ADM(item("role_permissions", "rp-ua2-users", 1, null, { role_sync_id: "role-ua2", permission_key: "adm.users", deleted_at: null })),
+          ADM(item("role_permissions", "rp-ua2-roles", 1, null, { role_sync_id: "role-ua2", permission_key: "adm.roles", deleted_at: null })),
+          ADM(item("user_accounts", "u-ua2", 1, null, await account("ua2", ua2Pw))),
+          ADM(item("user_scope_assignments", "usa-ua2", 1, null, grantOf("u-ua2", "role-ua2"))),
+        ]),
+        ["ack", "ack", "ack", "ack", "ack"],
+      );
+      const ua2Key = newKey("u-ua2");
+      assert.equal((await enrol(A, T, ua2Key, ua2Pw)).status, 200);
+      UA2 = (it) => signed(T, it, ua2Key);
+      assert.deepEqual(
+        await push(A, [
+          UA2(item("user_scope_assignments", "usa-revive", 1, null, grantOf("u-lock", "role-uadm"))),
+          UA2(item("roles", "role-uadm", 3, 2, { name: "User admins", deleted_at: null })),
+        ]),
+        ["authority_refused", "authority_refused"],
+        "a soft-deleted role keeps its administration rights for these checks",
+      );
       // The administrator's password is unchanged: they still enrol on the other PC.
       assert.equal((await enrol(B, T, newKey("u-admin"), adminPw)).status, 200);
       // Last administrator: the only one cannot disable themself.
@@ -698,11 +725,13 @@ async function run() {
           { setting_key: "self_approval", value: "off", changed_by_sync_id: "u-admin" },
           { idempotency_key: account0.idempotency_key },
         );
-        assert.deepEqual(await push(A, [smuggled, account0, grant0]), [
-          "signature_required",
-          "duplicate_item_in_batch",
-          "recovery_refused",
-        ]);
+        // Two items share a key, so the outcomes are read in processing order, not by key.
+        const res = await exchange(A, [smuggled, account0, grant0]);
+        assert.equal(res.acknowledged_items.length, 0);
+        assert.deepEqual(
+          res.rejected_items.map((r) => r.rejection_code),
+          ["signature_required", "duplicate_item_in_batch", "recovery_refused"],
+        );
         assert.equal(await isConsumed(code), false, "the code is not spent by a refused unit");
       }
       // Both or neither: a grant that cannot be applied as a new row refuses the whole unit.
@@ -720,7 +749,8 @@ async function run() {
         assert.equal(n, 0, "the account of a refused unit is not applied either");
       }
 
-      assert.deepEqual(await push(A, await unit(code, 1)), ["ack", "ack"], "a valid recovery unit is accepted");
+      const unit1 = await unit(code, 1);
+      assert.deepEqual(await push(A, unit1), ["ack", "ack"], "a valid recovery unit is accepted");
       const delivered = (await pullAll(B)).filter((i) => i.entity_sync_id === "u-rec-1" || i.entity_sync_id === "usa-rec-1");
       assert.deepEqual(delivered.map((i) => i.server_attestation), ["recovery", "recovery"], "delivered with its attestation");
       const [consumed] = await sql(
@@ -730,6 +760,23 @@ async function run() {
       assert.ok(consumed.consumed_at !== null);
       assert.equal(consumed.consumed_entity_sync_id, "u-rec-1");
       assert.deepEqual(await push(A, await unit(code, 2)), ["recovery_refused", "recovery_refused"], "a used code is refused");
+
+      // The recovered administrator (Administrator role, is_admin 0) once deactivated stays protected:
+      // a user administrator cannot reactivate it with a password of their choosing.
+      const off = { ...JSON.parse(unit1[0].payload_json), is_active: 0, status_changed_by_sync_id: "u-admin" };
+      assert.deepEqual(await push(A, [ADM(item("user_accounts", "u-rec-1", 2, 1, off))]), ["ack"]);
+      const takeover = {
+        ...off,
+        is_active: 1,
+        status_changed_by_sync_id: "u-ua2",
+        password_hash: await phcOf("Taken-Over-2"),
+        password_changed_by_sync_id: "u-ua2",
+      };
+      assert.deepEqual(
+        await push(A, [UA2(item("user_accounts", "u-rec-1", 3, 2, takeover))]),
+        ["authority_refused"],
+        "a deactivated administrator cannot be taken over",
+      );
 
       const lone = await issue();
       assert.deepEqual(await push(A, [(await unit(lone, 3))[0]]), ["recovery_refused"], "a recovery is exactly two items");

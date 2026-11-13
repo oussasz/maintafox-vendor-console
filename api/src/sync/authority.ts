@@ -161,6 +161,49 @@ async function roleName(ctx: AuthorityCtx, roleSyncId: string): Promise<string |
   return typeof role["name"] === "string" ? role["name"] : null;
 }
 
+/**
+ * Whether a role could make its holders administrators, whatever its current state: an elevated
+ * name, or a live role_permissions row giving an administration right. Used to judge GRANTING or
+ * REVIVING a role: a soft-deleted role keeps its rights rows and can be brought back.
+ */
+async function roleCarriesAdministration(ctx: AuthorityCtx, roleSyncId: string): Promise<boolean> {
+  const role = await livePayload(ctx, "roles", roleSyncId);
+  if (role && typeof role["name"] === "string" && ELEVATED_ADMIN_ROLES.has(role["name"])) return true;
+  const row = await ctx.db.get<{ one: number }>(
+    `SELECT 1 AS one FROM sync_entity_state
+     WHERE tenant_id = $1 AND entity_type = 'role_permissions' AND NOT deleted
+       AND payload_json->>'role_sync_id' = $2
+       AND (payload_json->>'deleted_at') IS NULL
+       AND payload_json->>'permission_key' IN ('adm.users', 'adm.roles')
+     LIMIT 1`,
+    ctx.tenantId,
+    roleSyncId,
+  );
+  return row !== undefined;
+}
+
+/**
+ * Takeover guard subject: an account that is, or would be once reactivated or its role revived, an
+ * administrator or a holder of an administration right. Ignores the account's active/deleted state
+ * and the grants' validity window, so a deactivated administrator stays protected.
+ */
+async function administratorInAnyState(ctx: AuthorityCtx, userSyncId: string, account: Payload | null): Promise<boolean> {
+  if (account && truthy(account["is_admin"])) return true;
+  const grants = await ctx.db.all<{ role_sync_id: string | null }>(
+    `SELECT payload_json->>'role_sync_id' AS role_sync_id
+     FROM sync_entity_state
+     WHERE tenant_id = $1 AND entity_type = 'user_scope_assignments' AND NOT deleted
+       AND payload_json->>'user_sync_id' = $2
+       AND (payload_json->>'deleted_at') IS NULL`,
+    ctx.tenantId,
+    userSyncId,
+  );
+  for (const g of grants) {
+    if (typeof g.role_sync_id === "string" && (await roleCarriesAdministration(ctx, g.role_sync_id))) return true;
+  }
+  return false;
+}
+
 /** settings/site.rs tenant_right_holder_condition, on the server state. */
 export async function holdsTenantRight(ctx: AuthorityCtx, userSyncId: string, permission: string): Promise<boolean> {
   const account = await livePayload(ctx, "user_accounts", userSyncId);
@@ -199,13 +242,6 @@ export async function lastingAdministratorCount(ctx: AuthorityCtx): Promise<numb
   return count;
 }
 
-async function holdsAdminRight(ctx: AuthorityCtx, userSyncId: string): Promise<boolean> {
-  for (const right of ADMIN_RIGHTS) {
-    if (await holdsTenantRight(ctx, userSyncId, right)) return true;
-  }
-  return false;
-}
-
 export function changedColumns(previous: Payload | null, next: Payload): string[] {
   const keys = new Set([...Object.keys(next), ...(previous ? Object.keys(previous) : [])]);
   return [...keys].filter(
@@ -221,6 +257,8 @@ export type AuthorityItem = {
   payload: Payload | null;
   /** Server state before the item (null: create or not held). */
   previous: Payload | null;
+  /** The item creates the entity again over the server's tombstone of it. */
+  recreatesDeleted: boolean;
   right: "adm.users" | "adm.roles";
 };
 
@@ -254,15 +292,15 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
       if (truthy(next["is_admin"]) && !truthy(item.previous?.["is_admin"])) {
         return needAdministrator("making an account an administrator");
       }
+      if (item.recreatesDeleted) {
+        // A deleted account keeps its grants: bringing it back is a takeover risk.
+        return needAdministrator("re-creating a deleted account");
+      }
       if (item.previous) {
         const touches =
           isDelete || changedColumns(item.previous, next).some((c) => !ADMIN_ACCOUNT_PROFILE_COLUMNS.has(c));
-        if (
-          touches &&
-          (truthy(item.previous["is_admin"]) ||
-            (await isPlantAdministrator(ctx, item.entitySyncId)) ||
-            (await holdsAdminRight(ctx, item.entitySyncId)))
-        ) {
+        // Judged whatever the account's state: a deactivated administrator stays protected.
+        if (touches && (await administratorInAnyState(ctx, item.entitySyncId, item.previous))) {
           return needAdministrator("changing the credentials or status of an administrator");
         }
       }
@@ -276,14 +314,14 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
         return refuse("nobody may grant a role to their own account");
       }
       for (const roleSyncId of roleIds) {
-        const name = await roleName(ctx, roleSyncId);
-        const rights = await roleRights(ctx, roleSyncId);
-        if ((name !== null && ELEVATED_ADMIN_ROLES.has(name)) || [...rights].some((r) => ADMIN_RIGHTS.has(r))) {
+        // Whatever the role's state: a soft-deleted role keeps its rights and can be revived.
+        if (await roleCarriesAdministration(ctx, roleSyncId)) {
           return needAdministrator("granting or changing an administration role");
         }
       }
       for (const subject of subjects) {
-        if ((await isPlantAdministrator(ctx, subject)) || (await holdsAdminRight(ctx, subject))) {
+        const account = await livePayload(ctx, "user_accounts", subject);
+        if (await administratorInAnyState(ctx, subject, account)) {
           return needAdministrator("changing the roles of an administrator");
         }
       }
@@ -294,14 +332,15 @@ export async function judgeAuthorityChange(ctx: AuthorityCtx, item: AuthorityIte
         if (ADMIN_RIGHTS.has(key)) return needAdministrator("giving or removing an administration right");
       }
       for (const roleSyncId of strings(next["role_sync_id"], item.previous?.["role_sync_id"])) {
-        const name = await roleName(ctx, roleSyncId);
-        if (name !== null && ELEVATED_ADMIN_ROLES.has(name)) return needAdministrator("changing an administrator role");
+        if (await roleCarriesAdministration(ctx, roleSyncId)) return needAdministrator("changing an administrator role");
       }
       return OK;
     }
     case "roles": {
       const names = [next["name"], item.previous?.["name"]].filter((n): n is string => typeof n === "string");
-      if (names.some((n) => ELEVATED_ADMIN_ROLES.has(n))) return needAdministrator("changing an administrator role");
+      if (names.some((n) => ELEVATED_ADMIN_ROLES.has(n)) || (await roleCarriesAdministration(ctx, item.entitySyncId))) {
+        return needAdministrator("changing an administrator role");
+      }
       return OK;
     }
     case "permissions": {
