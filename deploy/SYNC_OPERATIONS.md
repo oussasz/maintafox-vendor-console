@@ -205,7 +205,7 @@ forensic log: export them first if they hold anything.
 
 # Per-user signing keys and the founding slot (sync-signing-design.md v9)
 
-Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an operator session, an
+Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an operator session with `sync.operate`, an
 `X-Operator-Reason` header and a `sync_repair` step-up token; each is recorded in the audit ledger
 (`audit_record_id` in the response) and is idempotent (`Idempotency-Key`).
 
