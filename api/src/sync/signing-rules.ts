@@ -228,8 +228,8 @@ export async function judgeRecoveryUnit(
     return invalid("the recovered account must be an active, ordinary account");
   }
   // Recovery items carry no maker signature: every "<who>_by_sync_id" attribution on the recovered
-  // account may only name the account itself.
-  for (const [field, author] of Object.entries(accountPayload)) {
+  // account and on its grant may only name the account itself.
+  for (const [field, author] of [...Object.entries(accountPayload), ...Object.entries(grantPayload)]) {
     if (field.endsWith("_by_sync_id") && !blank(author) && author !== account.entity_sync_id) {
       return invalid("the recovered account may only name itself as an author");
     }
