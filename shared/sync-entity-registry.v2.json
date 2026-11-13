@@ -354,6 +354,7 @@
         {
           "field": "three_person_changed_by_sync_id",
           "guards": [
+            "requires_three_person_removal",
             "three_person_changed_at",
             "three_person_change_reason"
           ]
@@ -361,6 +362,7 @@
         {
           "field": "isolation_changed_by_sync_id",
           "guards": [
+            "requires_energy_isolation",
             "isolation_changed_at",
             "isolation_change_reason"
           ]

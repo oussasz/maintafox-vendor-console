@@ -1132,12 +1132,14 @@
           "field": "isolation_changed_by_sync_id",
           "guards": [
             "isolation_change_reason",
-            "isolation_changed_at"
+            "isolation_changed_at",
+            "requires_energy_isolation"
           ]
         },
         {
           "field": "three_person_changed_by_sync_id",
           "guards": [
+            "requires_three_person_removal",
             "three_person_change_reason",
             "three_person_changed_at"
           ]
