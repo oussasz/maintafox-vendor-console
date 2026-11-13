@@ -662,7 +662,8 @@
           "field": "approved_by_sync_id",
           "guards": [
             "approval_note",
-            "approved_at"
+            "approved_at",
+            "self_approved"
           ]
         },
         {
@@ -974,7 +975,8 @@
     {
       "entity_type": "org_nodes",
       "scope": "tenant",
-      "append_only": false
+      "append_only": false,
+      "authority": "org.admin"
     },
     {
       "entity_type": "org_structure_models",
@@ -2224,7 +2226,8 @@
         {
           "field": "approved_by_sync_id",
           "guards": [
-            "approved_at"
+            "approved_at",
+            "self_approved"
           ]
         },
         {
@@ -2241,7 +2244,8 @@
           "field": "hse_approved_by_sync_id",
           "guards": [
             "hse_approval_note",
-            "hse_approved_at"
+            "hse_approved_at",
+            "hse_self_approved"
           ]
         },
         {

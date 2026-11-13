@@ -49,6 +49,15 @@ function blank(value: unknown): boolean {
   return value === null || value === undefined || value === "";
 }
 
+/**
+ * A guarded column that vouches for nothing: blank, or a flag that is off (0 / false). An update
+ * may clear an author while such columns remain (e.g. a count line's `self_approved` reset to 0,
+ * a NOT NULL flag), but not while a guarded column still holds a claim (design §5 rule 4).
+ */
+function vacant(value: unknown): boolean {
+  return blank(value) || value === 0 || value === false || value === "0";
+}
+
 function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
@@ -316,7 +325,7 @@ export function checkAuthors(
       // A create without this author is judged through its maker (and authority). On an update,
       // the author may not be emptied, or left empty while what it vouches for changes, as long as
       // any guarded column still holds a value (design §5 rule 4).
-      if (previous !== null && author.guards.some((g) => !blank(payload[g]))) {
+      if (previous !== null && author.guards.some((g) => !vacant(payload[g]))) {
         return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
       }
       continue;
