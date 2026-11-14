@@ -570,11 +570,13 @@ async function run() {
       );
       assert.deepEqual(
         await push(B, [
-          item("permit_types", "pt-id", 2, 1, { ...hot, max_duration_hours: 4 }),
-          TECH(item("permit_types", "pt-id", 3, 2, { ...hot, max_duration_hours: 4, name: "Hot work (welding)" })),
+          item("permit_types", "pt-id", 2, 1, { ...hot, requires_hse_approval: 0 }),
+          LOCK(item("permit_types", "pt-id", 2, 1, { ...hot, requires_hse_approval: 0 })),
+          LOCK(item("permit_types", "pt-id", 2, 1, hot, { operation: "archive" })),
+          TECH(item("permit_types", "pt-id", 2, 1, { ...hot, max_duration_hours: 4, name: "Hot work (welding)" })),
         ]),
-        ["ack", "ack"],
-        "an edit keeping the name needs no signer; a permit issuer renames",
+        ["signature_required", "authority_refused", "authority_refused", "ack"],
+        "any other setting, or an archive, is a permit issuer's signed change too",
       );
     }
 

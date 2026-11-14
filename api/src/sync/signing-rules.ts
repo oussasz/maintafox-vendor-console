@@ -361,7 +361,11 @@ const NOTICE_REFRESH_COLUMNS: ReadonlySet<string> = new Set(["message_key", "mes
 /**
  * Whether `item` refreshes a notice last written by the pushing PC (`ownNoticeRefresh` of
  * checkHistoryRewrite). Notices name nobody and each PC raises its own: a PC may already raise any
- * notice, so refreshing its own adds nothing; another PC's notice stays as it was received.
+ * notice, so refreshing its own adds nothing; another PC's notice stays as it was received. A held
+ * notice accepts no item at all from another PC (not even an unchanged re-send, which would make that
+ * PC its last writer), so its last writer is always the PC that raised it: PCs never send a notice
+ * they received (inbound rows are applied with capture suppressed; its device-local columns never
+ * travel).
  */
 export async function isOwnNoticeRefresh(
   db: Database,
@@ -400,8 +404,11 @@ export function checkHistoryRewrite(
   ownNoticeRefresh = false,
 ): Fail | null {
   if (previous === null || !registry.isAppendOnly(entityType) || ARCHIVED_ATTACHMENT_TYPES.has(entityType)) return null;
+  if (entityType === "notification_events" && !ownNoticeRefresh) {
+    return fail("history_rewrite_refused", "a notice is changed only by the PC that raised it");
+  }
   const authors = registry.authorFieldsOf(entityType);
-  const answered = new Set<string>(ownNoticeRefresh && entityType === "notification_events" ? NOTICE_REFRESH_COLUMNS : []);
+  const answered = new Set<string>(entityType === "notification_events" ? NOTICE_REFRESH_COLUMNS : []);
   for (const author of authors) {
     const value = payload[author.field];
     if (typeof value === "string" && signers.has(value)) {
@@ -474,30 +481,32 @@ export async function checkSiteRuleMove(
 export const PERMIT_TYPE_EDIT_RIGHT = "ptw.issue";
 
 /**
- * A permit type's identity: its code and its name. The three-person and energy-isolation settings
- * are bound to their author (rule 4), but people, permits and plant rules find a type by its code and
- * name, so a rename would carry a setting to another type ("Confined space" showing the chain of
- * "Cold work"). The code never changes once the server holds the type (as the desktop save and its
- * arrival check refuse, permit::queries CODE_PERMIT_TYPE_CODE_LOCKED); a new type, or a new name,
- * is the signed change of a plant-wide holder of the permit-issue right (the right the desktop save
- * needs). A PC paired later only sees the type as it is now, so this cannot be judged on arrival.
+ * Every change of a permit type (create, update, archive, delete). A type carries safety settings
+ * that only some are bound to an author (the three-person chain and the energy-isolation rule, rule
+ * 4); the others (HSE or operations approval, gas test, maximum duration, PPE, control rules) and
+ * its identity (code, name: people, permits and plant rules find a type by them, so a rename would
+ * carry a setting to another type) are not. The desktop writes a type only through its save, which
+ * needs the permit-issue right plant-wide (commands/permit.rs upsert_permit_type), in a session, so
+ * signed: every change must be signed by a plant-wide holder of that right in the server's state.
+ * The code never changes once the server holds the type (as the desktop save and its arrival check
+ * refuse, permit::queries CODE_PERMIT_TYPE_CODE_LOCKED). A PC paired later only sees the type as it
+ * is now, so none of this can be judged on arrival.
  */
-export async function checkPermitTypeIdentity(
+export async function checkPermitTypeChange(
   ctx: AuthorityCtx,
-  payload: Payload,
+  payload: Payload | null,
   previous: Payload | null,
   signers: ReadonlySet<string>,
 ): Promise<Fail | null> {
-  if (previous !== null && !same(payload["code"], previous["code"])) {
+  if (payload !== null && previous !== null && !same(payload["code"], previous["code"])) {
     return fail("permit_type_code_locked", "the code of a permit type never changes once it exists");
   }
-  if (previous !== null && same(payload["name"], previous["name"])) return null;
   if (signers.size === 0) {
-    return fail("signature_required", "a new permit type, or a new name for one, must be signed by the person who makes it");
+    return fail("signature_required", "a permit type is changed only by a signed change of the person who makes it");
   }
   const maker = [...signers][0]!;
   if (!(await holdsTenantRight(ctx, maker, PERMIT_TYPE_EDIT_RIGHT))) {
-    return fail("authority_refused", `creating or renaming a permit type needs ${PERMIT_TYPE_EDIT_RIGHT} plant-wide`);
+    return fail("authority_refused", `a permit type is changed only by a holder of ${PERMIT_TYPE_EDIT_RIGHT} plant-wide`);
   }
   return null;
 }
@@ -585,11 +594,11 @@ export async function judgeItem(
         const move = await checkSiteRuleMove(ctx, payload, previous, signers);
         if (move) return move;
       }
-      if (item.entity_type === "permit_types") {
-        const identity = await checkPermitTypeIdentity(ctx, payload, previous, signers);
-        if (identity) return identity;
-      }
     }
+  }
+  if (item.entity_type === "permit_types") {
+    const permitType = await checkPermitTypeChange(ctx, item.operation === "delete" ? null : payload, previous, signers);
+    if (permitType) return permitType;
   }
 
   if (authority !== undefined) {
