@@ -664,6 +664,90 @@ async function run() {
       );
     }
 
+    // ── History rows are never rewritten; a site rule moves only with its node ────────────
+    {
+      // An audit event naming its actor: no rewrite, unsigned, by the actor, or naming another.
+      const event = { action_code: "rel.decision.rejected", target_id: "d-1", actor_sync_id: "u-tech", details_json: "{}" };
+      assert.deepEqual(await push(B, [TECH(item("audit_events", "ae-1", 1, null, event))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [
+          item("audit_events", "ae-1", 2, 1, { ...event, action_code: "rel.decision.approved" }),
+          TECH(item("audit_events", "ae-1", 2, 1, { ...event, details_json: '{"approval_seal":"x"}' })),
+          item("audit_events", "ae-1", 2, 1, { ...event, actor_sync_id: null, action_code: "rel.decision.approved" }),
+        ]),
+        ["history_rewrite_refused", "history_rewrite_refused", "signature_required"],
+        "a recorded event is never rewritten, even by its actor; its actor is never erased",
+      );
+      assert.deepEqual(
+        await push(A, [ADM(item("audit_events", "ae-1", 2, 1, { ...event, actor_sync_id: "u-admin" }))]),
+        ["history_rewrite_refused"],
+        "nor credited to someone else",
+      );
+      // A site rule's event moved to another site in its author's name.
+      assert.deepEqual(
+        await push(B, [
+          item("site_setting_events", "sse-good", 2, 1, {
+            setting_key: "self_approval",
+            value: "off",
+            changed_by_sync_id: "u-tech",
+            site_node_sync_id: "site-2",
+          }),
+        ]),
+        ["history_rewrite_refused"],
+      );
+      // A break-in: an approval added later by its approver, the refusing PC's marks once.
+      const breakIn = { reason: "urgent", created_by_sync_id: "u-tech", approved_by_user_sync_id: null, approver_signed_at: null, sync_refused_at: null, sync_refused_reason: null };
+      const approved = { ...breakIn, approved_by_user_sync_id: "u-admin", approver_signed_at: "2026-11-14T08:00:00Z" };
+      const refused = { ...approved, sync_refused_at: "2026-11-14T09:00:00Z", sync_refused_reason: "week frozen" };
+      assert.deepEqual(await push(B, [TECH(item("schedule_break_ins", "sbi-1", 1, null, breakIn))]), ["ack"]);
+      assert.deepEqual(await push(A, [ADM(item("schedule_break_ins", "sbi-1", 2, 1, approved))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [item("schedule_break_ins", "sbi-1", 3, 2, { ...refused, reason: "planned" })]),
+        ["history_rewrite_refused"],
+        "refusal marks bring nothing else",
+      );
+      assert.deepEqual(await push(B, [item("schedule_break_ins", "sbi-1", 3, 2, refused)]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [item("schedule_break_ins", "sbi-1", 4, 3, { ...refused, sync_refused_reason: "other" })]),
+        ["history_rewrite_refused"],
+        "marks are added once, never rewritten",
+      );
+
+      // A per-site rule turned on in the administrator's name, moved to another site.
+      assert.deepEqual(
+        await push(A, [
+          ADM(item("org_nodes", "on-a", 1, null, { code: "SITE-A", name: "Site A", deleted_at: null })),
+          ADM(item("org_nodes", "on-b", 1, null, { code: "SITE-B", name: "Site B", deleted_at: null })),
+          ADM(item("org_nodes", "on-a2", 1, null, { code: "SITE-A", name: "Site A", deleted_at: null })),
+        ]),
+        ["ack", "ack", "ack"],
+      );
+      const rule = { site_node_sync_id: "on-a", setting_key: "permit.self_approval", value_json: "true", updated_by_sync_id: "u-admin" };
+      assert.deepEqual(await push(A, [ADM(item("site_settings", "ss-mv", 1, null, rule))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [
+          item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-b" }),
+          TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" })),
+        ]),
+        ["signature_required", "site_rule_move_refused"],
+        "never moved unsigned; moved keeping its author only off a deleted node",
+      );
+      assert.deepEqual(
+        await push(A, [ADM(item("org_nodes", "on-a", 2, 1, { code: "SITE-A", name: "Site A", deleted_at: "2026-11-14T10:00:00Z" }))]),
+        ["ack"],
+      );
+      assert.deepEqual(
+        await push(B, [TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-b" }))]),
+        ["site_rule_move_refused"],
+        "only to the deleted node's copy",
+      );
+      assert.deepEqual(
+        await push(B, [TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" }))]),
+        ["ack"],
+        "the publish of a new structure moves the rule to its node's copy",
+      );
+    }
+
     // ── Server-only type, payload bytes ───────────────────────────────────────────────────
     {
       assert.deepEqual(

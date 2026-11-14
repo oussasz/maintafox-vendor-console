@@ -54,8 +54,9 @@ const APPEND_ONLY_DELETABLE_TYPES: ReadonlySet<string> = new Set(["media_attachm
 
 /**
  * Operation rule (v1 and v2): a delete or archive of an append-only registry type is refused with
- * operation_not_allowed_for_type (desktops would really delete the history row on apply). Upserts
- * of append-only types are not refused (desktops ignore rewrites; refusing could break re-sends).
+ * operation_not_allowed_for_type (desktops would really delete the history row on apply). Rewrites
+ * of a history row that names someone are judged by the signing rules (signing-rules.ts
+ * checkHistoryRewrite); identical re-sends are acknowledged as duplicates.
  */
 export function validateOperationForType(
   item: Pick<SyncOutboxItem, "entity_type" | "operation">,

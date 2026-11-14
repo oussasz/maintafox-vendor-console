@@ -342,6 +342,93 @@ export function checkAuthors(
   return null;
 }
 
+/** Refusal marks a PC records on a received history row it refused (desktop planning::sync_check). */
+const REFUSAL_MARK_COLUMNS: ReadonlySet<string> = new Set(["sync_refused_at", "sync_refused_reason"]);
+/** Bookkeeping columns a re-send may carry with another value; they record nobody's act. */
+const BOOKKEEPING_COLUMNS: ReadonlySet<string> = new Set(["row_version", "updated_at"]);
+
+/**
+ * History rows (append-only types) that name who did something are never rewritten. A change of a
+ * row the server holds may only: set an author that was empty (an approval added later: rule 4
+ * requires that person's signature), change what an author naming a signer guards or vouches for,
+ * or add the refusal marks of the PC that refused the row. Anything else is refused, signed or
+ * not: an unsigned item keeping the recorded actor would otherwise rewrite that person's record
+ * (another site, another action), and a PC that never held the row would apply it (desktops skip
+ * rewrites only of rows they hold). Identical re-sends never reach here (duplicate ack) or change
+ * nothing. History types without author fields, and rows naming nobody, are not covered (no one's
+ * record to forge).
+ */
+export function checkHistoryRewrite(
+  registry: SyncEntityRegistry,
+  entityType: string,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Fail | null {
+  if (previous === null || !registry.isAppendOnly(entityType)) return null;
+  const authors = registry.authorFieldsOf(entityType);
+  // A row naming nobody (a background write) is no one's record; naming someone in it needs their
+  // signature (rule 4).
+  if (authors.every((author) => blank(previous[author.field]))) return null;
+  const answered = new Set<string>();
+  for (const author of authors) {
+    if (blank(previous[author.field])) answered.add(author.field);
+    const value = payload[author.field];
+    if (typeof value === "string" && signers.has(value)) {
+      for (const column of [...author.guards, ...(author.vouches ?? [])]) answered.add(column);
+    }
+  }
+  const marksAdded = blank(previous["sync_refused_at"]) && !blank(payload["sync_refused_at"]);
+  for (const column of new Set([...Object.keys(payload), ...Object.keys(previous)])) {
+    if (same(payload[column], previous[column]) || answered.has(column) || BOOKKEEPING_COLUMNS.has(column)) continue;
+    if (marksAdded && REFUSAL_MARK_COLUMNS.has(column) && blank(previous[column])) continue;
+    return fail("history_rewrite_refused", `${entityType} is history: ${column} of a recorded row is never rewritten`);
+  }
+  return null;
+}
+
+/**
+ * A per-site rule (site_settings) moved to another site. A move that names a new author is that
+ * person's change (rule 4 requires their signature). A move keeping the rule's author is only the
+ * publish of a new organisation structure, which moves each rule from a node it deletes to that
+ * node's copy (desktop `org::validation::publish_model_with_remap`): it must be signed (by the
+ * publisher), the former site must be a node deleted on the server and the new site a live node
+ * with the same code. Otherwise a rule turned on in X's name could be carried, unsigned, to a site
+ * X never relaxed.
+ */
+export async function checkSiteRuleMove(
+  ctx: AuthorityCtx,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Promise<Fail | null> {
+  if (previous === null) return null;
+  const from = previous["site_node_sync_id"];
+  const to = payload["site_node_sync_id"];
+  if (same(from, to)) return null;
+  if (signers.size === 0) {
+    return fail("signature_required", "moving a site rule to another site must be signed by the person who does it");
+  }
+  const author = payload["updated_by_sync_id"];
+  if (!blank(author) && !same(author, previous["updated_by_sync_id"])) return null;
+  const former = typeof from === "string" ? await livePayload(ctx, "org_nodes", from) : null;
+  const copy = typeof to === "string" ? await livePayload(ctx, "org_nodes", to) : null;
+  const moved =
+    former !== null &&
+    copy !== null &&
+    !blank(former["deleted_at"]) &&
+    blank(copy["deleted_at"]) &&
+    typeof former["code"] === "string" &&
+    former["code"] !== "" &&
+    former["code"] === copy["code"];
+  return moved
+    ? null
+    : fail(
+        "site_rule_move_refused",
+        "a site rule keeps its author only when a new organisation structure moves it from a deleted node to its copy",
+      );
+}
+
 /**
  * How an accepted item without a maker signature was authenticated by the server, delivered to the
  * PCs so their own arrival checks can accept it: the tenant's founding administrator slot, or a
@@ -418,6 +505,12 @@ export async function judgeItem(
     if (payload) {
       const authors = checkAuthors(registry, item.entity_type, payload, previous, signers);
       if (authors) return authors;
+      const history = checkHistoryRewrite(registry, item.entity_type, payload, previous, signers);
+      if (history) return history;
+      if (item.entity_type === "site_settings") {
+        const move = await checkSiteRuleMove(ctx, payload, previous, signers);
+        if (move) return move;
+      }
     }
   }
 
