@@ -236,14 +236,16 @@ Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an oper
    protocol v2 and signs nothing, so the server judges each of its changes as unsigned
    (`judgeItem`, `api/src/sync/signing-rules.ts`) and refuses: every change to a type that carries
    an authority right (accounts, grants, roles, organisation, settings rights); every delete or
-   archive of a record that names a person (attachments excepted); and every change that sets,
-   changes or clears a person named in an author field, or changes what that person guards or
-   vouches for (`signature_required` / `author_not_signer`: "mettre à jour ce PC"). That covers
-   most entered work: new work orders, intervention requests, inventory transactions, work
-   permits, failure events and PM executions, every approval, sign-off and status step that
-   records who did it, permit-type safety settings and site rules. Changes that leave every named
-   person and what they guard as they were (for example a work order's description) and records
-   that name nobody (for example equipment) keep syncing. A PC on protocol v1 has every change to
+   archive of a record of a type that has author fields (attachments excepted); and every change
+   that sets, changes or clears a person named in an author field, or changes what that person
+   guards or vouches for (`signature_required` / `author_not_signer`; the sync screen shows the
+   refusal, and updating the PC is the remedy). That covers most entered work: new intervention
+   requests, inventory transactions, work permits, failure events and PM executions, every
+   approval, sign-off and validation that records who did it, permit-type safety settings and
+   site rules. Changes that leave every named person and what they guard as they were (for
+   example a new work order with no approval yet, or a work order's description), clearing a
+   last modifier that guards nothing, and records that name nobody (for example equipment) keep
+   syncing. A PC on protocol v1 has every change to
    those 118 of the 237 types refused (`validateUnsignedProtocolType`). Plan the upgrade window
    so that no work is entered on a v0.9.2 PC after the server deploy; after upgrading, check each
    PC's sync screen for refused changes.
