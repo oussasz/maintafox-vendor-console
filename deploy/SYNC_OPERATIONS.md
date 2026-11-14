@@ -231,10 +231,16 @@ Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an oper
    every tenant already activated), recovery-code consumption (every earlier code marked used), and
    the cutover sequence.
 3. **Environment:** nothing new.
-4. **Order:** server first, then every PC of a plant upgraded the same day. From the deploy, a
-   v0.9.2 PC's changes to accounts, grants, roles, permit-type safety settings, site rule events and
-   attachments are refused (`signature_required`: "mettre à jour ce PC"); its ordinary rows keep
-   syncing.
+4. **Order:** server first, then every PC of a plant upgraded the same day, before people work on
+   them again. From the deploy, a v0.9.2 PC can no longer send most of its work: every change to a
+   type that carries an authority right or names a person (an author field) is refused
+   (`signature_required`: "mettre à jour ce PC") — 118 of the 237 synced types, among them work
+   orders, intervention requests, inventory transactions, work permits, failure events and PM
+   executions, as well as accounts, grants, roles, permit-type safety settings and site rule events
+   (`validateUnsignedProtocolType`, `api/src/sync/exchange-v1.ts`). Only records that name nobody
+   (for example equipment) keep syncing. Plan the upgrade window so that no work is entered on a
+   v0.9.2 PC after the server deploy; after upgrading, check each PC's sync screen for refused
+   changes.
 5. Check: `SELECT cutover_seq FROM sync_signing_cutover` returns one row; an upgraded PC's first
    sign-in enrols its user (`sync_user_key_enrolled` in the API log).
 
