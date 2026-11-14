@@ -639,6 +639,13 @@ async function run() {
         ]),
         ["signature_required", "signature_required"],
       );
+      // Nor erase who recorded something (an author without guards).
+      const reading = { gas: "O2", value: 20.9, measured_by_sync_id: "u-tech" };
+      assert.deepEqual(await push(B, [TECH(item("permit_gas_tests", "pgt-1", 1, null, reading))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [item("permit_gas_tests", "pgt-1", 2, 1, { ...reading, measured_by_sync_id: null })]),
+        ["signature_required"],
+      );
 
       // Settings and organisation authorities: plant-wide holders only.
       assert.deepEqual(

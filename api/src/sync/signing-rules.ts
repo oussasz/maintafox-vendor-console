@@ -326,9 +326,11 @@ export function checkAuthors(
       if ((previous !== null || signers.size === 0) && author.guards.some((g) => !blank(payload[g]))) {
         return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
       }
-      // Withdrawing a recorded claim (the author and its guarded columns emptied) is a person's
-      // act: an unsigned item may not wipe it (it would delete the record's attribution unsigned).
-      if (signers.size === 0 && previous !== null && author.guards.length > 0 && !blank(previous[author.field])) {
+      // Emptying a recorded author (with its guarded columns) is a person's act: an unsigned item
+      // may not wipe a record's attribution. Only a last modifier (no guards, vouches for content)
+      // is cleared by a background write that changes what it vouched for.
+      const lastModifier = author.guards.length === 0 && (author.vouches ?? []).length > 0;
+      if (signers.size === 0 && previous !== null && !lastModifier && !blank(previous[author.field])) {
         return fail("signature_required", `withdrawing ${author.field} must be signed by the person who does it`);
       }
       continue;
