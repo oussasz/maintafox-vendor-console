@@ -872,8 +872,12 @@ try {
   for (const t of viaV2) {
     const r = await exchange(B, [item(t, `${t}-1`, 1, null, JSON.stringify({ rule: "three_person_lock_removal", value: true }))]);
     assert.equal(r.acknowledged_items.length, 1, `${t} accepted (v2)`);
-    const u = await exchange(A, [item(t, `${t}-1`, 2, 1, JSON.stringify({ rule: "three_person_lock_removal", value: false }))]);
-    assert.equal(u.acknowledged_items.length, 1, `${t} update accepted (v2)`);
+    // A history row (site_setting_events) is never rewritten: its next change is a new event.
+    const next = registryEntries.find((e) => e.entity_type === t)?.append_only
+      ? item(t, `${t}-2`, 1, null, JSON.stringify({ rule: "three_person_lock_removal", value: false }))
+      : item(t, `${t}-1`, 2, 1, JSON.stringify({ rule: "three_person_lock_removal", value: false }));
+    const u = await exchange(A, [next]);
+    assert.equal(u.acknowledged_items.length, 1, `${t} next change accepted (v2)`);
   }
   for (const t of viaV1) {
     // Not in this server's v2 registry yet (added with the desktop change that stages it): the v1

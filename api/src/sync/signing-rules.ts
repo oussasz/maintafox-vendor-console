@@ -353,15 +353,43 @@ const REFUSAL_MARK_COLUMNS: ReadonlySet<string> = new Set(["sync_refused_at", "s
 const BOOKKEEPING_COLUMNS: ReadonlySet<string> = new Set(["row_version", "updated_at"]);
 
 /**
- * History rows (append-only types) that name who did something are never rewritten. A change of a
- * row the server holds may only change what an author naming a signer guards or vouches for, or add
- * once the refusal marks of the PC that refused a break-in. Its authors never change (an author
- * left empty is never filled in afterwards: no desktop flow does). Anything else is refused, signed or
- * not: an unsigned item keeping the recorded actor would otherwise rewrite that person's record
- * (another site, another action), and a PC that never held the row would apply it (desktops skip
- * rewrites only of rows they hold). Identical re-sends never reach here (duplicate ack) or change
- * nothing. History types without author fields, and rows naming nobody, are not covered (no one's
- * record to forge).
+ * Columns of a notice (notification_events) that its PC refreshes while the notice is still open
+ * (desktop notifications/emitter.rs refresh_event / reopen_event: the same condition raised again).
+ */
+const NOTICE_REFRESH_COLUMNS: ReadonlySet<string> = new Set(["message_key", "message_params_json", "urgency_code", "severity"]);
+
+/**
+ * Whether `item` refreshes a notice last written by the pushing PC (`ownNoticeRefresh` of
+ * checkHistoryRewrite). Notices name nobody and each PC raises its own: a PC may already raise any
+ * notice, so refreshing its own adds nothing; another PC's notice stays as it was received.
+ */
+export async function isOwnNoticeRefresh(
+  db: Database,
+  act: ActivationSyncContext,
+  item: { entity_type: string; entity_sync_id: string },
+): Promise<boolean> {
+  if (item.entity_type !== "notification_events") return false;
+  const row = await db.get<{ origin_machine_fingerprint: string | null }>(
+    `SELECT origin_machine_fingerprint FROM sync_entity_state
+     WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3 AND NOT deleted`,
+    act.tenantId,
+    item.entity_type,
+    item.entity_sync_id,
+  );
+  return row?.origin_machine_fingerprint === act.machineFingerprint;
+}
+
+/**
+ * History rows (every append-only type) are never rewritten once the server holds them, whether
+ * they name someone or nobody (an audit chain stub, a recovery notice, a schedule baseline item):
+ * desktops skip rewrites only of rows they hold, so a PC that never held the row (new or reset)
+ * would apply the rewritten version. A change of a held row may only change what an author naming a
+ * signer guards or vouches for, add once the refusal marks of the PC that refused a break-in, or
+ * (`ownNoticeRefresh`) refresh the texts of the pushing PC's own notice. Its authors never change (an
+ * author left empty is never filled in afterwards: no desktop flow does). Anything else is refused,
+ * signed or not. Identical re-sends never reach here (duplicate ack) or change nothing.
+ * media_attachments is the exception: its overwrites and deletes are kept in the attachment archive
+ * and restorable (attachment-archive.ts; who may remove a photo is KNOWN_LIMITS row 32).
  */
 export function checkHistoryRewrite(
   registry: SyncEntityRegistry,
@@ -369,13 +397,11 @@ export function checkHistoryRewrite(
   payload: Payload,
   previous: Payload | null,
   signers: ReadonlySet<string>,
+  ownNoticeRefresh = false,
 ): Fail | null {
-  if (previous === null || !registry.isAppendOnly(entityType)) return null;
+  if (previous === null || !registry.isAppendOnly(entityType) || ARCHIVED_ATTACHMENT_TYPES.has(entityType)) return null;
   const authors = registry.authorFieldsOf(entityType);
-  // A row naming nobody (a background write) is no one's record; naming someone in it needs their
-  // signature (rule 4).
-  if (authors.every((author) => blank(previous[author.field]))) return null;
-  const answered = new Set<string>();
+  const answered = new Set<string>(ownNoticeRefresh && entityType === "notification_events" ? NOTICE_REFRESH_COLUMNS : []);
   for (const author of authors) {
     const value = payload[author.field];
     if (typeof value === "string" && signers.has(value)) {
@@ -442,6 +468,38 @@ export async function checkSiteRuleMove(
   };
   const formerType = await typeCode(former);
   return typeof formerType === "string" && formerType !== "" && formerType === (await typeCode(copy)) ? null : refuse;
+}
+
+/** The right the desktop's permit-type save requires, plant-wide (commands/permit.rs upsert_permit_type). */
+export const PERMIT_TYPE_EDIT_RIGHT = "ptw.issue";
+
+/**
+ * A permit type's identity: its code and its name. The three-person and energy-isolation settings
+ * are bound to their author (rule 4), but people, permits and plant rules find a type by its code and
+ * name, so a rename would carry a setting to another type ("Confined space" showing the chain of
+ * "Cold work"). The code never changes once the server holds the type (as the desktop save and its
+ * arrival check refuse, permit::queries CODE_PERMIT_TYPE_CODE_LOCKED); a new type, or a new name,
+ * is the signed change of a plant-wide holder of the permit-issue right (the right the desktop save
+ * needs). A PC paired later only sees the type as it is now, so this cannot be judged on arrival.
+ */
+export async function checkPermitTypeIdentity(
+  ctx: AuthorityCtx,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Promise<Fail | null> {
+  if (previous !== null && !same(payload["code"], previous["code"])) {
+    return fail("permit_type_code_locked", "the code of a permit type never changes once it exists");
+  }
+  if (previous !== null && same(payload["name"], previous["name"])) return null;
+  if (signers.size === 0) {
+    return fail("signature_required", "a new permit type, or a new name for one, must be signed by the person who makes it");
+  }
+  const maker = [...signers][0]!;
+  if (!(await holdsTenantRight(ctx, maker, PERMIT_TYPE_EDIT_RIGHT))) {
+    return fail("authority_refused", `creating or renaming a permit type needs ${PERMIT_TYPE_EDIT_RIGHT} plant-wide`);
+  }
+  return null;
 }
 
 /**
@@ -514,17 +572,22 @@ export async function judgeItem(
   if (item.operation !== "delete") {
     // Every operation that carries a row (create, update, upsert, archive) is author-checked; a
     // type that must be signed carries an object payload.
-    if (authorChecked && !payload) {
+    if ((authorChecked || registry.isAppendOnly(item.entity_type)) && !payload) {
       return fail("invalid_payload", `${item.entity_type} payload_json must be a JSON object`);
     }
     if (payload) {
       const authors = checkAuthors(registry, item.entity_type, payload, previous, signers);
       if (authors) return authors;
-      const history = checkHistoryRewrite(registry, item.entity_type, payload, previous, signers);
+      const ownRefresh = previous !== null && (await isOwnNoticeRefresh(ctx.db, act, item));
+      const history = checkHistoryRewrite(registry, item.entity_type, payload, previous, signers, ownRefresh);
       if (history) return history;
       if (item.entity_type === "site_settings") {
         const move = await checkSiteRuleMove(ctx, payload, previous, signers);
         if (move) return move;
+      }
+      if (item.entity_type === "permit_types") {
+        const identity = await checkPermitTypeIdentity(ctx, payload, previous, signers);
+        if (identity) return identity;
       }
     }
   }

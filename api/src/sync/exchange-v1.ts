@@ -15,8 +15,17 @@ import { initialCheckpointToken, nextCheckpointToken, shouldAdvanceCheckpoint } 
 import { PayloadCipher, responseAad } from "./payload-crypto.js";
 import type { SyncEntityRegistry } from "./registry.js";
 import { recordAcceptedChange } from "./attachment-archive.js";
-import { closeFoundingSlotForOtherDevice } from "./signing-rules.js";
-import { deliveredPayload, insertIngress, lockTenantSync, logRejection, upsertEntityState, type IngressInsert } from "./store.js";
+import { parsePayloadObject } from "./authority.js";
+import { checkHistoryRewrite, closeFoundingSlotForOtherDevice, isOwnNoticeRefresh } from "./signing-rules.js";
+import {
+  deliveredPayload,
+  getEntityState,
+  insertIngress,
+  lockTenantSync,
+  logRejection,
+  upsertEntityState,
+  type IngressInsert,
+} from "./store.js";
 import {
   normalizePayloadHash,
   SYNC_INBOUND_BATCH_LIMIT,
@@ -31,10 +40,38 @@ import {
 import {
   shouldRedactPayloadLog,
   toRejected,
+  type ItemValidationFail,
+  type ItemValidationOk,
   validateOperationForType,
   validateOutboxItem,
   validateUnsignedProtocolType,
 } from "./validate.js";
+
+/**
+ * History rows on protocol v1 (no signatures): the same rule as v2 (signing-rules.ts
+ * checkHistoryRewrite): a held append-only row is never rewritten, only re-sent unchanged.
+ */
+async function judgeV1History(
+  db: Database,
+  deps: { registry: SyncEntityRegistry; cipher: PayloadCipher },
+  act: ActivationSyncContext,
+  item: SyncExchangeRequest["outbox_batch"][number],
+): Promise<ItemValidationOk | ItemValidationFail> {
+  const entityType = item.entity_type.trim();
+  if (!deps.registry.isAppendOnly(entityType) || item.operation === "delete" || item.operation === "archive") {
+    return { ok: true };
+  }
+  const payload = parsePayloadObject(item.payload_json);
+  if (!payload) {
+    return { ok: false, rejection_code: "invalid_payload", rejection_message: `${entityType} payload_json must be a JSON object` };
+  }
+  const state = await getEntityState(db, deps.cipher, act.tenantId, entityType, item.entity_sync_id);
+  const previous = state && !state.deleted ? parsePayloadObject(state.payload_raw) : null;
+  const target = { entity_type: entityType, entity_sync_id: item.entity_sync_id };
+  const ownRefresh = previous !== null && (await isOwnNoticeRefresh(db, act, target));
+  const verdict = checkHistoryRewrite(deps.registry, entityType, payload, previous, new Set(), ownRefresh);
+  return verdict ? { ok: false, rejection_code: verdict.code, rejection_message: verdict.message } : { ok: true };
+}
 
 export function newBatchId(): string {
   return `batch_${randomBytes(8).toString("hex")}`;
@@ -98,7 +135,8 @@ export async function runSyncExchangeV1(
       // Format rules, then the operation rule (a delete of an append-only registry type is refused).
       const formatCheck = validateOutboxItem(item);
       const operationCheck = formatCheck.ok ? validateOperationForType(item, deps.registry) : formatCheck;
-      const validation = operationCheck.ok ? validateUnsignedProtocolType(item, deps.registry) : operationCheck;
+      const typeCheck = operationCheck.ok ? validateUnsignedProtocolType(item, deps.registry) : operationCheck;
+      const validation = typeCheck.ok ? await judgeV1History(db, deps, act, item) : typeCheck;
       if (!validation.ok) {
         rejected_items.push(toRejected(item, validation.rejection_code, validation.rejection_message));
         await logRejection(db, {

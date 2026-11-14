@@ -411,6 +411,7 @@ async function run() {
       const nobody = await enrol(A, T, newKey("u-nobody"), "whatever");
       assert.deepEqual([nobody.status, nobody.json.error], [403, "enrolment_refused"], "unknown user, same refusal");
     }
+    const lockKeyA = newKey("u-lock");
     {
       // Five failures on one PC lock that PC out for that user; another PC is only slowed down.
       for (let i = 0; i < 5; i += 1) {
@@ -419,7 +420,7 @@ async function run() {
       }
       const locked = await enrol(B, T, newKey("u-lock"), lockPw);
       assert.deepEqual([locked.status, locked.json.error], [429, "enrolment_locked"], "per-device lockout");
-      const elsewhere = await enrol(A, T, newKey("u-lock"), lockPw);
+      const elsewhere = await enrol(A, T, lockKeyA, lockPw);
       assert.equal(elsewhere.status, 200, "no per-user lockout");
 
       // Parallel attempts cannot get past the per-device lockout (each is recorded before Argon2).
@@ -438,6 +439,28 @@ async function run() {
     const techKeyB = newKey("u-tech");
     assert.equal((await enrol(B, T, techKeyB, techPw)).status, 200);
     const TECH = (it) => signed(T, it, techKeyB);
+    /** Signs as u-lock, an ordinary user without any right (enrolled on A above). */
+    const LOCK = (it) => signed(T, it, lockKeyA);
+    // u-tech issues permits (ptw.issue plant-wide, the right that creates and renames permit types),
+    // and holds nothing else.
+    assert.deepEqual(
+      await push(A, [
+        ADM(item("roles", "role-ptw", 1, null, { name: "Permit issuers", deleted_at: null })),
+        ADM(item("role_permissions", "rp-ptw", 1, null, { role_sync_id: "role-ptw", permission_key: "ptw.issue", deleted_at: null })),
+        ADM(
+          item("user_scope_assignments", "usa-tech-ptw", 1, null, {
+            user_sync_id: "u-tech",
+            role_sync_id: "role-ptw",
+            scope_type: "tenant",
+            is_emergency: 0,
+            deleted_at: null,
+            valid_from: null,
+            valid_to: null,
+          }),
+        ),
+      ]),
+      ["ack", "ack", "ack"],
+    );
 
     // ── Forged actor, valid signed change, delivery ───────────────────────────────────────
     {
@@ -528,6 +551,31 @@ async function run() {
       const moved = { ...item("permit_types", "pt-2", 1, null, p1), signatures: create.signatures };
       const bumped = { ...item("permit_types", "pt-1", 3, 2, p2), signatures: update.signatures };
       assert.deepEqual(await push(B, [moved, bumped]), ["signature_invalid", "signature_invalid"]);
+
+      // A type's identity (row 33): its code never changes; a new type or a new name is the signed
+      // change of a plant-wide permit issuer, so a rename cannot carry a type's chain to another.
+      const hot = { ...p2, code: "HOT" };
+      assert.deepEqual(await push(B, [TECH(item("permit_types", "pt-id", 1, null, hot))]), ["ack"]);
+      assert.deepEqual(
+        await push(A, [
+          item("permit_types", "pt-id", 2, 1, { ...hot, name: "Confined space" }),
+          LOCK(item("permit_types", "pt-id", 2, 1, { ...hot, name: "Confined space" })),
+          ADM(item("permit_types", "pt-id", 2, 1, { ...hot, code: "CS" })),
+          ADM(item("permit_types", "pt-id", 2, 1, { ...hot, code: null })),
+          LOCK(item("permit_types", "pt-new", 1, null, { ...p1, code: "CS", name: "Confined space" })),
+          item("permit_types", "pt-new", 1, null, { code: "CS", name: "Confined space" }),
+        ]),
+        ["signature_required", "authority_refused", "permit_type_code_locked", "permit_type_code_locked", "authority_refused", "signature_required"],
+        "renamed or created only by a permit issuer; the code is fixed",
+      );
+      assert.deepEqual(
+        await push(B, [
+          item("permit_types", "pt-id", 2, 1, { ...hot, max_duration_hours: 4 }),
+          TECH(item("permit_types", "pt-id", 3, 2, { ...hot, max_duration_hours: 4, name: "Hot work (welding)" })),
+        ]),
+        ["ack", "ack"],
+        "an edit keeping the name needs no signer; a permit issuer renames",
+      );
     }
 
     // ── Unsigned (background) writes, vouched content, settings authorities (§5 rules 3–5) ──
@@ -724,6 +772,69 @@ async function run() {
         ["history_rewrite_refused"],
       );
 
+      // History naming nobody (S4): a background event, an audit chain stub, a recovery notice, a
+      // schedule baseline item are never rewritten either, signed or not, on v2 or v1.
+      const stub = { chain_origin: "pc-1", chain_seq: 7, chain_hash: "aa" };
+      const notice = { audit_event_sync_id: "ae-1", summary: "recovered" };
+      const baseline = { weekly_schedule_sync_id: "ws-1", work_order_sync_id: "wo-1", planned_hours: 4 };
+      assert.deepEqual(
+        await push(B, [
+          item("audit_chain_stubs", "acs-1", 1, null, stub),
+          item("admin_recovery_notices", "arn-1", 1, null, notice),
+          item("weekly_schedule_baseline_items", "wsb-1", 1, null, baseline),
+        ]),
+        ["ack", "ack", "ack"],
+      );
+      assert.deepEqual(
+        await push(B, [
+          item("audit_chain_stubs", "acs-1", 2, 1, { ...stub, chain_hash: "bb" }),
+          TECH(item("admin_recovery_notices", "arn-1", 2, 1, { ...notice, summary: "nothing happened" })),
+          item("weekly_schedule_baseline_items", "wsb-1", 2, 1, { ...baseline, planned_hours: 40 }),
+          item("site_setting_events", "sse-background", 2, 1, { setting_key: "self_approval", value: "on", changed_by_sync_id: null }),
+          item("audit_chain_stubs", "acs-1", 2, 1, "[1]"),
+        ]),
+        ["history_rewrite_refused", "history_rewrite_refused", "history_rewrite_refused", "history_rewrite_refused", "invalid_payload"],
+        "a held history row naming nobody is never rewritten",
+      );
+      assert.deepEqual(
+        await push(B, [item("audit_chain_stubs", "acs-1", 2, 1, stub)]),
+        ["ack"],
+        "re-sent unchanged",
+      );
+      const v1Rewrite = await post("/api/v1/sync/exchange", B, {
+        protocol_version: "v1",
+        idempotency_key: `v1-${randomUUID()}`,
+        checkpoint_token: null,
+        outbox_batch: [item("weekly_schedule_baseline_items", "wsb-1", 3, null, { ...baseline, planned_hours: 40 })].map((i) => ({
+          idempotency_key: i.idempotency_key,
+          entity_type: i.entity_type,
+          entity_sync_id: i.entity_sync_id,
+          operation: i.operation,
+          row_version: i.row_version,
+          payload_json: i.payload_json,
+          payload_hash: i.payload_hash,
+        })),
+      });
+      assert.equal(v1Rewrite.status, 200, JSON.stringify(v1Rewrite.json));
+      assert.deepEqual(v1Rewrite.json.rejected_items.map((r) => r.rejection_code), ["history_rewrite_refused"], "nor on v1");
+      // A notice: the PC that raised it refreshes its texts while it is open; nothing else changes,
+      // and another PC never rewrites it.
+      const raised = { event_code: "di_in_review", category_code: "di", message_key: "di.review", message_params_json: '{"n":1}', urgency_code: "normal", severity: "info" };
+      assert.deepEqual(await push(B, [item("notification_events", "ne-1", 1, null, raised)]), ["ack"]);
+      assert.deepEqual(
+        await push(A, [item("notification_events", "ne-1", 2, 1, { ...raised, message_params_json: '{"n":2}' })]),
+        ["history_rewrite_refused"],
+        "another PC's notice",
+      );
+      assert.deepEqual(
+        await push(B, [
+          item("notification_events", "ne-1", 2, 1, { ...raised, event_code: "wo_closed" }),
+          item("notification_events", "ne-1", 2, 1, { ...raised, message_params_json: '{"n":2}', urgency_code: "high", severity: "warning" }),
+        ]),
+        ["history_rewrite_refused", "ack"],
+        "its own notice's texts only",
+      );
+
       // A per-site rule turned on in the administrator's name, moved to another site.
       assert.deepEqual(
         await push(A, [
@@ -752,6 +863,11 @@ async function run() {
         ]),
         ["signature_required", "site_rule_move_refused"],
         "never moved unsigned; moved keeping its author only off a deleted node",
+      );
+      assert.deepEqual(
+        await push(A, [ADM(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" }))]),
+        ["site_rule_move_refused"],
+        "not even by the plant-wide org.admin publisher while the former node is still live",
       );
       assert.deepEqual(
         await push(A, [
