@@ -33,6 +33,21 @@ const SyncExchangeOutboxItemV2 = z
     owner_user_sync_id: z.string().min(1).max(256).nullable().optional(),
     payload_json: z.string().min(1),
     payload_hash: z.string().min(1).max(128),
+    /** Per-user signatures (sync-signing-design.md §7); the first one is the maker. */
+    signatures: z
+      .array(
+        z
+          .object({
+            user_sync_id: z.string().min(1).max(256),
+            key_id: z.string().regex(/^[0-9a-f]{32}$/),
+            signature: z.string().min(1).max(128),
+          })
+          .strict(),
+      )
+      .max(8)
+      .optional(),
+    /** Full signed vendor recovery code, only on the two items of a recovery (design §8). */
+    recovery_code: z.string().min(1).max(4096).optional(),
   })
   .strict();
 

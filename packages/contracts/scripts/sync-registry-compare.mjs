@@ -7,7 +7,29 @@
  * server-entity-allowlist.v2.json) with its scope and whether its conflict_policy is append_only
  * (its entity-registry.json, generated from registry.rs). A type the desktop registry does not list
  * (a local-only table) counts as not append-only.
+ *
+ * Per-user signing (sync-signing-design.md v9 §5): the allowlist also carries, per type,
+ * `author_fields` ([{field, guards, vouches?}]), `authority` ("adm.users" | "adm.roles") and `server_only`
+ * (true for types only the server publishes). They must match the server registry exactly, or the
+ * server would judge authors/authority on a stale list.
  */
+
+/** The signing fields of one registry entry, normalised (absent when not set). */
+export function signingFields(e) {
+  const out = {};
+  if (Array.isArray(e.author_fields) && e.author_fields.length > 0) {
+    out.author_fields = e.author_fields
+      .map((a) => ({
+        field: a.field,
+        guards: [...(a.guards ?? [])].sort(),
+        ...(Array.isArray(a.vouches) && a.vouches.length > 0 ? { vouches: [...a.vouches].sort() } : {}),
+      }))
+      .sort((x, y) => (x.field < y.field ? -1 : x.field > y.field ? 1 : 0));
+  }
+  if (e.authority !== undefined && e.authority !== null) out.authority = e.authority;
+  if (e.server_only === true) out.server_only = true;
+  return out;
+}
 
 /** Desktop allowlist + entity registry → { protocol_version, entity_types: [{ entity_type, scope, append_only }] }, sorted. */
 export function desktopRegistryView(allowlistDoc, entityRegistryDoc) {
@@ -19,7 +41,12 @@ export function desktopRegistryView(allowlistDoc, entityRegistryDoc) {
   for (const e of allowlistDoc.entity_types) {
     if (seen.has(e.entity_type)) throw new Error(`desktop allowlist: ${e.entity_type} is listed twice`);
     seen.add(e.entity_type);
-    entityTypes.push({ entity_type: e.entity_type, scope: e.scope, append_only: appendOnly.has(e.entity_type) });
+    entityTypes.push({
+      entity_type: e.entity_type,
+      scope: e.scope,
+      append_only: appendOnly.has(e.entity_type),
+      ...signingFields(e),
+    });
   }
   entityTypes.sort((a, b) => (a.entity_type < b.entity_type ? -1 : a.entity_type > b.entity_type ? 1 : 0));
   return { protocol_version: allowlistDoc.protocol_version, entity_types: entityTypes };
@@ -53,6 +80,13 @@ export function compareServerToDesktop(serverDoc, desktopView) {
       continue;
     }
     if (s.scope !== d.scope) problems.push(`${type}: scope ${s.scope} on the server, ${d.scope} on the desktop`);
+    const sSign = signingFields(s);
+    const dSign = signingFields(d);
+    for (const key of ["author_fields", "authority", "server_only"]) {
+      const sv = JSON.stringify(sSign[key] ?? null);
+      const dv = JSON.stringify(dSign[key] ?? null);
+      if (sv !== dv) problems.push(`${type}: ${key} ${sv} on the server, ${dv} on the desktop`);
+    }
   }
   for (const [type, s] of server) {
     if (!desk.has(type)) problems.push(`${type}: in the server registry, not in the desktop allowlist`);
