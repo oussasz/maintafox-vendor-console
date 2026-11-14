@@ -695,34 +695,55 @@ async function run() {
         ]),
         ["history_rewrite_refused"],
       );
-      // A break-in: an approval added later by its approver, the refusing PC's marks once.
+      // A break-in: no approver added afterwards; the refusing PC's marks once.
       const breakIn = { reason: "urgent", created_by_sync_id: "u-tech", approved_by_user_sync_id: null, approver_signed_at: null, sync_refused_at: null, sync_refused_reason: null };
       const approved = { ...breakIn, approved_by_user_sync_id: "u-admin", approver_signed_at: "2026-11-14T08:00:00Z" };
-      const refused = { ...approved, sync_refused_at: "2026-11-14T09:00:00Z", sync_refused_reason: "week frozen" };
+      const refused = { ...breakIn, sync_refused_at: "2026-11-14T09:00:00Z", sync_refused_reason: "week frozen" };
       assert.deepEqual(await push(B, [TECH(item("schedule_break_ins", "sbi-1", 1, null, breakIn))]), ["ack"]);
-      assert.deepEqual(await push(A, [ADM(item("schedule_break_ins", "sbi-1", 2, 1, approved))]), ["ack"]);
       assert.deepEqual(
-        await push(B, [item("schedule_break_ins", "sbi-1", 3, 2, { ...refused, reason: "planned" })]),
+        await push(A, [ADM(item("schedule_break_ins", "sbi-1", 2, 1, approved))]),
+        ["history_rewrite_refused"],
+        "an author left empty is never filled in afterwards",
+      );
+      assert.deepEqual(
+        await push(B, [item("schedule_break_ins", "sbi-1", 2, 1, { ...refused, reason: "planned" })]),
         ["history_rewrite_refused"],
         "refusal marks bring nothing else",
       );
-      assert.deepEqual(await push(B, [item("schedule_break_ins", "sbi-1", 3, 2, refused)]), ["ack"]);
+      assert.deepEqual(await push(B, [item("schedule_break_ins", "sbi-1", 2, 1, refused)]), ["ack"]);
       assert.deepEqual(
-        await push(B, [item("schedule_break_ins", "sbi-1", 4, 3, { ...refused, sync_refused_reason: "other" })]),
+        await push(B, [item("schedule_break_ins", "sbi-1", 3, 2, { ...refused, sync_refused_reason: "other" })]),
         ["history_rewrite_refused"],
         "marks are added once, never rewritten",
+      );
+      // Refusal marks exist on break-ins only.
+      assert.deepEqual(
+        await push(B, [
+          item("audit_events", "ae-1", 2, 1, { ...event, sync_refused_at: "2026-11-14T09:00:00Z", sync_refused_reason: "x" }),
+        ]),
+        ["history_rewrite_refused"],
       );
 
       // A per-site rule turned on in the administrator's name, moved to another site.
       assert.deepEqual(
         await push(A, [
-          ADM(item("org_nodes", "on-a", 1, null, { code: "SITE-A", name: "Site A", deleted_at: null })),
-          ADM(item("org_nodes", "on-b", 1, null, { code: "SITE-B", name: "Site B", deleted_at: null })),
-          ADM(item("org_nodes", "on-a2", 1, null, { code: "SITE-A", name: "Site A", deleted_at: null })),
+          ADM(item("org_node_types", "nt-site", 1, null, { code: "SITE", label: "Site" })),
+          ADM(item("org_node_types", "nt-site2", 1, null, { code: "SITE", label: "Site" })),
+          ADM(item("org_node_types", "nt-area", 1, null, { code: "AREA", label: "Zone" })),
+          ADM(item("org_nodes", "on-a", 1, null, { code: "SITE-A", name: "Site A", node_type_sync_id: "nt-site", deleted_at: null })),
+          ADM(item("org_nodes", "on-b", 1, null, { code: "SITE-B", name: "Site B", node_type_sync_id: "nt-site2", deleted_at: null })),
+          ADM(item("org_nodes", "on-a2", 1, null, { code: "SITE-A", name: "Site A", node_type_sync_id: "nt-site2", deleted_at: null })),
+          ADM(item("org_nodes", "on-a3", 1, null, { code: "SITE-A", name: "Site A", node_type_sync_id: "nt-area", deleted_at: null })),
         ]),
-        ["ack", "ack", "ack"],
+        ["ack", "ack", "ack", "ack", "ack", "ack", "ack"],
       );
-      const rule = { site_node_sync_id: "on-a", setting_key: "permit.self_approval", value_json: "true", updated_by_sync_id: "u-admin" };
+      const rule = {
+        site_node_sync_id: "on-a",
+        setting_key: "permit.self_approval",
+        value_json: "true",
+        updated_by_sync_id: "u-admin",
+        updated_at: "2026-11-14T07:00:00Z",
+      };
       assert.deepEqual(await push(A, [ADM(item("site_settings", "ss-mv", 1, null, rule))]), ["ack"]);
       assert.deepEqual(
         await push(B, [
@@ -733,16 +754,27 @@ async function run() {
         "never moved unsigned; moved keeping its author only off a deleted node",
       );
       assert.deepEqual(
-        await push(A, [ADM(item("org_nodes", "on-a", 2, 1, { code: "SITE-A", name: "Site A", deleted_at: "2026-11-14T10:00:00Z" }))]),
+        await push(A, [
+          ADM(item("org_nodes", "on-a", 2, 1, { code: "SITE-A", name: "Site A", node_type_sync_id: "nt-site", deleted_at: "2026-11-14T10:00:00Z" })),
+        ]),
         ["ack"],
       );
       assert.deepEqual(
-        await push(B, [TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-b" }))]),
+        await push(B, [TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" }))]),
         ["site_rule_move_refused"],
-        "only to the deleted node's copy",
+        "a structure is published by a plant-wide org.admin holder",
       );
       assert.deepEqual(
-        await push(B, [TECH(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" }))]),
+        await push(A, [
+          ADM(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-b" })),
+          ADM(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a3" })),
+          ADM(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2", updated_at: "2026-11-14T11:00:00Z" })),
+        ]),
+        ["site_rule_move_refused", "site_rule_move_refused", "site_rule_move_refused"],
+        "only to the deleted node's copy (same code and node type), keeping the rule's time",
+      );
+      assert.deepEqual(
+        await push(A, [ADM(item("site_settings", "ss-mv", 2, 1, { ...rule, site_node_sync_id: "on-a2" }))]),
         ["ack"],
         "the publish of a new structure moves the rule to its node's copy",
       );

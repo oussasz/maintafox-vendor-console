@@ -24,6 +24,7 @@ import { loadEntitlementSigningKey } from "../entitlement-signer.js";
 import { ARCHIVED_ATTACHMENT_TYPES } from "./attachment-archive.js";
 import {
   ELEVATED_ADMIN_ROLES,
+  holdsTenantRight,
   judgeAuthorityChange,
   livePayload,
   parsePayloadObject,
@@ -342,16 +343,20 @@ export function checkAuthors(
   return null;
 }
 
-/** Refusal marks a PC records on a received history row it refused (desktop planning::sync_check). */
+/**
+ * Refusal marks a PC records on a received break-in it refused (desktop planning::sync_check
+ * REFUSAL_COLUMNS, written while applying, unsigned): the only history type that carries them.
+ */
+const REFUSAL_MARK_TYPES: ReadonlySet<string> = new Set(["schedule_break_ins"]);
 const REFUSAL_MARK_COLUMNS: ReadonlySet<string> = new Set(["sync_refused_at", "sync_refused_reason"]);
 /** Bookkeeping columns a re-send may carry with another value; they record nobody's act. */
 const BOOKKEEPING_COLUMNS: ReadonlySet<string> = new Set(["row_version", "updated_at"]);
 
 /**
  * History rows (append-only types) that name who did something are never rewritten. A change of a
- * row the server holds may only: set an author that was empty (an approval added later: rule 4
- * requires that person's signature), change what an author naming a signer guards or vouches for,
- * or add the refusal marks of the PC that refused the row. Anything else is refused, signed or
+ * row the server holds may only change what an author naming a signer guards or vouches for, or add
+ * once the refusal marks of the PC that refused a break-in. Its authors never change (an author
+ * left empty is never filled in afterwards: no desktop flow does). Anything else is refused, signed or
  * not: an unsigned item keeping the recorded actor would otherwise rewrite that person's record
  * (another site, another action), and a PC that never held the row would apply it (desktops skip
  * rewrites only of rows they hold). Identical re-sends never reach here (duplicate ack) or change
@@ -372,13 +377,13 @@ export function checkHistoryRewrite(
   if (authors.every((author) => blank(previous[author.field]))) return null;
   const answered = new Set<string>();
   for (const author of authors) {
-    if (blank(previous[author.field])) answered.add(author.field);
     const value = payload[author.field];
     if (typeof value === "string" && signers.has(value)) {
       for (const column of [...author.guards, ...(author.vouches ?? [])]) answered.add(column);
     }
   }
-  const marksAdded = blank(previous["sync_refused_at"]) && !blank(payload["sync_refused_at"]);
+  const marksAdded =
+    REFUSAL_MARK_TYPES.has(entityType) && blank(previous["sync_refused_at"]) && !blank(payload["sync_refused_at"]);
   for (const column of new Set([...Object.keys(payload), ...Object.keys(previous)])) {
     if (same(payload[column], previous[column]) || answered.has(column) || BOOKKEEPING_COLUMNS.has(column)) continue;
     if (marksAdded && REFUSAL_MARK_COLUMNS.has(column) && blank(previous[column])) continue;
@@ -391,9 +396,10 @@ export function checkHistoryRewrite(
  * A per-site rule (site_settings) moved to another site. A move that names a new author is that
  * person's change (rule 4 requires their signature). A move keeping the rule's author is only the
  * publish of a new organisation structure, which moves each rule from a node it deletes to that
- * node's copy (desktop `org::validation::publish_model_with_remap`): it must be signed (by the
- * publisher), the former site must be a node deleted on the server and the new site a live node
- * with the same code. Otherwise a rule turned on in X's name could be carried, unsigned, to a site
+ * node's copy, keeping its value, time and author (desktop `org::validation::publish_model_with_remap`):
+ * it must be signed by a plant-wide holder of org.admin (the publisher), keep the rule's time, and go
+ * from a node deleted on the server to a live node with the same code and the same node-type code
+ * (the desktop judges the structure models on arrival as well). Otherwise a rule turned on in X's name could be carried, unsigned, to a site
  * X never relaxed.
  */
 export async function checkSiteRuleMove(
@@ -411,6 +417,13 @@ export async function checkSiteRuleMove(
   }
   const author = payload["updated_by_sync_id"];
   if (!blank(author) && !same(author, previous["updated_by_sync_id"])) return null;
+  const refuse = fail(
+    "site_rule_move_refused",
+    "a site rule keeps its author only when a new organisation structure moves it from a deleted node to its copy",
+  );
+  if (!same(payload["updated_at"], previous["updated_at"])) return refuse;
+  const publisher = [...signers][0]!;
+  if (!(await holdsTenantRight(ctx, publisher, "org.admin"))) return refuse;
   const former = typeof from === "string" ? await livePayload(ctx, "org_nodes", from) : null;
   const copy = typeof to === "string" ? await livePayload(ctx, "org_nodes", to) : null;
   const moved =
@@ -421,12 +434,14 @@ export async function checkSiteRuleMove(
     typeof former["code"] === "string" &&
     former["code"] !== "" &&
     former["code"] === copy["code"];
-  return moved
-    ? null
-    : fail(
-        "site_rule_move_refused",
-        "a site rule keeps its author only when a new organisation structure moves it from a deleted node to its copy",
-      );
+  if (!moved) return refuse;
+  const typeCode = async (node: Payload): Promise<unknown> => {
+    const typeSyncId = node["node_type_sync_id"];
+    const type = typeof typeSyncId === "string" ? await livePayload(ctx, "org_node_types", typeSyncId) : null;
+    return type?.["code"];
+  };
+  const formerType = await typeCode(former);
+  return typeof formerType === "string" && formerType !== "" && formerType === (await typeCode(copy)) ? null : refuse;
 }
 
 /**
