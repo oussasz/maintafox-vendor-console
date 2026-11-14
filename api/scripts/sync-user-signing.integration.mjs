@@ -530,6 +530,119 @@ async function run() {
       assert.deepEqual(await push(B, [moved, bumped]), ["signature_invalid", "signature_invalid"]);
     }
 
+    // ── Unsigned (background) writes, vouched content, settings authorities (§5 rules 3–5) ──
+    {
+      // A guard switched off without a signature, whether the author is kept or cleared.
+      const p2 = { name: "Hot work", requires_three_person_removal: 1, three_person_changed_by_sync_id: "u-tech" };
+      assert.deepEqual(
+        await push(B, [
+          item("permit_types", "pt-1", 3, 2, { ...p2, requires_three_person_removal: 0 }),
+          item("permit_types", "pt-1", 3, 2, { ...p2, requires_three_person_removal: 0, three_person_changed_by_sync_id: null }),
+        ]),
+        ["author_not_signer", "author_not_signer"],
+        "an unsigned item cannot switch a permit type's guard off",
+      );
+
+      // A per-site safety rule: its value needs the signature of the person it names.
+      const rule = { site_node_sync_id: "site-1", setting_key: "permit.self_approval", value_json: "false", updated_by_sync_id: "u-tech" };
+      assert.deepEqual(await push(B, [TECH(item("site_settings", "ss-1", 1, null, rule))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [
+          item("site_settings", "ss-1", 2, 1, { ...rule, value_json: "true" }),
+          item("site_settings", "ss-1", 2, 1, { ...rule, value_json: "true", updated_by_sync_id: null }),
+          item("site_settings", "ss-2", 1, null, { ...rule, updated_by_sync_id: null }),
+        ]),
+        ["author_not_signer", "author_not_signer", "author_not_signer"],
+        "a site rule is never changed or created unsigned, nor left credited to its last editor",
+      );
+      assert.deepEqual(
+        await push(A, [ADM(item("site_settings", "ss-1", 2, 1, { ...rule, value_json: "true", updated_by_sync_id: "u-admin" }))]),
+        ["ack"],
+      );
+
+      // A plant setting: the last modifier vouches for the value; a background write names nobody.
+      const setting = { setting_key: "wo.reopen_window_days", setting_scope: "tenant", setting_value_json: "5", last_modified_by_sync_id: "u-tech" };
+      assert.deepEqual(await push(B, [TECH(item("app_settings", "as-1", 1, null, setting))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [item("app_settings", "as-1", 2, 1, { ...setting, setting_value_json: "9" })]),
+        ["author_not_signer"],
+        "an unsigned value change is not credited to the last modifier",
+      );
+      assert.deepEqual(
+        await push(B, [item("app_settings", "as-1", 2, 1, { ...setting, setting_value_json: "9", last_modified_by_sync_id: null })]),
+        ["ack"],
+        "a background write clears the modifier",
+      );
+
+      // HSE approval vouches for the permit's safety content.
+      const permit = {
+        title: "Hot work on line 2",
+        work_description: "Weld bracket",
+        hse_approved_by_sync_id: "u-tech",
+        hse_approved_at: "2026-11-13T09:00:00Z",
+        hse_approval_note: "ok",
+        hse_self_approved: 0,
+      };
+      assert.deepEqual(await push(B, [TECH(item("work_permits", "wp-1", 1, null, permit))]), ["ack"]);
+      const withdrawn = { ...permit, work_description: "Cut and weld", hse_approved_by_sync_id: null, hse_approved_at: null, hse_approval_note: null, hse_self_approved: null };
+      assert.deepEqual(
+        await push(B, [
+          item("work_permits", "wp-1", 2, 1, { ...permit, work_description: "Cut and weld" }),
+          item("work_permits", "wp-1", 2, 1, withdrawn),
+        ]),
+        ["author_not_signer", "ack"],
+        "changed safety content needs its HSE approver, unless the approval is withdrawn with it",
+      );
+
+      // Count line: self_approved is vouched for by the approver. An unsigned change clearing the
+      // approver may leave it set; the PCs refuse such a line on arrival
+      // (inventory/count_four_eyes.rs, SYNC_APPROVAL_RECORD_INVALID).
+      const line = { counted_qty: 4, counted_by_sync_id: "u-tech", approved_by_sync_id: "u-tech", approved_at: "2026-11-13T10:00:00Z", approval_note: "ok", self_approved: 0 };
+      assert.deepEqual(await push(B, [TECH(item("inventory_count_lines", "icl-1", 1, null, line))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [
+          item("inventory_count_lines", "icl-1", 2, 1, { ...line, self_approved: 1 }),
+          item("inventory_count_lines", "icl-1", 2, 1, { ...line, approved_by_sync_id: null, approved_at: null, approval_note: null, self_approved: 1 }),
+        ]),
+        ["author_not_signer", "ack"],
+      );
+
+      // Creates and deletes: an unsigned create may not carry a guarded claim nobody answers for;
+      // deleting a record that names people needs its maker (attachments are archived instead).
+      const claim = { code: "WO-C", validated_at: "2026-11-13T11:00:00Z", validated_by_sync_id: null };
+      assert.deepEqual(
+        await push(B, [
+          item("work_orders", "wo-claim", 1, null, claim),
+          TECH(item("work_orders", "wo-claim-signed", 1, null, claim)),
+          item("work_orders", "wo-background", 1, null, { code: "WO-B" }),
+        ]),
+        ["author_not_signer", "ack", "ack"],
+      );
+      assert.deepEqual(
+        await push(B, [
+          item("work_orders", "wo-background", 2, 1, { code: "WO-B" }, { operation: "delete" }),
+          TECH(item("work_orders", "wo-claim-signed", 2, 1, claim, { operation: "delete" })),
+        ]),
+        ["signature_required", "ack"],
+      );
+
+      // Settings and organisation authorities: plant-wide holders only.
+      assert.deepEqual(
+        await push(B, [
+          TECH(item("org_nodes", "on-1", 1, null, { name: "Plant 2" })),
+          TECH(item("rbac_settings", "rbs-1", 1, null, { key: "session.idle_minutes", value: "30" })),
+        ]),
+        ["authority_refused", "authority_refused"],
+      );
+      assert.deepEqual(
+        await push(A, [
+          ADM(item("org_nodes", "on-1", 1, null, { name: "Plant 2" })),
+          ADM(item("rbac_settings", "rbs-1", 1, null, { key: "session.idle_minutes", value: "30" })),
+        ]),
+        ["ack", "ack"],
+      );
+    }
+
     // ── Server-only type, payload bytes ───────────────────────────────────────────────────
     {
       assert.deepEqual(

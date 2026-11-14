@@ -21,6 +21,7 @@ import {
 } from "../admin-recovery-signer.js";
 import type { Database } from "../db/database.js";
 import { loadEntitlementSigningKey } from "../entitlement-signer.js";
+import { ARCHIVED_ATTACHMENT_TYPES } from "./attachment-archive.js";
 import {
   ELEVATED_ADMIN_ROLES,
   judgeAuthorityChange,
@@ -318,10 +319,11 @@ export function checkAuthors(
     const vouchedChanged = (author.vouches ?? []).some((g) => !same(payload[g], previous?.[g]));
     if (!fieldChanged && !guardsChanged && !vouchedChanged) continue;
     if (blank(value)) {
-      // A create without this author is judged through its maker (and authority). On an update,
-      // the author may not be emptied, or left empty while what it vouches for changes, as long as
-      // any guarded column still holds a value (design §5 rule 4).
-      if (previous !== null && author.guards.some((g) => !blank(payload[g]))) {
+      // On an update, the author may not be emptied, or left empty while what it vouches for
+      // changes, as long as any guarded column still holds a value (design §5 rule 4). A signed
+      // create without this author is answered for by its maker (and authority); an unsigned one
+      // (a background write) may not record a guarded claim that nobody answers for.
+      if ((previous !== null || signers.size === 0) && author.guards.some((g) => !blank(payload[g]))) {
         return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
       }
       continue;
@@ -381,11 +383,17 @@ export async function judgeItem(
   if (bad) return bad;
   const signers = new Set(signatures.map((s) => s.user_sync_id));
   const authority = registry.authorityOf(item.entity_type);
-  // Rule 3: an authority change always needs its maker's signature. Other types may arrive
-  // unsigned (a scheduler or background write); rule 4 below still refuses any author field the
-  // item sets or changes, or whose guarded column it changes, without that person's signature.
-  const needsMaker = authority !== undefined;
-  const authorChecked = needsMaker || registry.authorFieldsOf(item.entity_type).length > 0;
+  // Rule 3: an authority change always needs its maker's signature, and so does deleting a row
+  // that records who did something (its author fields go with it, unchecked by rule 4), except an
+  // attachment, whose delete the server archives with its device and can restore. Other changes
+  // may arrive unsigned (a scheduler or background write); rule 4 below still refuses any author
+  // field the item sets or changes, or whose guarded column it changes, without that person's
+  // signature.
+  const hasAuthors = registry.authorFieldsOf(item.entity_type).length > 0;
+  const deletesRecord =
+    item.operation === "delete" && hasAuthors && !ARCHIVED_ATTACHMENT_TYPES.has(item.entity_type);
+  const needsMaker = authority !== undefined || deletesRecord;
+  const authorChecked = authority !== undefined || hasAuthors;
   if (needsMaker && signatures.length === 0) {
     return fail(
       "signature_required",
