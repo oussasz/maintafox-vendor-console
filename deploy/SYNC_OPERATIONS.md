@@ -232,15 +232,21 @@ Wire contract: `deploy/SYNC_PROTOCOL_V2.md` §11. Both routes below need an oper
    the cutover sequence.
 3. **Environment:** nothing new.
 4. **Order:** server first, then every PC of a plant upgraded the same day, before people work on
-   them again. From the deploy, a v0.9.2 PC can no longer send most of its work: every change to a
-   type that carries an authority right or names a person (an author field) is refused
-   (`signature_required`: "mettre à jour ce PC") — 118 of the 237 synced types, among them work
-   orders, intervention requests, inventory transactions, work permits, failure events and PM
-   executions, as well as accounts, grants, roles, permit-type safety settings and site rule events
-   (`validateUnsignedProtocolType`, `api/src/sync/exchange-v1.ts`). Only records that name nobody
-   (for example equipment) keep syncing. Plan the upgrade window so that no work is entered on a
-   v0.9.2 PC after the server deploy; after upgrading, check each PC's sync screen for refused
-   changes.
+   them again. From the deploy, a v0.9.2 PC can no longer send most of its work. It syncs with
+   protocol v2 and signs nothing, so the server judges each of its changes as unsigned
+   (`judgeItem`, `api/src/sync/signing-rules.ts`) and refuses: every change to a type that carries
+   an authority right (accounts, grants, roles, organisation, settings rights); every delete or
+   archive of a record that names a person (attachments excepted); and every change that sets,
+   changes or clears a person named in an author field, or changes what that person guards or
+   vouches for (`signature_required` / `author_not_signer`: "mettre à jour ce PC"). That covers
+   most entered work: new work orders, intervention requests, inventory transactions, work
+   permits, failure events and PM executions, every approval, sign-off and status step that
+   records who did it, permit-type safety settings and site rules. Changes that leave every named
+   person and what they guard as they were (for example a work order's description) and records
+   that name nobody (for example equipment) keep syncing. A PC on protocol v1 has every change to
+   those 118 of the 237 types refused (`validateUnsignedProtocolType`). Plan the upgrade window
+   so that no work is entered on a v0.9.2 PC after the server deploy; after upgrading, check each
+   PC's sync screen for refused changes.
 5. Check: `SELECT cutover_seq FROM sync_signing_cutover` returns one row; an upgraded PC's first
    sign-in enrols its user (`sync_user_key_enrolled` in the API log).
 
