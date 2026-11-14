@@ -326,6 +326,11 @@ export function checkAuthors(
       if ((previous !== null || signers.size === 0) && author.guards.some((g) => !blank(payload[g]))) {
         return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
       }
+      // Withdrawing a recorded claim (the author and its guarded columns emptied) is a person's
+      // act: an unsigned item may not wipe it (it would delete the record's attribution unsigned).
+      if (signers.size === 0 && previous !== null && author.guards.length > 0 && !blank(previous[author.field])) {
+        return fail("signature_required", `withdrawing ${author.field} must be signed by the person who does it`);
+      }
       continue;
     }
     if (typeof value !== "string" || !signers.has(value)) {
@@ -390,8 +395,9 @@ export async function judgeItem(
   // field the item sets or changes, or whose guarded column it changes, without that person's
   // signature.
   const hasAuthors = registry.authorFieldsOf(item.entity_type).length > 0;
-  const deletesRecord =
-    item.operation === "delete" && hasAuthors && !ARCHIVED_ATTACHMENT_TYPES.has(item.entity_type);
+  // "archive" removes the row on every PC like "delete" (row_codec.rs is_delete).
+  const removes = item.operation === "delete" || item.operation === "archive";
+  const deletesRecord = removes && hasAuthors && !ARCHIVED_ATTACHMENT_TYPES.has(item.entity_type);
   const needsMaker = authority !== undefined || deletesRecord;
   const authorChecked = authority !== undefined || hasAuthors;
   if (needsMaker && signatures.length === 0) {

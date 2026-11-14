@@ -92,6 +92,7 @@
             "action_text",
             "completed_at",
             "due_date",
+            "owner_personnel_sync_id",
             "status"
           ]
         }
@@ -1565,6 +1566,7 @@
           "field": "updated_by_sync_id",
           "guards": [],
           "vouches": [
+            "currency_code",
             "failure_cost",
             "planned_cost"
           ]
@@ -2050,6 +2052,8 @@
           "field": "updated_by_sync_id",
           "guards": [],
           "vouches": [
+            "cost_center_sync_id",
+            "currency_code",
             "estimated_labor",
             "estimated_other",
             "estimated_parts",

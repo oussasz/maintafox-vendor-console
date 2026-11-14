@@ -1785,7 +1785,8 @@
           "guards": [],
           "vouches": [
             "planned_cost",
-            "failure_cost"
+            "failure_cost",
+            "currency_code"
           ]
         }
       ]
@@ -1927,10 +1928,12 @@
           "field": "updated_by_sync_id",
           "guards": [],
           "vouches": [
+            "cost_center_sync_id",
             "estimated_labor",
             "estimated_parts",
             "estimated_services",
             "estimated_other",
+            "currency_code",
             "notes"
           ]
         }
@@ -2175,6 +2178,7 @@
           "guards": [],
           "vouches": [
             "action_text",
+            "owner_personnel_sync_id",
             "due_date",
             "status",
             "completed_at"

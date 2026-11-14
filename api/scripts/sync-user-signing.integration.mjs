@@ -589,14 +589,16 @@ async function run() {
         await push(B, [
           item("work_permits", "wp-1", 2, 1, { ...permit, work_description: "Cut and weld" }),
           item("work_permits", "wp-1", 2, 1, withdrawn),
+          TECH(item("work_permits", "wp-1", 2, 1, { ...permit, work_description: "Cut and weld", hse_approved_by_sync_id: "u-admin" })),
+          TECH(item("work_permits", "wp-1", 2, 1, withdrawn)),
         ]),
-        ["author_not_signer", "ack"],
-        "changed safety content needs its HSE approver, unless the approval is withdrawn with it",
+        ["author_not_signer", "signature_required", "author_not_signer", "ack"],
+        "changed safety content needs its HSE approver, unless the approval is withdrawn with it by a signer",
       );
 
-      // Count line: self_approved is vouched for by the approver. An unsigned change clearing the
-      // approver may leave it set; the PCs refuse such a line on arrival
-      // (inventory/count_four_eyes.rs, SYNC_APPROVAL_RECORD_INVALID).
+      // Count line: self_approved is vouched for by the approver. Clearing the approver may leave
+      // it set only in a signed change (the PCs refuse such a line on arrival,
+      // inventory/count_four_eyes.rs SYNC_APPROVAL_RECORD_INVALID); unsigned, it is refused.
       const line = { counted_qty: 4, counted_by_sync_id: "u-tech", approved_by_sync_id: "u-tech", approved_at: "2026-11-13T10:00:00Z", approval_note: "ok", self_approved: 0 };
       assert.deepEqual(await push(B, [TECH(item("inventory_count_lines", "icl-1", 1, null, line))]), ["ack"]);
       assert.deepEqual(
@@ -604,7 +606,7 @@ async function run() {
           item("inventory_count_lines", "icl-1", 2, 1, { ...line, self_approved: 1 }),
           item("inventory_count_lines", "icl-1", 2, 1, { ...line, approved_by_sync_id: null, approved_at: null, approval_note: null, self_approved: 1 }),
         ]),
-        ["author_not_signer", "ack"],
+        ["author_not_signer", "signature_required"],
       );
 
       // Creates and deletes: an unsigned create may not carry a guarded claim nobody answers for;
@@ -621,9 +623,21 @@ async function run() {
       assert.deepEqual(
         await push(B, [
           item("work_orders", "wo-background", 2, 1, { code: "WO-B" }, { operation: "delete" }),
+          item("work_orders", "wo-background", 2, 1, {}, { operation: "archive" }),
           TECH(item("work_orders", "wo-claim-signed", 2, 1, claim, { operation: "delete" })),
         ]),
-        ["signature_required", "ack"],
+        ["signature_required", "signature_required", "ack"],
+        "an unsigned delete or archive of a record that names people is refused",
+      );
+      // Nor may an unsigned item wipe a recorded claim (author and guards emptied).
+      const validated = { code: "WO-V", validated_at: "2026-11-13T12:00:00Z", validated_by_sync_id: "u-tech" };
+      assert.deepEqual(await push(B, [TECH(item("work_orders", "wo-validated", 1, null, validated))]), ["ack"]);
+      assert.deepEqual(
+        await push(B, [
+          item("work_orders", "wo-validated", 2, 1, { code: "WO-V", validated_at: null, validated_by_sync_id: null }),
+          item("work_orders", "wo-validated", 2, 1, {}),
+        ]),
+        ["signature_required", "signature_required"],
       );
 
       // Settings and organisation authorities: plant-wide holders only.
