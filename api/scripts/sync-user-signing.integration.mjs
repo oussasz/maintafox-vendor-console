@@ -836,6 +836,38 @@ async function run() {
         ["history_rewrite_refused", "ack"],
         "its own notice's texts only",
       );
+      // Another PC re-sending the notice unchanged would make it the notice's last writer: refused,
+      // on v2 and v1, and the PC that raised it still refreshes it afterwards.
+      const refreshed = { ...raised, message_params_json: '{"n":2}', urgency_code: "high", severity: "warning" };
+      assert.deepEqual(
+        await push(A, [item("notification_events", "ne-1", 3, 2, refreshed)]),
+        ["history_rewrite_refused"],
+        "another PC's unchanged re-send",
+      );
+      const v1Takeover = item("notification_events", "ne-1", 3, null, refreshed);
+      const v1Notice = await post("/api/v1/sync/exchange", A, {
+        protocol_version: "v1",
+        idempotency_key: `v1-${randomUUID()}`,
+        checkpoint_token: null,
+        outbox_batch: [
+          {
+            idempotency_key: v1Takeover.idempotency_key,
+            entity_type: v1Takeover.entity_type,
+            entity_sync_id: v1Takeover.entity_sync_id,
+            operation: v1Takeover.operation,
+            row_version: v1Takeover.row_version,
+            payload_json: v1Takeover.payload_json,
+            payload_hash: v1Takeover.payload_hash,
+          },
+        ],
+      });
+      assert.equal(v1Notice.status, 200, JSON.stringify(v1Notice.json));
+      assert.deepEqual(v1Notice.json.rejected_items.map((r) => r.rejection_code), ["history_rewrite_refused"], "nor on v1");
+      assert.deepEqual(
+        await push(B, [item("notification_events", "ne-1", 3, 2, { ...refreshed, message_params_json: '{"n":3}' })]),
+        ["ack"],
+        "the raising PC still refreshes it",
+      );
 
       // A per-site rule turned on in the administrator's name, moved to another site.
       assert.deepEqual(

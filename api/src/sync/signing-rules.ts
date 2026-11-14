@@ -363,9 +363,11 @@ const NOTICE_REFRESH_COLUMNS: ReadonlySet<string> = new Set(["message_key", "mes
  * checkHistoryRewrite). Notices name nobody and each PC raises its own: a PC may already raise any
  * notice, so refreshing its own adds nothing; another PC's notice stays as it was received. A held
  * notice accepts no item at all from another PC (not even an unchanged re-send, which would make that
- * PC its last writer), so its last writer is always the PC that raised it: PCs never send a notice
- * they received (inbound rows are applied with capture suppressed; its device-local columns never
- * travel).
+ * PC its last writer), so its last writer is always the PC that raised it. A PC can still push a
+ * notice it received: inbound rows are applied with capture suppressed, but its emitter refreshes
+ * any open notice with the same dedupe key (emitter.rs emit/refresh_event, reopen_event), and that
+ * local refresh is captured. Such a push is refused here (history_rewrite_refused), which keeps the
+ * notice as its raising PC wrote it; the refresh stays local to that PC.
  */
 export async function isOwnNoticeRefresh(
   db: Database,
