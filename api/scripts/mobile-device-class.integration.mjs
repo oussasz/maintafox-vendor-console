@@ -332,6 +332,15 @@ try {
     assert.equal(r.status, 403, `${path} ${body.protocol_version}: ${r.text}`);
     assert.equal(r.json.error, "mobile_not_licensed");
   }
+  // Per-user key enrolment (PR #19) carries no device class; the cut-off still applies to it.
+  const enrol = await sync("user-keys/enrol", tokenP1c, {
+    user_sync_id: "user-cutoff-0001",
+    public_key: "A".repeat(43),
+    password: "not-checked-before-the-cut-off",
+    proof_signature: "B".repeat(86),
+  });
+  assert.equal(enrol.status, 403, `user-keys/enrol: ${enrol.text}`);
+  assert.equal(enrol.json.error, "mobile_not_licensed");
   assert.equal((await sync("exchange", tokenA, v2("desktop"))).status, 200, "the desktop still syncs");
   assert.equal((await claim(phone1, "mobile")).json.error, "mobile_not_licensed");
   assert.equal((await refresh(tokenA)).status, 200, "the desktop is not affected");

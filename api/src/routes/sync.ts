@@ -128,6 +128,15 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
     route: string,
   ): Promise<boolean> {
     if (!deviceClassMatches(res, act, sent, route)) return false;
+    return mobileStillLicensed(res, act, route);
+  }
+
+  /**
+   * The phones-to-0 cut-off alone, for sync routes whose body carries no device class (per-user
+   * key enrolment): a phone whose licence has no phone slots any more is refused (403
+   * mobile_not_licensed); desktops pass. Returns false after answering.
+   */
+  async function mobileStillLicensed(res: express.Response, act: ActivationAuthContext, route: string): Promise<boolean> {
     if (act.deviceClass !== "mobile") return true;
     const lic = (await db.get("SELECT max_mobile_devices FROM license_keys WHERE id = ?", act.licenseId)) as
       | { max_mobile_devices: number }
@@ -250,6 +259,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       res.status(400).json({ error: "validation_error", fields: Object.keys(parsed.error.flatten().fieldErrors) });
       return;
     }
+    if (!(await mobileStillLicensed(res, act, "user_key_enrol"))) return;
     try {
       const outcome = await enrolUserKey(db, payloadCipher, act, parsed.data);
       structuredLog("sync_user_key_enrolled", {
