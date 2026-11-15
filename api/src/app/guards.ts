@@ -12,6 +12,7 @@ import { ROUTE_PERMISSIONS, roleAllows } from "../vendor-auth/roles.js";
 import type { StepUpActionKind } from "../vendor-auth/step-up-kinds.js";
 import type { AuditAppender } from "./audit.js";
 import { JWT_SECRET, PRIVILEGED_REASON_MIN_LENGTH } from "./config.js";
+import type { DeviceClass } from "./device-class.js";
 import { resolveActorId, type ActivationAuthContext, type AuthRequest, type IdempotentResponse } from "./http.js";
 import { newId, sha256Hex, structuredLog } from "./runtime.js";
 import { openOperatorScope, tenantScope } from "./scope.js";
@@ -87,7 +88,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
     // The token is verified: from here on only this tenant's rows are visible.
     const scope = tenantScope(claims.tenantId);
     const row = await db.runInScope(scope, () => db.get(`SELECT a.id, a.revoked_at, a.activation_token, a.last_seen_at,
-                a.policy_refresh_requested_at,
+                a.policy_refresh_requested_at, a.device_class,
                 l.revoked_at AS license_revoked_at, l.expires_at AS license_expires_at,
                 t.is_active AS tenant_is_active
          FROM machine_activations a
@@ -100,6 +101,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
           activation_token: string;
           last_seen_at: string;
           policy_refresh_requested_at: string | null;
+          device_class: DeviceClass;
           license_revoked_at: string | null;
           license_expires_at: string | null;
           tenant_is_active: number;
@@ -155,6 +157,7 @@ export function createGuards(db: Database, { appendAuditRecord }: AuditAppender,
       tenantId: claims.tenantId,
       licenseId: claims.licenseId,
       machineFingerprint: claims.machineFingerprint,
+      deviceClass: row.device_class,
       token,
       tokenIssuedAt: claims.issuedAt,
     };

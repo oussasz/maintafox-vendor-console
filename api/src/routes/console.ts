@@ -35,8 +35,22 @@ const OPEN_TICKET_STATES_SQL = OPEN_TICKET_STATES.map((s) => `'${s}'`).join(", "
 const DAY_MS = 86_400_000;
 
 type TenantRow = { id: string; slug: string; display_name: string; edition: string; created_at: string; suspended_at: string | null; is_active: number };
-type LicenceRow = { id: string; tenant_id: string; max_machines: number; expires_at: string | null; revoked_at: string | null };
-type DeviceRow = { tenant_id: string; machine_fingerprint: string; machine_label: string | null; app_version: string | null; last_seen_at: string };
+type LicenceRow = {
+  id: string;
+  tenant_id: string;
+  max_machines: number;
+  max_mobile_devices: number;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+type DeviceRow = {
+  tenant_id: string;
+  machine_fingerprint: string;
+  machine_label: string | null;
+  app_version: string | null;
+  last_seen_at: string;
+  device_class: "desktop" | "mobile";
+};
 type Attention = {
   kind: string;
   severity: "critical" | "warn" | "info";
@@ -110,9 +124,10 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
     const nowMs = Date.now();
     const [tenants, licences, devices, editions, tickets, snap, backups] = await Promise.all([
       db.all<TenantRow>("SELECT id, slug, display_name, edition, created_at, suspended_at, is_active FROM tenants ORDER BY display_name"),
-      db.all<LicenceRow>("SELECT id, tenant_id, max_machines, expires_at, revoked_at FROM license_keys"),
+      db.all<LicenceRow>("SELECT id, tenant_id, max_machines, max_mobile_devices, expires_at, revoked_at FROM license_keys"),
       db.all<DeviceRow>(
-        "SELECT tenant_id, machine_fingerprint, machine_label, app_version, last_seen_at FROM machine_activations WHERE revoked_at IS NULL",
+        `SELECT tenant_id, machine_fingerprint, machine_label, app_version, last_seen_at, device_class
+         FROM machine_activations WHERE revoked_at IS NULL`,
       ),
       db.all<{ id: string; label: string }>("SELECT id, label FROM edition_catalog"),
       db.all<{ ticket_id: string; tenant_id: string; state: string; summary: string | null; created_at_rfc3339: string; bundles: number }>(
@@ -136,7 +151,10 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
     const customers = tenants.map((t) => {
       const live = licences.filter((l) => l.tenant_id === t.id && l.revoked_at === null);
       const valid = live.filter(isValid);
-      const used = devices.filter((d) => d.tenant_id === t.id).length;
+      // Desktops fill max_machines seats, phones fill max_mobile_devices seats (migration 019).
+      const tenantDevices = devices.filter((d) => d.tenant_id === t.id);
+      const used = tenantDevices.filter((d) => d.device_class === "desktop").length;
+      const mobileUsed = tenantDevices.length - used;
       const neverEnds = valid.some((l) => l.expires_at === null);
       // The latest end among licences still valid; null when one never ends or none is valid.
       const licenceUntil = valid.length === 0 || neverEnds ? null : (valid.map((l) => l.expires_at as string).sort().at(-1) ?? null);
@@ -149,10 +167,12 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
         edition_label: editionLabel.get(t.edition) ?? t.edition,
         devices_used: used,
         seats: valid.reduce((s, l) => s + l.max_machines, 0),
+        mobile_devices_used: mobileUsed,
+        mobile_seats: valid.reduce((s, l) => s + l.max_mobile_devices, 0),
         licence_until: iso(licenceUntil),
         licence_never_ends: neverEnds,
         licence_ended_at: iso(ended),
-        status: customerStatus(t, live, valid, used, licenceUntil, nowMs),
+        status: customerStatus(t, live, valid, tenantDevices.length, licenceUntil, nowMs),
         customer_since: iso(t.created_at),
       };
     });
@@ -247,6 +267,9 @@ export function registerConsoleRoutes(app: express.Express, ctx: ApiContext): vo
         devices_in_use: live.reduce((s, c) => s + c.devices_used, 0),
         seats_total: live.reduce((s, c) => s + c.seats, 0),
         seats_free: live.reduce((s, c) => s + Math.max(0, c.seats - c.devices_used), 0),
+        mobile_devices_in_use: live.reduce((s, c) => s + c.mobile_devices_used, 0),
+        mobile_seats_total: live.reduce((s, c) => s + c.mobile_seats, 0),
+        mobile_seats_free: live.reduce((s, c) => s + Math.max(0, c.mobile_seats - c.mobile_devices_used), 0),
         licences_expiring: expiring.length,
         open_tickets: tickets.length,
       },

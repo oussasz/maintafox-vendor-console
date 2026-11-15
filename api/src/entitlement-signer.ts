@@ -7,6 +7,7 @@
  */
 import { createHash, createPrivateKey, randomBytes, sign as cryptoSign, type KeyObject } from "node:crypto";
 
+import { DeviceClassSchema, type DeviceClass } from "./app/device-class.js";
 import {
   capabilitiesJsonForEdition,
   featureFlagsJsonForEdition,
@@ -130,7 +131,10 @@ export type BuildEnvelopeInput = {
   lineageVersion: number;
   previousEnvelopeId?: string | null;
   channel: string;
+  /** Slots of the device's class (desktop: max_machines, mobile: max_mobile_devices). */
   machineSlots: number;
+  /** Class of the device the envelope is issued to; signed inside policy_json. */
+  deviceClass: DeviceClass;
   issuedAt?: string;
   validFrom?: string;
   validUntil: string;
@@ -154,6 +158,10 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
     }
     capabilitiesJson = capabilitiesJsonForEdition(tier);
   }
+  // Checked at run time too: JavaScript callers (scripts) are not type-checked.
+  if (!DeviceClassSchema.safeParse(input.deviceClass).success) {
+    throw new Error(`deviceClass must be one of desktop | mobile (got '${String(input.deviceClass)}')`);
+  }
   const signingKey = loadEntitlementSigningKey();
   const now = input.issuedAt ?? new Date().toISOString();
   const unsigned: UnsignedEnvelope = {
@@ -169,7 +177,7 @@ export function buildSignedEntitlementEnvelope(input: BuildEnvelopeInput): Entit
     machine_slots: input.machineSlots,
     feature_flags_json: featureFlagsJsonForEdition(),
     capabilities_json: capabilitiesJson,
-    policy_json: policyJsonForEdition(),
+    policy_json: policyJsonForEdition(input.deviceClass),
     issued_at: now,
     valid_from: input.validFrom ?? now,
     valid_until: input.validUntil,

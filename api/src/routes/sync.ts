@@ -6,6 +6,12 @@ import { z } from "zod";
 
 import type { ApiContext } from "../app/context.js";
 import { SYNC_MAX_OUTBOX_BATCH } from "../app/config.js";
+import {
+  MOBILE_NOT_LICENSED_BODY,
+  deviceClassMismatchBody,
+  requestedDeviceClass,
+  type DeviceClass,
+} from "../app/device-class.js";
 import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } from "../app/http.js";
 import { getMediaStore, sendObjectStoreError } from "../app/media.js";
 import { structuredLog } from "../app/runtime.js";
@@ -78,8 +84,63 @@ function sendSyncRequestError(res: express.Response, err: SyncRequestError): voi
   res.status(err.status).json({ error: err.code, message: err.message });
 }
 
+/**
+ * Re-checks the device class on the data exchange (v1, v2) and the snapshot: the class a request
+ * carries (absent = desktop, which every desktop released before the mobile app is) must be the
+ * class of the activation behind the bearer token. Returns false after answering 409
+ * device_class_mismatch. (The licence check of phones is `deviceMaySync` below.)
+ *
+ * Scope: only these routes carry a device class. Media, diagnostics, notifications, updates and
+ * tenant status still need a live activation (which holds a slot of its own class), so no class
+ * can use them without a paid slot; they do not re-check the class.
+ */
+function deviceClassMatches(
+  res: express.Response,
+  act: ActivationAuthContext,
+  sent: DeviceClass | undefined,
+  route: string,
+): boolean {
+  const requested = requestedDeviceClass(sent);
+  if (requested === act.deviceClass) return true;
+  structuredLog("sync_device_class_mismatch", {
+    tenant_id: act.tenantId,
+    machine_fingerprint: act.machineFingerprint,
+    route,
+    device_class: act.deviceClass,
+    requested_device_class: requested,
+  });
+  res.status(409).json(deviceClassMismatchBody(act.deviceClass, requested));
+  return false;
+}
+
 export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void {
   const { db, syncConfig, syncEntityRegistry, payloadCipher, activationAuthMiddleware } = ctx;
+
+  /**
+   * The class check, then, for a phone, its licence: a licence whose phone count is 0 (never set,
+   * or set back to 0 by an operator) stops its phones at once, here as on policy refresh (403
+   * mobile_not_licensed). Desktops are not affected. Returns false after answering.
+   */
+  async function deviceMaySync(
+    res: express.Response,
+    act: ActivationAuthContext,
+    sent: DeviceClass | undefined,
+    route: string,
+  ): Promise<boolean> {
+    if (!deviceClassMatches(res, act, sent, route)) return false;
+    if (act.deviceClass !== "mobile") return true;
+    const lic = (await db.get("SELECT max_mobile_devices FROM license_keys WHERE id = ?", act.licenseId)) as
+      | { max_mobile_devices: number }
+      | undefined;
+    if (lic && lic.max_mobile_devices > 0) return true;
+    structuredLog("sync_mobile_not_licensed", {
+      tenant_id: act.tenantId,
+      machine_fingerprint: act.machineFingerprint,
+      route,
+    });
+    res.status(403).json({ ...MOBILE_NOT_LICENSED_BODY });
+    return false;
+  }
 
   /**
    * Tenant-runtime sync: push local outbox rows and pull inbound changes with the activation token.
@@ -101,6 +162,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
           res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
           return;
         }
+        if (!(await deviceMaySync(res, act, parsed.data.device_class, "exchange_v2"))) return;
         const outcome = await runSyncExchangeV2(
           db,
           { registry: syncEntityRegistry, checkpointSecret: syncConfig.checkpointSecret, cipher: payloadCipher },
@@ -118,6 +180,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         res.status(400).json({ error: "invalid_body", details: parsed.error.flatten() });
         return;
       }
+      if (!(await deviceMaySync(res, act, parsed.data.device_class, "exchange_v1"))) return;
       res.json(await runSyncExchangeV1(db, { registry: syncEntityRegistry, cipher: payloadCipher }, syncAct, parsed.data, structuredLog));
     } catch (e) {
       if (e instanceof SyncRequestError) {
@@ -151,6 +214,7 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
       res.status(400).json({ error: "validation_error", details: parsed.error.flatten() });
       return;
     }
+    if (!(await deviceMaySync(res, act, parsed.data.device_class, "snapshot_v2"))) return;
     try {
       const response = await runSyncSnapshotV2(
         db,
