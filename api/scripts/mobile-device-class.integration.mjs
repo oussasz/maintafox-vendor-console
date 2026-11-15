@@ -341,6 +341,19 @@ try {
   });
   assert.equal(enrol.status, 403, `user-keys/enrol: ${enrol.text}`);
   assert.equal(enrol.json.error, "mobile_not_licensed");
+  // Every other device route is cut off too (activation middleware), with the same body the phone
+  // reads on policy refresh; the desktop keeps them.
+  for (const [method, path, body] of [
+    ["POST", "/api/v1/sync/media/presign-get", { object_key: `tenants/${tenant.id}/media/x.jpg` }],
+    ["POST", "/api/v1/sync/media/presign-put", { parent_entity_type: "work_orders", parent_entity_sync_id: "wo-1", content_sha256: "0".repeat(64) }],
+    ["GET", "/api/v1/activation/tenant-status", undefined],
+  ]) {
+    const r = await api.call(method, path, tokenP1c, body);
+    assert.equal(r.status, 403, `${path}: ${r.text}`);
+    assert.equal(r.json.error, "mobile_not_licensed", path);
+    assert.equal(r.json.device_class, "mobile", path);
+  }
+  assert.equal((await api.call("GET", "/api/v1/activation/tenant-status", tokenA)).status, 200, "desktop tenant status");
   assert.equal((await sync("exchange", tokenA, v2("desktop"))).status, 200, "the desktop still syncs");
   assert.equal((await claim(phone1, "mobile")).json.error, "mobile_not_licensed");
   assert.equal((await refresh(tokenA)).status, 200, "the desktop is not affected");
@@ -359,6 +372,50 @@ try {
     (await api.call("POST", "/api/v1/licenses", admin, { tenant_id: tenant.id, max_mobile_devices: 1001 }, idem())).status,
     400,
   );
+
+  // ── A phone is never the founding device of per-user signing (PR #19, design §8) ───────────
+  {
+    const t2 = (await api.call("POST", "/api/v1/tenants", admin, { slug: "mobile-founding-co", display_name: "Mobile Founding Co" })).json;
+    const lic2 = await api.call(
+      "POST",
+      "/api/v1/licenses",
+      admin,
+      { tenant_id: t2.id, max_machines: 1, max_mobile_devices: 1, expires_at: "2099-01-01T00:00:00.000Z" },
+      idem(),
+    );
+    assert.equal(lic2.status, 201, lic2.text);
+    const claim2 = (fingerprint, deviceClass) =>
+      api.call("POST", "/api/v1/activation/claim", null, {
+        license_key: lic2.json.license_key,
+        machine_fingerprint: fingerprint,
+        app_version: "1.2.3",
+        device_class: deviceClass,
+      });
+    const phoneFirst = await claim2("fp-founding-phone-0001", "mobile"); // activated before any PC
+    assert.equal(phoneFirst.status, 200, phoneFirst.text);
+    const pc = await claim2("fp-founding-pc-0001", "desktop");
+    assert.equal(pc.status, 200, pc.text);
+    // A push by the phone makes the server settle the founding slot.
+    const payload_json = JSON.stringify({ name: "x" });
+    const push = await sync("exchange", phoneFirst.json.activation_token, {
+      ...v2("mobile"),
+      outbox_batch: [
+        {
+          idempotency_key: randomUUID(),
+          entity_type: "permit_types",
+          entity_sync_id: "pt-founding",
+          operation: "create",
+          row_version: 1,
+          base_row_version: null,
+          payload_json,
+          payload_hash: createHash("sha256").update(payload_json).digest("hex"),
+        },
+      ],
+    });
+    assert.equal(push.status, 200, push.text);
+    const [slot] = await api.su("SELECT founding_machine_fingerprint FROM sync_tenant_founding WHERE tenant_id = $1", [t2.id]);
+    assert.equal(slot?.founding_machine_fingerprint, "fp-founding-pc-0001", "the founding device is the earliest desktop");
+  }
 
   // ── Schema: the class and the count are constrained ─────────────────────────────────────────
   await assert.rejects(
