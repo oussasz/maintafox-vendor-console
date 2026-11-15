@@ -10,6 +10,7 @@ import { deviceRateLimiter, sendValidationError, type ActivationAuthContext } fr
 import { getMediaStore, sendObjectStoreError } from "../app/media.js";
 import { structuredLog } from "../app/runtime.js";
 import { assertTenantOwnsObjectKey, buildTenantMediaObjectKey } from "../storage/object-store.js";
+import { enrolUserKey } from "../sync/user-keys.js";
 import {
   runSyncExchangeV1,
   runSyncExchangeV2,
@@ -51,6 +52,19 @@ const SyncMediaPresignPutBody = z
     parent_entity_sync_id: z.string().min(1).max(256),
     content_sha256: z.string().min(64).max(80),
     object_key: z.string().min(1).max(1024).optional(),
+  })
+  .strict();
+
+/**
+ * Per-user key enrolment (sync-signing-design.md §4). The password is checked against the server's
+ * judged copy of the account and is never stored, logged or echoed (errors carry no body details).
+ */
+const SyncUserKeyEnrolBody = z
+  .object({
+    user_sync_id: z.string().min(1).max(256),
+    public_key: z.string().min(40).max(64),
+    password: z.string().min(1).max(1024),
+    proof_signature: z.string().min(80).max(128),
   })
   .strict();
 
@@ -157,6 +171,43 @@ export function registerSyncRoutes(app: express.Express, ctx: ApiContext): void 
         error: e instanceof Error ? e.message : String(e),
       });
       res.status(500).json({ error: "sync_snapshot_failed" });
+    }
+  });
+
+  app.post("/api/v1/sync/user-keys/enrol", activationAuthMiddleware, deviceRateLimiter, async (req, res) => {
+    const act = (req as express.Request & { activation?: ActivationAuthContext }).activation;
+    if (!act) {
+      res.status(500).json({ error: "internal_error" });
+      return;
+    }
+    const parsed = SyncUserKeyEnrolBody.safeParse(req.body);
+    if (!parsed.success) {
+      // Never echo the body (it holds a password): only which fields are wrong.
+      res.status(400).json({ error: "validation_error", fields: Object.keys(parsed.error.flatten().fieldErrors) });
+      return;
+    }
+    try {
+      const outcome = await enrolUserKey(db, payloadCipher, act, parsed.data);
+      structuredLog("sync_user_key_enrolled", {
+        tenant_id: act.tenantId,
+        machine_fingerprint: act.machineFingerprint,
+        user_sync_id: parsed.data.user_sync_id,
+        key_id: outcome.key_id,
+      });
+      res.json(outcome);
+    } catch (e) {
+      if (e instanceof SyncRequestError) {
+        structuredLog("sync_user_key_enrol_refused", {
+          tenant_id: act.tenantId,
+          machine_fingerprint: act.machineFingerprint,
+          user_sync_id: parsed.data.user_sync_id,
+          error: e.code,
+        });
+        sendSyncRequestError(res, e);
+        return;
+      }
+      structuredLog("sync_user_key_enrol_error", { tenant_id: act.tenantId, machine_fingerprint: act.machineFingerprint });
+      res.status(500).json({ error: "enrolment_failed" });
     }
   });
 

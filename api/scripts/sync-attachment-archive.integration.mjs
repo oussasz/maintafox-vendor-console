@@ -16,17 +16,24 @@
  * - every accepted change of site_settings / site_setting_events / permit_types is kept with its
  *   sending device in sync_forensic_change_log, which retention never compacts.
  *
+ * Per-user signing (sync-signing-design.md v9): types with author fields (request and work order
+ * attachments, permit_types, site_setting_events) are refused on v1 (`signature_required`); on v2
+ * this test signs them with an enrolled user key. media_attachments has no author field and stays
+ * writable on v1. The test founds the tenant's administrator from its first PC (before
+ * any other push, the founding slot), enrols one key per pushing PC and signs those types itself.
+ *
  * Optional: TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY, TEST_S3_SECRET_KEY, TEST_S3_REGION, TEST_S3_PUBLIC_ENDPOINT
  * (an S3-compatible server and the nginx media route in front of it) add
  * the byte-identical file check (upload → delete → restore → download the same bytes).
  */
 import assert from "node:assert/strict";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign as edSign } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { argon2id } from "hash-wasm";
 import pg from "pg";
 
 import { startControlApi, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./lib/control-api.mjs";
@@ -34,6 +41,60 @@ import { loginOperator } from "./lib/vendor-session.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sha256Hex = (s) => createHash("sha256").update(s).digest("hex");
+
+// ── Per-user signing helpers (same encoding as sync-user-signing.integration.mjs, design §7) ──────
+function encodeSigned(tag, fields) {
+  const parts = [];
+  for (const value of [tag, ...fields]) {
+    const bytes = Buffer.from(value, "utf8");
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(bytes.length, 0);
+    parts.push(len, bytes);
+  }
+  return Buffer.concat(parts);
+}
+function changeMessage(tenantId, it, signer, keyId) {
+  return encodeSigned("mfx-sync-sig-v1", [
+    tenantId,
+    it.entity_type,
+    it.entity_sync_id,
+    it.operation,
+    String(it.row_version),
+    it.base_row_version === null ? "" : String(it.base_row_version),
+    sha256Hex(it.payload_json),
+    signer,
+    keyId,
+  ]);
+}
+/** A user's key on one PC. */
+function newKey(userSyncId) {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const raw = Buffer.from(publicKey.export({ format: "jwk" }).x, "base64url");
+  return {
+    user: userSyncId,
+    privateKey,
+    publicKeyB64: raw.toString("base64"),
+    keyId: createHash("sha256").update(raw).digest("hex").slice(0, 32),
+  };
+}
+function signatureOf(tenantId, it, key) {
+  return {
+    user_sync_id: key.user,
+    key_id: key.keyId,
+    signature: edSign(null, changeMessage(tenantId, it, key.user, key.keyId), key.privateKey).toString("base64"),
+  };
+}
+async function phcOf(password) {
+  return argon2id({
+    password,
+    salt: Buffer.from(randomUUID().replace(/-/g, ""), "hex"),
+    parallelism: 1,
+    iterations: 2,
+    memorySize: 1024,
+    hashLength: 32,
+    outputType: "encoded",
+  });
+}
 
 // ── The server never deletes stored objects (static check of the API sources) ───────────────
 function sources(dir, out = []) {
@@ -97,8 +158,13 @@ const api = await startControlApi({
     : {},
 });
 
-const registryTypes = new Set(
-  JSON.parse(readFileSync(join(here, "..", "..", "shared", "sync-entity-registry.v2.json"), "utf8")).entity_types.map((e) => e.entity_type),
+const registryEntries = JSON.parse(readFileSync(join(here, "..", "..", "shared", "sync-entity-registry.v2.json"), "utf8")).entity_types;
+const registryTypes = new Set(registryEntries.map((e) => e.entity_type));
+// Types whose v2 changes need the maker's signature (author fields) and that this test pushes through
+// the signing exchange helper. user_accounts (authority type) is only ever pushed here as the unsigned
+// founding administrator.
+const signedTypes = new Set(
+  registryEntries.filter((e) => (e.author_fields ?? []).length > 0 && e.authority === undefined).map((e) => e.entity_type),
 );
 
 function item(entityType, entitySyncId, rowVersion, baseRowVersion, payloadJson, operation) {
@@ -127,16 +193,22 @@ try {
       app_version: "1.0.0",
     });
     assert.equal(claimed.status, 200, claimed.text);
-    return { fp, token: claimed.json.activation_token, checkpoint: null };
+    return { fp, token: claimed.json.activation_token, checkpoint: null, key: null };
   };
   const exchange = async (dev, outbox = [], extra = {}) => {
+    // Items of types with author fields are signed with the pushing PC's enrolled key.
+    const signedOutbox = outbox.map((i) => {
+      if (!signedTypes.has(i.entity_type) || i.signatures) return i;
+      assert.ok(dev.key, `${dev.fp} has no enrolled key to sign ${i.entity_type}`);
+      return { ...i, signatures: [signatureOf(tenant.id, i, dev.key)] };
+    });
     const r = await api.call("POST", "/api/v1/sync/exchange", dev.token, {
       protocol_version: "v2",
       idempotency_key: `ex-${randomUUID()}`,
       checkpoint_token: dev.checkpoint,
       current_user_sync_ids: [],
       device_class: "desktop",
-      outbox_batch: outbox,
+      outbox_batch: signedOutbox,
       ...extra,
     });
     assert.equal(r.status, 200, r.text);
@@ -168,8 +240,47 @@ try {
     throw new Error("delta did not converge");
   };
 
-  const A = await device("fp-archive-device-a");
+  const A = await device("fp-archive-device-a"); // first activation: the founding PC
   const B = await device("fp-archive-device-b");
+
+  // ── Founding administrator and one signing key per pushing PC (design §4, §8) ────────────────
+  // This is the tenant's very first push: the founding slot closes as soon as another PC pushes.
+  const founderId = "u-archive-founder";
+  const founderPassword = `Pw-${randomBytes(9).toString("hex")}`;
+  const founding = await exchange(A, [
+    item(
+      "user_accounts",
+      founderId,
+      1,
+      null,
+      JSON.stringify({
+        username: "founder",
+        display_name: "Founder",
+        is_active: 1,
+        is_admin: 1,
+        deleted_at: null,
+        force_password_change: 0,
+        password_hash: await phcOf(founderPassword),
+        password_changed_at: null,
+        password_changed_by_sync_id: null,
+        status_changed_by_sync_id: null,
+      }),
+    ),
+  ]);
+  assert.equal(founding.acknowledged_items.length, 1, "the founding administrator is accepted unsigned");
+  // The enrolment proof is signed over the PC's own machine fingerprint, so each PC has its own key.
+  for (const dev of [A, B]) {
+    const key = newKey(founderId);
+    const proof = edSign(null, encodeSigned("mfx-user-key-enrol-v1", [tenant.id, key.user, key.keyId, dev.fp]), key.privateKey).toString("base64");
+    const enrolled = await api.call("POST", "/api/v1/sync/user-keys/enrol", dev.token, {
+      user_sync_id: key.user,
+      public_key: key.publicKeyB64,
+      password: founderPassword,
+      proof_signature: proof,
+    });
+    assert.equal(enrolled.status, 200, enrolled.text);
+    dev.key = key;
+  }
   await pullAll(A);
   await pullAll(B);
 
@@ -510,9 +621,12 @@ try {
   }
 
   // ── v1 delete with a LOWER version than the row it removes: archived; restore goes above both ──
-  const diPayload = JSON.stringify({ entity_sync_id: "di-att-1", file_name: "leak.pdf", relative_path: "di_attachments/7/leak.pdf" });
-  await exchangeV1(A, [item("di_attachments", "di-att-1", 7, null, diPayload, "upsert")]);
-  await exchangeV1(B, [item("di_attachments", "di-att-1", 1, null, JSON.stringify({ entity_sync_id: "di-att-1" }), "delete")]);
+  // (media_attachments: types with author fields, such as request attachments, are refused on v1.)
+  const diPayload = JSON.stringify({ entity_sync_id: "di-att-1", object_key: `test/media/${tenant.id}/di-att-1/leak` });
+  await exchangeV1(A, [item("media_attachments", "di-att-1", 7, null, diPayload, "upsert")]);
+  await exchangeV1(B, [item("media_attachments", "di-att-1", 1, null, JSON.stringify({ entity_sync_id: "di-att-1" }), "delete")]);
+  const v1Author = await exchangeV1(A, [item("di_attachments", "di-att-v1", 1, null, JSON.stringify({ entity_sync_id: "di-att-v1" }), "upsert")]);
+  assert.deepEqual(v1Author.rejected_items.map((r) => r.rejection_code), ["signature_required"], "author type refused on v1");
   const [v1Del] = await api.su("SELECT * FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'di-att-1'");
   assert.equal(v1Del.protocol_version, "v1", "a v1 delete is archived");
   assert.equal(v1Del.change_kind, "delete");
@@ -525,11 +639,11 @@ try {
   assert.equal(diBack.payload_json, diPayload);
 
   // ── ABA: v1 writes (version, payload) back to an earlier state; nothing is lost ──────────────
-  const P1 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/a.pdf" });
-  const P2 = JSON.stringify({ entity_sync_id: "aba", relative_path: "work_order_attachments/1/b.pdf" });
-  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
-  await exchangeV1(B, [item("work_order_attachments", "aba", 2, null, P2, "upsert")]);
-  await exchangeV1(A, [item("work_order_attachments", "aba", 1, null, P1, "upsert")]);
+  const P1 = JSON.stringify({ entity_sync_id: "aba", object_key: `test/media/${tenant.id}/aba/a` });
+  const P2 = JSON.stringify({ entity_sync_id: "aba", object_key: `test/media/${tenant.id}/aba/b` });
+  await exchangeV1(A, [item("media_attachments", "aba", 1, null, P1, "upsert")]);
+  await exchangeV1(B, [item("media_attachments", "aba", 2, null, P2, "upsert")]);
+  await exchangeV1(A, [item("media_attachments", "aba", 1, null, P1, "upsert")]);
   const aba = await api.su(
     "SELECT id, prior_payload_raw, prior_row_version FROM sync_deleted_attachment_archive WHERE entity_sync_id = 'aba' ORDER BY id",
   );
@@ -758,8 +872,12 @@ try {
   for (const t of viaV2) {
     const r = await exchange(B, [item(t, `${t}-1`, 1, null, JSON.stringify({ rule: "three_person_lock_removal", value: true }))]);
     assert.equal(r.acknowledged_items.length, 1, `${t} accepted (v2)`);
-    const u = await exchange(A, [item(t, `${t}-1`, 2, 1, JSON.stringify({ rule: "three_person_lock_removal", value: false }))]);
-    assert.equal(u.acknowledged_items.length, 1, `${t} update accepted (v2)`);
+    // A history row (site_setting_events) is never rewritten: its next change is a new event.
+    const next = registryEntries.find((e) => e.entity_type === t)?.append_only
+      ? item(t, `${t}-2`, 1, null, JSON.stringify({ rule: "three_person_lock_removal", value: false }))
+      : item(t, `${t}-1`, 2, 1, JSON.stringify({ rule: "three_person_lock_removal", value: false }));
+    const u = await exchange(A, [next]);
+    assert.equal(u.acknowledged_items.length, 1, `${t} next change accepted (v2)`);
   }
   for (const t of viaV1) {
     // Not in this server's v2 registry yet (added with the desktop change that stages it): the v1

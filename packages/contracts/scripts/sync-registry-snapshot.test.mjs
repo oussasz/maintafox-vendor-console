@@ -35,6 +35,20 @@ describe("sync entity registry vs desktop snapshot", () => {
     expect(problems).toMatch(/schedule_break_ins: staged by the desktop, missing from the server registry/);
   });
 
+  it("reports drift in the signing fields (author_fields, authority, server_only)", () => {
+    const drifted = structuredClone(server);
+    const pick = (type) => drifted.entity_types.find((e) => e.entity_type === type);
+    pick("site_setting_events").author_fields = [];
+    pick("permit_types").author_fields[0].guards.pop();
+    delete pick("role_permissions").authority;
+    pick("user_signing_keys").server_only = false;
+    const problems = compareServerToDesktop(drifted, snapshot).join("\n");
+    expect(problems).toMatch(/site_setting_events: author_fields null on the server/);
+    expect(problems).toMatch(/permit_types: author_fields .* on the server/);
+    expect(problems).toMatch(/role_permissions: authority null on the server, "adm.roles" on the desktop/);
+    expect(problems).toMatch(/user_signing_keys: server_only null on the server, true on the desktop/);
+  });
+
   it("reports a type listed twice on either side", () => {
     const dupServer = structuredClone(server);
     dupServer.entity_types.push({ ...dupServer.entity_types[0] });

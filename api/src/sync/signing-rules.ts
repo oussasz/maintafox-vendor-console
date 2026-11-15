@@ -1,0 +1,644 @@
+/**
+ * Signing rules at ingest (sync-signing-design.md v9 §5, §8), applied by the v2 exchange to each
+ * pushed item after the existing validation and conflict checks, inside the exchange transaction
+ * (tenant lock held), so every rule is judged on the state as it is after the items before it.
+ *
+ * Order per item: server-only type → signatures (each must verify with an unrevoked key of its
+ * user) → maker required (types with author fields, authority types) → authors (each author field
+ * set or changed, or whose guarded columns changed, names a signer of this item) → authority
+ * (authority.ts). Founding and recovery items are authenticated by the device slot / the vendor
+ * code instead of a maker signature.
+ */
+import { createPublicKey, verify as cryptoVerify } from "node:crypto";
+
+import {
+  ADMIN_RECOVERY_CODE_PREFIX,
+  ADMIN_RECOVERY_PURPOSE,
+  ADMIN_RECOVERY_SIGNATURE_ALG,
+  adminRecoverySignedMessage,
+  canonicalAdminRecoveryPayload,
+  type AdminRecoveryPayload,
+} from "../admin-recovery-signer.js";
+import type { Database } from "../db/database.js";
+import { loadEntitlementSigningKey } from "../entitlement-signer.js";
+import { ARCHIVED_ATTACHMENT_TYPES } from "./attachment-archive.js";
+import {
+  ELEVATED_ADMIN_ROLES,
+  holdsTenantRight,
+  judgeAuthorityChange,
+  livePayload,
+  parsePayloadObject,
+  type AuthorityCtx,
+} from "./authority.js";
+import type { SyncEntityRegistry } from "./registry.js";
+import { changeSigningMessage, decodePublicKey, verifyEd25519 } from "./signing.js";
+import { getSigningKey } from "./user-keys.js";
+import type { ActivationSyncContext, SyncOutboxItemV2, SyncSignature } from "./types.js";
+
+type Fail = { ok: false; code: string; message: string };
+const fail = (code: string, message: string): Fail => ({ ok: false, code, message });
+
+/** Recovery codes are accepted at most this long after issue (the PC checked the 24 h validity). */
+export const RECOVERY_INGEST_GRACE_DAYS = 7;
+
+type Payload = Record<string, unknown>;
+
+function truthy(value: unknown): boolean {
+  return value === 1 || value === true || value === "1";
+}
+
+function blank(value: unknown): boolean {
+  return value === null || value === undefined || value === "";
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+// ── Founding administrator slot (design §8) ─────────────────────────────────────────────────
+
+type FoundingRow = { founding_machine_fingerprint: string; slot_open: boolean };
+
+/**
+ * The tenant's founding slot. Created on first use from the tenant's earliest activation: open for
+ * a tenant without data, closed for one that has data (its authority is legacy state).
+ */
+export async function foundingSlot(db: Database, tenantId: string): Promise<FoundingRow | undefined> {
+  const select = () =>
+    db.get<FoundingRow>("SELECT founding_machine_fingerprint, slot_open FROM sync_tenant_founding WHERE tenant_id = $1", tenantId);
+  const existing = await select();
+  if (existing) return existing;
+  const first = await db.get<{ machine_fingerprint: string }>(
+    `SELECT machine_fingerprint FROM machine_activations WHERE tenant_id = $1 ORDER BY activated_at ASC, id ASC LIMIT 1`,
+    tenantId,
+  );
+  if (!first) return undefined;
+  const hasData = await db.get<{ one: number }>("SELECT 1 AS one FROM sync_entity_state WHERE tenant_id = $1 LIMIT 1", tenantId);
+  const open = !hasData;
+  await db.run(
+    `INSERT INTO sync_tenant_founding (tenant_id, founding_machine_fingerprint, slot_open, closed_at, closed_reason)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (tenant_id) DO NOTHING`,
+    tenantId,
+    first.machine_fingerprint,
+    open,
+    open ? null : new Date(),
+    open ? null : "existing_tenant",
+  );
+  return select();
+}
+
+/** Closes the slot once any other device pushes for the tenant (design §8). */
+export async function closeFoundingSlotForOtherDevice(db: Database, act: ActivationSyncContext): Promise<void> {
+  const slot = await foundingSlot(db, act.tenantId);
+  if (slot?.slot_open && slot.founding_machine_fingerprint !== act.machineFingerprint) {
+    await db.run(
+      `UPDATE sync_tenant_founding SET slot_open = false, closed_at = now(), closed_reason = 'other_device_pushed'
+       WHERE tenant_id = $1 AND slot_open`,
+      act.tenantId,
+    );
+  }
+}
+
+async function isFoundingItem(
+  db: Database,
+  act: ActivationSyncContext,
+  item: SyncOutboxItemV2,
+  payload: Payload | null,
+  previous: Payload | null,
+): Promise<boolean> {
+  if (item.entity_type !== "user_accounts" || previous !== null || !payload || !truthy(payload["is_admin"])) return false;
+  if (item.operation === "delete" || item.operation === "archive") return false;
+  if ((item.signatures ?? []).length > 0) return false;
+  const slot = await foundingSlot(db, act.tenantId);
+  return Boolean(slot?.slot_open && slot.founding_machine_fingerprint === act.machineFingerprint);
+}
+
+async function closeFoundingSlot(db: Database, tenantId: string, accountSyncId: string): Promise<void> {
+  await db.run(
+    `UPDATE sync_tenant_founding
+     SET slot_open = false, closed_at = now(), closed_reason = 'founding_admin_created', founding_account_sync_id = $2
+     WHERE tenant_id = $1 AND slot_open`,
+    tenantId,
+    accountSyncId,
+  );
+}
+
+// ── Recovery unit (design §8) ───────────────────────────────────────────────────────────────
+
+/**
+ * The unit's items are held by identity (the exact objects of the batch), never by idempotency
+ * key: another item reusing a recovery item's key must not inherit the recovery exemption.
+ */
+export type RecoveryUnit =
+  | { kind: "none" }
+  | { kind: "valid"; codeId: string; accountSyncId: string; items: ReadonlySet<SyncOutboxItemV2> }
+  | { kind: "invalid"; items: ReadonlySet<SyncOutboxItemV2>; code: string; message: string };
+
+function decodeRecoveryCode(code: string): { payloadJson: string; payload: AdminRecoveryPayload; signatureHex: string } | null {
+  const parts = code.split(".");
+  if (parts.length !== 3 || parts[0] !== ADMIN_RECOVERY_CODE_PREFIX) return null;
+  const [, body, signatureHex] = parts as [string, string, string];
+  if (!/^[A-Za-z0-9_-]+$/.test(body) || !/^[0-9a-f]{128}$/.test(signatureHex)) return null;
+  const payloadJson = Buffer.from(body, "base64url").toString("utf8");
+  const payload = parsePayloadObject(payloadJson) as AdminRecoveryPayload | null;
+  if (!payload) return null;
+  return { payloadJson, payload, signatureHex };
+}
+
+/**
+ * Finds the batch's recovery unit (items carrying `recovery_code`) and judges it as a whole: the
+ * two items of `auth/recovery_code.rs::write_recovery` (account create + Administrator grant to
+ * it), one valid, unconsumed vendor code issued to this PC at most 7 days ago.
+ */
+export async function judgeRecoveryUnit(
+  ctx: AuthorityCtx,
+  act: ActivationSyncContext,
+  batch: SyncOutboxItemV2[],
+  now: Date,
+): Promise<RecoveryUnit> {
+  const items = batch.filter((i) => i.recovery_code !== undefined);
+  if (items.length === 0) return { kind: "none" };
+  const unitItems: ReadonlySet<SyncOutboxItemV2> = new Set(items);
+  const invalid = (message: string): RecoveryUnit => ({
+    kind: "invalid",
+    items: unitItems,
+    code: "recovery_refused",
+    message,
+  });
+
+  const codes = new Set(items.map((i) => i.recovery_code));
+  if (codes.size !== 1 || items.length !== 2) return invalid("a recovery is exactly two items carrying the same code");
+  for (const unitItem of items) {
+    if (batch.filter((i) => i.idempotency_key === unitItem.idempotency_key).length !== 1) {
+      return invalid("a recovery item's idempotency_key must be unique in the batch");
+    }
+  }
+  const decoded = decodeRecoveryCode(items[0]!.recovery_code!);
+  if (!decoded) return invalid("the recovery code is malformed");
+  const { payload, payloadJson, signatureHex } = decoded;
+  if (payloadJson !== canonicalAdminRecoveryPayload(payload) || payload.purpose !== ADMIN_RECOVERY_PURPOSE) {
+    return invalid("the recovery code is not canonical");
+  }
+  if (payload.signature_alg !== ADMIN_RECOVERY_SIGNATURE_ALG) return invalid("unknown recovery signature algorithm");
+  const signingKey = loadEntitlementSigningKey();
+  if (payload.key_id !== signingKey.keyId) return invalid("the recovery code was signed with another key");
+  const signatureOk = cryptoVerify(
+    null,
+    adminRecoverySignedMessage(payloadJson),
+    createPublicKey(signingKey.privateKey),
+    Buffer.from(signatureHex, "hex"),
+  );
+  if (!signatureOk) return invalid("the recovery code signature does not verify");
+  if (
+    payload.tenant_id !== act.tenantId ||
+    payload.license_id !== act.licenseId ||
+    payload.machine_fingerprint !== act.machineFingerprint
+  ) {
+    return invalid("the recovery code was issued to another PC");
+  }
+  const issued = await ctx.db.get<{ issued_at: string; consumed_at: Date | null }>(
+    `SELECT issued_at, consumed_at FROM admin_recovery_codes
+     WHERE code_id = $1 AND tenant_id = $2 AND license_id = $3 AND machine_fingerprint = $4`,
+    payload.code_id,
+    act.tenantId,
+    act.licenseId,
+    act.machineFingerprint,
+  );
+  if (!issued || issued.issued_at !== payload.issued_at) return invalid("the recovery code is not one this server issued");
+  if (issued.consumed_at !== null) return invalid("the recovery code was already used");
+  const ageMs = now.getTime() - Date.parse(payload.issued_at);
+  if (!(ageMs >= -5 * 60_000 && ageMs <= RECOVERY_INGEST_GRACE_DAYS * 24 * 3600_000)) {
+    return invalid("the recovery code is too old");
+  }
+
+  const account = items.find((i) => i.entity_type === "user_accounts");
+  const grant = items.find((i) => i.entity_type === "user_scope_assignments");
+  if (!account || !grant) return invalid("a recovery is an account create and its Administrator grant");
+  const accountPayload = parsePayloadObject(account.payload_json);
+  const grantPayload = parsePayloadObject(grant.payload_json);
+  if (
+    account.base_row_version !== null ||
+    grant.base_row_version !== null ||
+    !accountPayload ||
+    !grantPayload ||
+    (await livePayload(ctx, "user_accounts", account.entity_sync_id)) !== null
+  ) {
+    return invalid("a recovery creates a new account");
+  }
+  if (!truthy(accountPayload["is_active"]) || !blank(accountPayload["deleted_at"]) || truthy(accountPayload["is_admin"])) {
+    return invalid("the recovered account must be an active, ordinary account");
+  }
+  // Recovery items carry no maker signature: every "<who>_by_sync_id" attribution on the recovered
+  // account and on its grant may only name the account itself.
+  for (const [field, author] of [...Object.entries(accountPayload), ...Object.entries(grantPayload)]) {
+    if (field.endsWith("_by_sync_id") && !blank(author) && author !== account.entity_sync_id) {
+      return invalid("the recovered account may only name itself as an author");
+    }
+  }
+  const roleSyncId = grantPayload["role_sync_id"];
+  const role = typeof roleSyncId === "string" ? await livePayload(ctx, "roles", roleSyncId) : null;
+  if (
+    grantPayload["user_sync_id"] !== account.entity_sync_id ||
+    grantPayload["scope_type"] !== "tenant" ||
+    truthy(grantPayload["is_emergency"]) ||
+    !blank(grantPayload["deleted_at"]) ||
+    !role ||
+    !blank(role["deleted_at"]) ||
+    typeof role["name"] !== "string" ||
+    !ELEVATED_ADMIN_ROLES.has(role["name"])
+  ) {
+    return invalid("the recovery grant must give the Administrator role, plant-wide, to the recovered account");
+  }
+  return { kind: "valid", codeId: payload.code_id, accountSyncId: account.entity_sync_id, items: unitItems };
+}
+
+/** Marks the code used by the unit; false when it was consumed meanwhile. */
+export async function consumeRecoveryCode(db: Database, codeId: string, seq: number, accountSyncId: string): Promise<boolean> {
+  const row = await db.get<{ code_id: string }>(
+    `UPDATE admin_recovery_codes SET consumed_at = now(), consumed_seq = $2, consumed_entity_sync_id = $3
+     WHERE code_id = $1 AND consumed_at IS NULL RETURNING code_id`,
+    codeId,
+    seq,
+    accountSyncId,
+  );
+  return row !== undefined;
+}
+
+// ── Per-item rules ──────────────────────────────────────────────────────────────────────────
+
+async function verifySignatures(
+  db: Database,
+  act: ActivationSyncContext,
+  item: SyncOutboxItemV2,
+  signatures: SyncSignature[],
+): Promise<Fail | null> {
+  const users = new Set<string>();
+  for (const sig of signatures) {
+    if (users.has(sig.user_sync_id)) return fail("signature_invalid", "two signatures by the same user");
+    users.add(sig.user_sync_id);
+    const key = await getSigningKey(db, act.tenantId, sig.key_id);
+    if (!key || key.user_sync_id !== sig.user_sync_id) {
+      return fail("signing_key_unknown", "a signature names a key that is not enrolled for that user");
+    }
+    if (key.revoked_at !== null) return fail("signing_key_revoked", "a signature was made with a revoked key");
+    const raw = decodePublicKey(key.public_key);
+    const message = changeSigningMessage({
+      tenantId: act.tenantId,
+      entityType: item.entity_type,
+      entitySyncId: item.entity_sync_id,
+      operation: item.operation,
+      rowVersion: item.row_version,
+      baseRowVersion: item.base_row_version,
+      payloadJson: item.payload_json,
+      signerUserSyncId: sig.user_sync_id,
+      keyId: sig.key_id,
+    });
+    if (!raw || !verifyEd25519(raw, message, sig.signature)) {
+      return fail("signature_invalid", "a signature does not verify for this change");
+    }
+  }
+  return null;
+}
+
+/**
+ * Rule 4: every author field set/changed, or whose guarded or vouched columns changed, names a
+ * signer. Clearing the author withdraws what it vouched for (allowed), but not while a guarded
+ * column still holds a claim.
+ */
+export function checkAuthors(
+  registry: SyncEntityRegistry,
+  entityType: string,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Fail | null {
+  for (const author of registry.authorFieldsOf(entityType)) {
+    const value = payload[author.field];
+    const fieldChanged = !same(value, previous?.[author.field]);
+    const guardsChanged = author.guards.some((g) => !same(payload[g], previous?.[g]));
+    const vouchedChanged = (author.vouches ?? []).some((g) => !same(payload[g], previous?.[g]));
+    if (!fieldChanged && !guardsChanged && !vouchedChanged) continue;
+    if (blank(value)) {
+      // On an update, the author may not be emptied, or left empty while what it vouches for
+      // changes, as long as any guarded column still holds a value (design §5 rule 4). A signed
+      // create without this author is answered for by its maker (and authority); an unsigned one
+      // (a background write) may not record a guarded claim that nobody answers for.
+      if ((previous !== null || signers.size === 0) && author.guards.some((g) => !blank(payload[g]))) {
+        return fail("author_not_signer", `${author.field} must name the signer of a change to what it vouches for`);
+      }
+      // Emptying a recorded author (with its guarded columns) is a person's act: an unsigned item
+      // may not wipe a record's attribution. Only a last modifier (no guards, vouches for content)
+      // is cleared by a background write that changes what it vouched for.
+      const lastModifier = author.guards.length === 0 && (author.vouches ?? []).length > 0;
+      if (signers.size === 0 && previous !== null && !lastModifier && !blank(previous[author.field])) {
+        return fail("signature_required", `withdrawing ${author.field} must be signed by the person who does it`);
+      }
+      continue;
+    }
+    if (typeof value !== "string" || !signers.has(value)) {
+      return fail("author_not_signer", `${author.field} names someone who did not sign this change`);
+    }
+  }
+  return null;
+}
+
+/**
+ * Refusal marks a PC records on a received break-in it refused (desktop planning::sync_check
+ * REFUSAL_COLUMNS, written while applying, unsigned): the only history type that carries them.
+ */
+const REFUSAL_MARK_TYPES: ReadonlySet<string> = new Set(["schedule_break_ins"]);
+const REFUSAL_MARK_COLUMNS: ReadonlySet<string> = new Set(["sync_refused_at", "sync_refused_reason"]);
+/** Bookkeeping columns a re-send may carry with another value; they record nobody's act. */
+const BOOKKEEPING_COLUMNS: ReadonlySet<string> = new Set(["row_version", "updated_at"]);
+
+/**
+ * Columns of a notice (notification_events) that its PC refreshes while the notice is still open
+ * (desktop notifications/emitter.rs refresh_event / reopen_event: the same condition raised again).
+ */
+const NOTICE_REFRESH_COLUMNS: ReadonlySet<string> = new Set(["message_key", "message_params_json", "urgency_code", "severity"]);
+
+/**
+ * Whether `item` refreshes a notice last written by the pushing PC (`ownNoticeRefresh` of
+ * checkHistoryRewrite). Notices name nobody and each PC raises its own: a PC may already raise any
+ * notice, so refreshing its own adds nothing; another PC's notice stays as it was received. A held
+ * notice accepts no item at all from another PC (not even an unchanged re-send, which would make that
+ * PC its last writer), so its last writer is always the PC that raised it. A PC can still push a
+ * notice it received: inbound rows are applied with capture suppressed, but its emitter refreshes
+ * any open notice with the same dedupe key (emitter.rs emit/refresh_event, reopen_event), and that
+ * local refresh is captured. Such a push is refused here (history_rewrite_refused), which keeps the
+ * notice as its raising PC wrote it; the refresh stays local to that PC.
+ */
+export async function isOwnNoticeRefresh(
+  db: Database,
+  act: ActivationSyncContext,
+  item: { entity_type: string; entity_sync_id: string },
+): Promise<boolean> {
+  if (item.entity_type !== "notification_events") return false;
+  const row = await db.get<{ origin_machine_fingerprint: string | null }>(
+    `SELECT origin_machine_fingerprint FROM sync_entity_state
+     WHERE tenant_id = $1 AND entity_type = $2 AND entity_sync_id = $3 AND NOT deleted`,
+    act.tenantId,
+    item.entity_type,
+    item.entity_sync_id,
+  );
+  return row?.origin_machine_fingerprint === act.machineFingerprint;
+}
+
+/**
+ * History rows (every append-only type) are never rewritten once the server holds them, whether
+ * they name someone or nobody (an audit chain stub, a recovery notice, a schedule baseline item):
+ * desktops skip rewrites only of rows they hold, so a PC that never held the row (new or reset)
+ * would apply the rewritten version. A change of a held row may only change what an author naming a
+ * signer guards or vouches for, add once the refusal marks of the PC that refused a break-in, or
+ * (`ownNoticeRefresh`) refresh the texts of the pushing PC's own notice. Its authors never change (an
+ * author left empty is never filled in afterwards: no desktop flow does). Anything else is refused,
+ * signed or not. Identical re-sends never reach here (duplicate ack) or change nothing.
+ * media_attachments is the exception: its overwrites and deletes are kept in the attachment archive
+ * and restorable (attachment-archive.ts; who may remove a photo is KNOWN_LIMITS row 32).
+ */
+export function checkHistoryRewrite(
+  registry: SyncEntityRegistry,
+  entityType: string,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+  ownNoticeRefresh = false,
+): Fail | null {
+  if (previous === null || !registry.isAppendOnly(entityType) || ARCHIVED_ATTACHMENT_TYPES.has(entityType)) return null;
+  if (entityType === "notification_events" && !ownNoticeRefresh) {
+    return fail("history_rewrite_refused", "a notice is changed only by the PC that raised it");
+  }
+  const authors = registry.authorFieldsOf(entityType);
+  const answered = new Set<string>(entityType === "notification_events" ? NOTICE_REFRESH_COLUMNS : []);
+  for (const author of authors) {
+    const value = payload[author.field];
+    if (typeof value === "string" && signers.has(value)) {
+      for (const column of [...author.guards, ...(author.vouches ?? [])]) answered.add(column);
+    }
+  }
+  const marksAdded =
+    REFUSAL_MARK_TYPES.has(entityType) && blank(previous["sync_refused_at"]) && !blank(payload["sync_refused_at"]);
+  for (const column of new Set([...Object.keys(payload), ...Object.keys(previous)])) {
+    if (same(payload[column], previous[column]) || answered.has(column) || BOOKKEEPING_COLUMNS.has(column)) continue;
+    if (marksAdded && REFUSAL_MARK_COLUMNS.has(column) && blank(previous[column])) continue;
+    return fail("history_rewrite_refused", `${entityType} is history: ${column} of a recorded row is never rewritten`);
+  }
+  return null;
+}
+
+/**
+ * A per-site rule (site_settings) moved to another site. A move that names a new author is that
+ * person's change (rule 4 requires their signature). A move keeping the rule's author is only the
+ * publish of a new organisation structure, which moves each rule from a node it deletes to that
+ * node's copy, keeping its value, time and author (desktop `org::validation::publish_model_with_remap`):
+ * it must be signed by a plant-wide holder of org.admin (the publisher), keep the rule's time, and go
+ * from a node deleted on the server to a live node with the same code and the same node-type code
+ * (the desktop judges the structure models on arrival as well). Otherwise a rule turned on in X's name could be carried, unsigned, to a site
+ * X never relaxed.
+ */
+export async function checkSiteRuleMove(
+  ctx: AuthorityCtx,
+  payload: Payload,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Promise<Fail | null> {
+  if (previous === null) return null;
+  const from = previous["site_node_sync_id"];
+  const to = payload["site_node_sync_id"];
+  if (same(from, to)) return null;
+  if (signers.size === 0) {
+    return fail("signature_required", "moving a site rule to another site must be signed by the person who does it");
+  }
+  const author = payload["updated_by_sync_id"];
+  if (!blank(author) && !same(author, previous["updated_by_sync_id"])) return null;
+  const refuse = fail(
+    "site_rule_move_refused",
+    "a site rule keeps its author only when a new organisation structure moves it from a deleted node to its copy",
+  );
+  if (!same(payload["updated_at"], previous["updated_at"])) return refuse;
+  const publisher = [...signers][0]!;
+  if (!(await holdsTenantRight(ctx, publisher, "org.admin"))) return refuse;
+  const former = typeof from === "string" ? await livePayload(ctx, "org_nodes", from) : null;
+  const copy = typeof to === "string" ? await livePayload(ctx, "org_nodes", to) : null;
+  const moved =
+    former !== null &&
+    copy !== null &&
+    !blank(former["deleted_at"]) &&
+    blank(copy["deleted_at"]) &&
+    typeof former["code"] === "string" &&
+    former["code"] !== "" &&
+    former["code"] === copy["code"];
+  if (!moved) return refuse;
+  const typeCode = async (node: Payload): Promise<unknown> => {
+    const typeSyncId = node["node_type_sync_id"];
+    const type = typeof typeSyncId === "string" ? await livePayload(ctx, "org_node_types", typeSyncId) : null;
+    return type?.["code"];
+  };
+  const formerType = await typeCode(former);
+  return typeof formerType === "string" && formerType !== "" && formerType === (await typeCode(copy)) ? null : refuse;
+}
+
+/** The right the desktop's permit-type save requires, plant-wide (commands/permit.rs upsert_permit_type). */
+export const PERMIT_TYPE_EDIT_RIGHT = "ptw.issue";
+
+/**
+ * Every change of a permit type (create, update, archive, delete). A type carries safety settings
+ * that only some are bound to an author (the three-person chain and the energy-isolation rule, rule
+ * 4); the others (HSE or operations approval, gas test, maximum duration, PPE, control rules) and
+ * its identity (code, name: people, permits and plant rules find a type by them, so a rename would
+ * carry a setting to another type) are not. The desktop writes a type only through its save, which
+ * needs the permit-issue right plant-wide (commands/permit.rs upsert_permit_type), in a session, so
+ * signed: every change must be signed by a plant-wide holder of that right in the server's state.
+ * The code never changes once the server holds the type (as the desktop save and its arrival check
+ * refuse, permit::queries CODE_PERMIT_TYPE_CODE_LOCKED). A PC paired later only sees the type as it
+ * is now, so none of this can be judged on arrival.
+ */
+export async function checkPermitTypeChange(
+  ctx: AuthorityCtx,
+  payload: Payload | null,
+  previous: Payload | null,
+  signers: ReadonlySet<string>,
+): Promise<Fail | null> {
+  if (payload !== null && previous !== null && !same(payload["code"], previous["code"])) {
+    return fail("permit_type_code_locked", "the code of a permit type never changes once it exists");
+  }
+  if (signers.size === 0) {
+    return fail("signature_required", "a permit type is changed only by a signed change of the person who makes it");
+  }
+  const maker = [...signers][0]!;
+  if (!(await holdsTenantRight(ctx, maker, PERMIT_TYPE_EDIT_RIGHT))) {
+    return fail("authority_refused", `a permit type is changed only by a holder of ${PERMIT_TYPE_EDIT_RIGHT} plant-wide`);
+  }
+  return null;
+}
+
+/**
+ * How an accepted item without a maker signature was authenticated by the server, delivered to the
+ * PCs so their own arrival checks can accept it: the tenant's founding administrator slot, or a
+ * vendor recovery unit.
+ */
+export type ServerAttestation = "founding" | "recovery";
+
+export type ItemJudgement =
+  | { ok: true; signaturesJson: string | null; attestation: ServerAttestation | null }
+  | Fail;
+
+/**
+ * Judges one validated item that is about to be applied (rules 2–5). `previous` is the server's
+ * current payload of the entity (null when absent or deleted).
+ */
+export async function judgeItem(
+  ctx: AuthorityCtx,
+  registry: SyncEntityRegistry,
+  act: ActivationSyncContext,
+  item: SyncOutboxItemV2,
+  previous: Payload | null,
+  recovery: RecoveryUnit,
+  /** The server holds a tombstone of this entity (previous is then null). */
+  tombstoned = false,
+): Promise<ItemJudgement> {
+  if (registry.isServerOnly(item.entity_type)) {
+    return fail("server_only_entity_type", `${item.entity_type} is published by the server only`);
+  }
+  const payload = parsePayloadObject(item.payload_json);
+  const signatures = item.signatures ?? [];
+
+  if (recovery.kind !== "none" && item.recovery_code !== undefined && recovery.items.has(item)) {
+    if (recovery.kind === "invalid") return fail(recovery.code, recovery.message);
+    return { ok: true, signaturesJson: null, attestation: "recovery" };
+  }
+  if (item.recovery_code !== undefined) {
+    return fail("recovery_refused", "recovery_code on an item outside the recovery unit");
+  }
+
+  if (await isFoundingItem(ctx.db, act, item, payload, previous)) {
+    await closeFoundingSlot(ctx.db, act.tenantId, item.entity_sync_id);
+    return { ok: true, signaturesJson: null, attestation: "founding" };
+  }
+
+  const bad = await verifySignatures(ctx.db, act, item, signatures);
+  if (bad) return bad;
+  const signers = new Set(signatures.map((s) => s.user_sync_id));
+  const authority = registry.authorityOf(item.entity_type);
+  // Rule 3: an authority change always needs its maker's signature, and so does deleting a row
+  // that records who did something (its author fields go with it, unchecked by rule 4), except an
+  // attachment, whose delete the server archives with its device and can restore. Other changes
+  // may arrive unsigned (a scheduler or background write); rule 4 below still refuses any author
+  // field the item sets or changes, or whose guarded column it changes, without that person's
+  // signature.
+  const hasAuthors = registry.authorFieldsOf(item.entity_type).length > 0;
+  // "archive" removes the row on every PC like "delete" (row_codec.rs is_delete).
+  const removes = item.operation === "delete" || item.operation === "archive";
+  const deletesRecord = removes && hasAuthors && !ARCHIVED_ATTACHMENT_TYPES.has(item.entity_type);
+  const needsMaker = authority !== undefined || deletesRecord;
+  const authorChecked = authority !== undefined || hasAuthors;
+  if (needsMaker && signatures.length === 0) {
+    return fail(
+      "signature_required",
+      `${item.entity_type} changes must be signed by the person who made them (update this PC)`,
+    );
+  }
+
+  if (item.operation !== "delete") {
+    // Every operation that carries a row (create, update, upsert, archive) is author-checked; a
+    // type that must be signed carries an object payload.
+    if ((authorChecked || registry.isAppendOnly(item.entity_type)) && !payload) {
+      return fail("invalid_payload", `${item.entity_type} payload_json must be a JSON object`);
+    }
+    if (payload) {
+      const authors = checkAuthors(registry, item.entity_type, payload, previous, signers);
+      if (authors) return authors;
+      const ownRefresh = previous !== null && (await isOwnNoticeRefresh(ctx.db, act, item));
+      const history = checkHistoryRewrite(registry, item.entity_type, payload, previous, signers, ownRefresh);
+      if (history) return history;
+      if (item.entity_type === "site_settings") {
+        const move = await checkSiteRuleMove(ctx, payload, previous, signers);
+        if (move) return move;
+      }
+    }
+  }
+  if (item.entity_type === "permit_types") {
+    const permitType = await checkPermitTypeChange(ctx, item.operation === "delete" ? null : payload, previous, signers);
+    if (permitType) return permitType;
+  }
+
+  if (authority !== undefined) {
+    const verdict = await judgeAuthorityChange(
+      ctx,
+      {
+        entityType: item.entity_type,
+        entitySyncId: item.entity_sync_id,
+        operation: item.operation,
+        payload,
+        previous,
+        recreatesDeleted: tombstoned && previous === null && item.operation !== "delete",
+        right: authority,
+      },
+      signatures[0]!.user_sync_id,
+    );
+    if (!verdict.ok) return fail(verdict.code, verdict.message);
+  }
+
+  return {
+    ok: true,
+    signaturesJson: signatures.length > 0 ? JSON.stringify(signatures) : null,
+    attestation: null,
+  };
+}
+
+/** Why a judged user_accounts change revokes that user's keys (design §6), or null. */
+export function revocationReason(
+  operation: string,
+  previous: Payload | null,
+  next: Payload | null,
+): "password_changed" | "account_disabled" | "account_deleted" | null {
+  if (!previous) return null;
+  if (operation === "delete" || operation === "archive" || (next && !blank(next["deleted_at"]) && blank(previous["deleted_at"]))) {
+    return "account_deleted";
+  }
+  if (!next) return null;
+  if (truthy(previous["is_active"]) && !truthy(next["is_active"])) return "account_disabled";
+  if (!same(previous["password_hash"], next["password_hash"])) return "password_changed";
+  return null;
+}

@@ -54,8 +54,9 @@ const APPEND_ONLY_DELETABLE_TYPES: ReadonlySet<string> = new Set(["media_attachm
 
 /**
  * Operation rule (v1 and v2): a delete or archive of an append-only registry type is refused with
- * operation_not_allowed_for_type (desktops would really delete the history row on apply). Upserts
- * of append-only types are not refused (desktops ignore rewrites; refusing could break re-sends).
+ * operation_not_allowed_for_type (desktops would really delete the history row on apply). Rewrites
+ * of a history row that names someone are judged by the signing rules (signing-rules.ts
+ * checkHistoryRewrite); identical re-sends are acknowledged as duplicates.
  */
 export function validateOperationForType(
   item: Pick<SyncOutboxItem, "entity_type" | "operation">,
@@ -70,6 +71,27 @@ export function validateOperationForType(
     return fail(
       "operation_not_allowed_for_type",
       `entity_type '${entityType}' is append-only history: synchronisation never deletes or archives it.`,
+    );
+  }
+  return { ok: true };
+}
+
+/**
+ * Protocol v1 carries no signatures (sync-signing-design.md §5): types whose changes must be
+ * signed (author fields, authority data) and server-only types are refused on v1.
+ */
+export function validateUnsignedProtocolType(
+  item: Pick<SyncOutboxItem, "entity_type">,
+  registry: SyncEntityRegistry,
+): ItemValidationOk | ItemValidationFail {
+  const entityType = item.entity_type.trim();
+  if (registry.isServerOnly(entityType)) {
+    return fail("server_only_entity_type", `entity_type '${entityType}' is published by the server only.`);
+  }
+  if (registry.authorityOf(entityType) !== undefined || registry.authorFieldsOf(entityType).length > 0) {
+    return fail(
+      "signature_required",
+      `entity_type '${entityType}' changes must be signed by the person who made them: update this PC.`,
     );
   }
   return { ok: true };
@@ -105,6 +127,10 @@ export function validateOutboxItemV2(
       "unknown_entity_type",
       `entity_type '${item.entity_type}' is not in the sync entity registry (shared/sync-entity-registry.v2.json).`,
     );
+  }
+  if (registry.isServerOnly(item.entity_type)) {
+    // Before idempotency and conflict checks: a device never writes these, whatever the version.
+    return fail("server_only_entity_type", `entity_type '${item.entity_type}' is published by the server only.`);
   }
   const operation = validateOperationForType(item, registry);
   if (!operation.ok) return operation;

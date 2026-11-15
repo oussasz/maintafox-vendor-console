@@ -8,6 +8,7 @@ import type { Database } from "../db/database.js";
 import { signCheckpointToken, signSnapshotPageToken, verifySnapshotPageToken } from "./checkpoint.js";
 import type { PayloadCipher } from "./payload-crypto.js";
 import { confirmDeviceUsers, listSnapshotPage, tenantStateHighWater } from "./store.js";
+import { signatureCutoverSeq } from "./user-keys.js";
 import {
   sha256Hex,
   SyncRequestError,
@@ -99,6 +100,7 @@ export async function runSyncSnapshotV2(
           machineFingerprint: act.machineFingerprint,
           seq: highWater,
         }),
+    signature_cutover_seq: await signatureCutoverSeq(db),
   };
 
   log("sync_snapshot_page", {

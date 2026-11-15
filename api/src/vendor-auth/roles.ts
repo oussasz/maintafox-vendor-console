@@ -127,6 +127,8 @@ export const ROUTE_PERMISSIONS: Readonly<Record<string, RouteRequirement>> = {
   "POST /api/v1/ops/devices/:tenantId/:machineFingerprint/resync": "sync.operate",
   "GET /api/v1/tenants/:tenantId/sync/deleted-attachments": "sync.operate",
   "POST /api/v1/tenants/:tenantId/sync/deleted-attachments/:archiveId/restore": "sync.operate",
+  "POST /api/v1/tenants/:tenantId/sync/user-keys/:keyId/revoke": "sync.operate",
+  "POST /api/v1/tenants/:tenantId/sync/founding-slot/reopen": "sync.operate",
 
   // Audit
   "GET /api/v1/audit/ledger": "audit.view",

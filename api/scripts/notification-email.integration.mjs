@@ -11,6 +11,7 @@ import { createServer } from "node:net";
 import { SMTPServer } from "smtp-server";
 
 import { startControlApi } from "./lib/control-api.mjs";
+import { foundingSigner } from "./lib/sync-signer.mjs";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const freePort = () =>
@@ -78,7 +79,7 @@ try {
       payload_hash: sha(payload_json),
     };
   };
-  const push = async (token, items) => {
+  const exchangeFrom = (token) => async (items) => {
     const r = await api.call("POST", "/api/v1/sync/exchange", token, {
       protocol_version: "v2",
       idempotency_key: `ex-${randomUUID()}`,
@@ -88,14 +89,29 @@ try {
       outbox_batch: items,
     });
     assert.equal(r.status, 200, r.text);
-    assert.equal(r.json.acknowledged_items.length, items.length);
+    return r.json;
   };
-  await push(device, [
-    user("u-tech", { username: "tech1", email: "tech1@example.test", is_active: 1 }),
-    user("u-nomail", { username: "tech2", email: null, is_active: 1 }),
-    user("u-off", { username: "tech3", email: "tech3@example.test", is_active: 0 }),
-  ]);
-  await push(deviceB, [user("u-b", { username: "b1", email: "b1@example.test", is_active: 1 })]);
+  const push = async (token, items) => {
+    const res = await exchangeFrom(token)(items);
+    assert.equal(res.acknowledged_items.length, items.length, JSON.stringify(res));
+  };
+  // Account changes are signed by an administrator (sync-signing-design.md §5): plant A's founding
+  // administrator signs its accounts; plant B's only account is its founding administrator (§8).
+  const founderA = await foundingSigner({
+    tenantId: t.json.id,
+    machineFingerprint: "mail-device",
+    exchange: exchangeFrom(device),
+    enrol: (body) => api.call("POST", "/api/v1/sync/user-keys/enrol", device, body),
+  });
+  await push(
+    device,
+    [
+      user("u-tech", { username: "tech1", email: "tech1@example.test", is_active: 1 }),
+      user("u-nomail", { username: "tech2", email: null, is_active: 1 }),
+      user("u-off", { username: "tech3", email: "tech3@example.test", is_active: 0 }),
+    ].map((it) => founderA.sign(it)),
+  );
+  await push(deviceB, [user("u-b", { username: "b1", email: "b1@example.test", is_active: 1, is_admin: 1 })]);
 
   const request = (overrides = {}) => ({
     request_id: "notif-1:u-tech",
