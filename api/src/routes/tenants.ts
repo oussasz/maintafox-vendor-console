@@ -331,7 +331,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
     const { cursor, limit, withPagination } = parsePagination(req.query);
     const effectiveLimit = withPagination ? limit : 10_000;
     const rows = await db.all(`SELECT a.machine_fingerprint, a.machine_label, a.activated_at, a.last_seen_at, a.app_version, a.revoked_at,
-                a.revocation_kind, a.policy_refresh_requested_at, l.update_channel
+                a.revocation_kind, a.policy_refresh_requested_at, a.device_class, l.update_channel
          FROM machine_activations a
          JOIN license_keys l ON l.id = a.license_id
          WHERE a.tenant_id = ?
@@ -344,6 +344,7 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
         policy_refresh_requested_at: string | null;
         revoked_at: string | null;
         revocation_kind: string | null;
+        device_class: "desktop" | "mobile";
         update_channel: string;
       }>;
     // The cursor is compared in JS (binary); the ORDER BY uses the binary "C" collation to match.
@@ -364,6 +365,8 @@ export function registerTenantsRoutes(app: express.Express, ctx: ApiContext): vo
         machine_id: row.machine_fingerprint,
         /** Name the desktop reported for the machine (null when it sent none). */
         machine_label: row.machine_label,
+        /** desktop (counts against max_machines) or mobile (max_mobile_devices), migration 019. */
+        device_class: row.device_class,
         tenant_id: tenantId,
         activated_at_rfc3339: row.activated_at,
         revoked_at_rfc3339: row.revoked_at,

@@ -31,6 +31,9 @@ try {
     devices_in_use: 0,
     seats_total: 0,
     seats_free: 0,
+    mobile_devices_in_use: 0,
+    mobile_seats_total: 0,
+    mobile_seats_free: 0,
     licences_expiring: 0,
     open_tickets: 0,
   });
@@ -76,6 +79,10 @@ try {
     devices_in_use: 2,
     seats_total: 15, // Acme 5 + Gamma 10; Beta's licence has ended
     seats_free: 13,
+    // No licence includes phones (max_mobile_devices defaults to 0, migration 019).
+    mobile_devices_in_use: 0,
+    mobile_seats_total: 0,
+    mobile_seats_free: 0,
     licences_expiring: 1,
     open_tickets: 1,
   });
@@ -83,6 +90,8 @@ try {
   assert.equal(byName.Acme.status, "expires_soon");
   assert.equal(byName.Acme.devices_used, 2);
   assert.equal(byName.Acme.seats, 5);
+  assert.equal(byName.Acme.mobile_devices_used, 0);
+  assert.equal(byName.Acme.mobile_seats, 0);
   assert.equal(byName.Beta.status, "expired");
   assert.equal(byName.Gamma.status, "not_activated");
   assert.equal(byName.Gamma.licence_never_ends, true);

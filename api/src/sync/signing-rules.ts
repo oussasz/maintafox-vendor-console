@@ -60,8 +60,9 @@ function same(a: unknown, b: unknown): boolean {
 type FoundingRow = { founding_machine_fingerprint: string; slot_open: boolean };
 
 /**
- * The tenant's founding slot. Created on first use from the tenant's earliest activation: open for
- * a tenant without data, closed for one that has data (its authority is legacy state).
+ * The tenant's founding slot. Created on first use from the tenant's earliest desktop activation
+ * (a phone is never the founding device): open for a tenant without data, closed for one that has
+ * data (its authority is legacy state).
  */
 export async function foundingSlot(db: Database, tenantId: string): Promise<FoundingRow | undefined> {
   const select = () =>
@@ -69,7 +70,9 @@ export async function foundingSlot(db: Database, tenantId: string): Promise<Foun
   const existing = await select();
   if (existing) return existing;
   const first = await db.get<{ machine_fingerprint: string }>(
-    `SELECT machine_fingerprint FROM machine_activations WHERE tenant_id = $1 ORDER BY activated_at ASC, id ASC LIMIT 1`,
+    `SELECT machine_fingerprint FROM machine_activations
+     WHERE tenant_id = $1 AND device_class = 'desktop'
+     ORDER BY activated_at ASC, id ASC LIMIT 1`,
     tenantId,
   );
   if (!first) return undefined;
