@@ -13,7 +13,10 @@
  * administrator kept), key revocation at a judged deactivation (later items refused, revocation
  * published), server-only `user_signing_keys` refused from a device, vendor recovery unit
  * (accepted once, replay refused, lone item refused, other PC refused, code older than 7 days
- * refused, codes consumed by the migration refused) and payload bytes served unchanged.
+ * refused, codes consumed by the migration refused), founding unit (the founding account and its
+ * Administrator grant accepted together from the founding PC, once; a grant to another account, of
+ * another role, not plant-wide or permanent, attributed to someone else, outside the account's
+ * batch or from another PC refused) and payload bytes served unchanged.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -25,6 +28,7 @@ import { argon2id } from "hash-wasm";
 import pg from "pg";
 
 import { buildAdminRecoveryCode } from "../dist/admin-recovery-signer.js";
+import { SEEDED_ADMINISTRATOR_ROLE_SYNC_ID, seededEntitySyncId } from "../dist/sync/signing-rules.js";
 import { changeSigningMessage } from "../dist/sync/signing.js";
 import { startTestPostgres, TEST_SYNC_ENV } from "./lib/test-postgres.mjs";
 import { TEST_ENTITLEMENT_SIGNING_ENV } from "./lib/test-signing-key.mjs";
@@ -1075,6 +1079,157 @@ async function run() {
         item("site_setting_events", "sse-cross", 1, null, { setting_key: "x", value: "y", changed_by_sync_id: "u-admin" }),
       );
       assert.deepEqual(await push(Y, [replay]), ["signing_key_unknown"], "a key of another tenant is unknown here");
+    }
+
+    // ── Founding unit: the founding account and its Administrator grant, together (design §8) ──
+    {
+      // Shared vector with the desktop (sync::identity tests): the seeded Administrator role id.
+      assert.equal(SEEDED_ADMINISTRATOR_ROLE_SYNC_ID, "10018b84-32e2-8082-8f39-f934e499bc41");
+      assert.equal(seededEntitySyncId("roles", "Superadmin"), "5fbf2d8a-a2f6-8667-b042-c45bca575caa");
+      const founder = { ...adminAccount, username: "founder" };
+      const grantTo = (user, extra = {}) => ({
+        user_sync_id: user,
+        role_sync_id: SEEDED_ADMINISTRATOR_ROLE_SYNC_ID,
+        scope_type: "tenant",
+        scope_reference: "tenant",
+        is_emergency: 0,
+        deleted_at: null,
+        valid_from: null,
+        valid_to: null,
+        assigned_by_sync_id: null,
+        notes: "Bootstrap initial tenant admin",
+        ...extra,
+      });
+
+      // The first-start screen's two rows, in its order, from the founding PC: both accepted.
+      const t1 = await makeTenant("founding-unit-1");
+      const F1 = await t1.claim("fp-found-1"); // founding PC
+      const G1 = await t1.claim("fp-found-1-other");
+      const account1 = item("user_accounts", "u-f1", 1, null, founder);
+      const grant1 = item("user_scope_assignments", "usa-f1", 1, null, grantTo("u-f1"));
+      const outcomes = await pushDetailed(F1, [
+        // Before the account in the batch: not part of the unit (ordinary rules).
+        item("user_scope_assignments", "usa-f1-early", 1, null, grantTo("u-f1")),
+        account1,
+        // Another account: not the founding grant.
+        item("user_scope_assignments", "usa-f1-other", 1, null, grantTo("u-someone")),
+        // The founding account, but not the Administrator role, or not plant-wide and permanent,
+        // or attributed to someone else: refused.
+        item("user_scope_assignments", "usa-f1-superadmin", 1, null, grantTo("u-f1", {
+          role_sync_id: seededEntitySyncId("roles", "Superadmin"),
+        })),
+        item("user_scope_assignments", "usa-f1-role-x", 1, null, grantTo("u-f1", { role_sync_id: "role-unknown" })),
+        item("user_scope_assignments", "usa-f1-site", 1, null, grantTo("u-f1", { scope_type: "site", scope_reference: "s1" })),
+        item("user_scope_assignments", "usa-f1-ends", 1, null, grantTo("u-f1", { valid_to: "2099-01-01T00:00:00Z" })),
+        item("user_scope_assignments", "usa-f1-emerg", 1, null, grantTo("u-f1", { is_emergency: 1 })),
+        item("user_scope_assignments", "usa-f1-by", 1, null, grantTo("u-f1", { assigned_by_sync_id: "u-someone" })),
+        item("user_scope_assignments", "usa-f1-self", 1, null, grantTo("u-f1", { assigned_by_sync_id: "u-f1" })),
+        item("user_scope_assignments", "usa-f1-v2", 2, 1, grantTo("u-f1")),
+        grant1,
+        // Exactly one founding grant.
+        item("user_scope_assignments", "usa-f1-second", 1, null, grantTo("u-f1")),
+      ]);
+      assert.deepEqual(
+        outcomes.map(([code]) => code),
+        [
+          "signature_required",
+          "ack",
+          "signature_required",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "founding_refused",
+          "ack",
+          "founding_refused",
+        ],
+        JSON.stringify(outcomes),
+      );
+      const [stored] = await sql(
+        `SELECT server_attestation, signatures_json FROM sync_entity_state
+         WHERE tenant_id = $1 AND entity_type = 'user_scope_assignments' AND entity_sync_id = 'usa-f1'`,
+        [t1.tenant.id],
+      );
+      assert.deepEqual(stored, { server_attestation: "founding", signatures_json: null });
+      // Another PC receives both rows, marked as authenticated by the founding slot.
+      const delivered = (await pullAll(G1)).filter((i) => ["u-f1", "usa-f1"].includes(i.entity_sync_id));
+      assert.deepEqual(
+        delivered.map((i) => [i.entity_sync_id, i.server_attestation]).sort(),
+        [
+          ["u-f1", "founding"],
+          ["usa-f1", "founding"],
+        ],
+      );
+      // A later batch from the founding PC: the unit is over (ordinary rules).
+      assert.deepEqual(
+        await push(F1, [item("user_scope_assignments", "usa-f1-later", 1, null, grantTo("u-f1"))]),
+        ["signature_required"],
+        "the founding grant travels in the founding account's batch only",
+      );
+      // The founding administrator then enrols normally.
+      const enrolled = await enrol(F1, t1.tenant.id, newKey("u-f1"), adminPw);
+      assert.equal(enrolled.status, 200, JSON.stringify(enrolled.json));
+
+      // From another PC, the same two rows are refused (no founding slot there).
+      const t2 = await makeTenant("founding-unit-2");
+      await t2.claim("fp-found-2"); // founding PC
+      const G2 = await t2.claim("fp-found-2-other");
+      assert.deepEqual(
+        await push(G2, [item("user_accounts", "u-f2", 1, null, founder), item("user_scope_assignments", "usa-f2", 1, null, grantTo("u-f2"))]),
+        ["signature_required", "signature_required"],
+        "a founding unit from another PC",
+      );
+
+      // The account alone (an earlier desktop, or a grant left to a later batch) is still accepted.
+      const t3 = await makeTenant("founding-unit-3");
+      const F3 = await t3.claim("fp-found-3");
+      assert.deepEqual(await push(F3, [item("user_accounts", "u-f3", 1, null, founder)]), ["ack"]);
+
+      // The server holds the Administrator role (a PC changed it): its live row decides.
+      const t4 = await makeTenant("founding-unit-4");
+      const F4 = await t4.claim("fp-found-4");
+      // A first ordinary push opens the slot (the tenant has no data yet); the role row is then
+      // the state a PC's earlier change of that role would have left.
+      assert.deepEqual(await push(F4, [item("equipment", "eq-f4", 1, null, { a: 1 })]), ["ack"]);
+      const renamed = JSON.stringify({ name: "Renamed", deleted_at: null });
+      await sql(
+        `INSERT INTO sync_entity_state
+           (tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json, payload_hash,
+            deleted, origin_machine_fingerprint, last_ingress_id, updated_at)
+         VALUES ($1, 'roles', $2, 2, 'update', $3, $4::jsonb, $5, false, $6, 0, now())`,
+        [t4.tenant.id, SEEDED_ADMINISTRATOR_ROLE_SYNC_ID, renamed, renamed, sha256Hex(renamed), F4.fp],
+      );
+      assert.deepEqual(
+        await push(F4, [item("user_accounts", "u-f4", 1, null, founder), item("user_scope_assignments", "usa-f4", 1, null, grantTo("u-f4"))]),
+        ["ack", "founding_refused"],
+        "a role the server holds under another name is not the Administrator role",
+      );
+
+      // The server holds the Administrator role under its name: accepted. A signed grant naming
+      // the founding account is not part of the unit (ordinary rules: unknown key).
+      const t5 = await makeTenant("founding-unit-5");
+      const F5 = await t5.claim("fp-found-5");
+      assert.deepEqual(await push(F5, [item("equipment", "eq-f5", 1, null, { a: 1 })]), ["ack"]);
+      const named = JSON.stringify({ name: "Administrator", deleted_at: null });
+      await sql(
+        `INSERT INTO sync_entity_state
+           (tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json, payload_hash,
+            deleted, origin_machine_fingerprint, last_ingress_id, updated_at)
+         VALUES ($1, 'roles', $2, 2, 'update', $3, $4::jsonb, $5, false, $6, 0, now())`,
+        [t5.tenant.id, SEEDED_ADMINISTRATOR_ROLE_SYNC_ID, named, named, sha256Hex(named), F5.fp],
+      );
+      assert.deepEqual(
+        await push(F5, [
+          item("user_accounts", "u-f5", 1, null, founder),
+          signed(t5.tenant.id, item("user_scope_assignments", "usa-f5-signed", 1, null, grantTo("u-f5")), newKey("u-f5")),
+          item("user_scope_assignments", "usa-f5", 1, null, grantTo("u-f5")),
+        ]),
+        ["ack", "signing_key_unknown", "ack"],
+        "the server's live Administrator role; a signed grant takes the ordinary path",
+      );
     }
 
     // ── Vendor recovery unit (design §8) ──────────────────────────────────────────────────
