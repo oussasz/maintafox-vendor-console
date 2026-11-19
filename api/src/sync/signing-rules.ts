@@ -9,7 +9,7 @@
  * (authority.ts). Founding and recovery items are authenticated by the device slot / the vendor
  * code instead of a maker signature.
  */
-import { createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 
 import {
   ADMIN_RECOVERY_CODE_PREFIX,
@@ -115,6 +115,119 @@ async function isFoundingItem(
   if ((item.signatures ?? []).length > 0) return false;
   const slot = await foundingSlot(db, act.tenantId);
   return Boolean(slot?.slot_open && slot.founding_machine_fingerprint === act.machineFingerprint);
+}
+
+/**
+ * Identity of a row every PC seeds itself (desktop `sync::identity::seeded_entity_sync_id`): a
+ * version-8 UUID from SHA-256 of the namespace, the entity type and the natural key. Such rows are
+ * never queued by the PCs (desktop `sync::capture`), so the server holds one only after a PC
+ * changed it.
+ */
+export function seededEntitySyncId(entityType: string, naturalKey: string): string {
+  const digest = createHash("sha256")
+    .update("maintafox.sync.seeded-entity.v1")
+    .update(Buffer.from([0]))
+    .update(entityType, "utf8")
+    .update(Buffer.from([0]))
+    .update(naturalKey, "utf8")
+    .digest()
+    .subarray(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x80; // version 8
+  digest[8] = (digest[8]! & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = digest.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** The seeded Administrator role, the role the first-start screen grants (product_license.rs). */
+export const SEEDED_ADMINISTRATOR_ROLE_SYNC_ID = seededEntitySyncId("roles", "Administrator");
+
+/**
+ * Whether `roleSyncId` is the plant's Administrator role: the server's live row named
+ * "Administrator", or, while the server holds no row at all for it (live or deleted), the seeded
+ * Administrator id that every PC gives that role.
+ */
+async function isAdministratorRole(ctx: AuthorityCtx, roleSyncId: unknown): Promise<boolean> {
+  if (typeof roleSyncId !== "string") return false;
+  const known = await ctx.db.get<{ one: number }>(
+    "SELECT 1 AS one FROM sync_entity_state WHERE tenant_id = $1 AND entity_type = 'roles' AND entity_sync_id = $2",
+    ctx.tenantId,
+    roleSyncId,
+  );
+  if (!known) return roleSyncId === SEEDED_ADMINISTRATOR_ROLE_SYNC_ID;
+  const role = await livePayload(ctx, "roles", roleSyncId);
+  return role !== null && blank(role["deleted_at"]) && role["name"] === "Administrator";
+}
+
+/**
+ * The founding unit of one exchange (design §8): the first-start screen
+ * (`commands/product_license.rs::bootstrap_initial_tenant_admin`) writes, in one transaction, the
+ * founding account (`is_admin = 1`) and its plant-wide Administrator grant, both outside any
+ * session, hence unsigned. The account is authenticated by the founding slot; its grant only
+ * together with it: in the same batch, after the account was applied, once.
+ */
+export type FoundingUnit = {
+  /** The founding account applied in this exchange (null until then). */
+  accountSyncId: string | null;
+  /** Its Administrator grant was applied in this exchange: no second one. */
+  grantApplied: boolean;
+};
+
+export function newFoundingUnit(): FoundingUnit {
+  return { accountSyncId: null, grantApplied: false };
+}
+
+/** Records an applied founding item in the exchange's founding unit. */
+export function recordFoundingApplied(unit: FoundingUnit, item: SyncOutboxItemV2): void {
+  if (item.entity_type === "user_accounts") unit.accountSyncId = item.entity_sync_id;
+  else if (item.entity_type === "user_scope_assignments") unit.grantApplied = true;
+}
+
+/**
+ * Judges an unsigned grant to the founding account applied earlier in this exchange. Null when the
+ * item does not claim the founding exemption (it then goes through the ordinary rules, which refuse
+ * an unsigned grant); a refusal when it names the founding account but is not exactly its
+ * plant-wide, permanent Administrator grant; "accept" otherwise.
+ */
+async function judgeFoundingGrant(
+  ctx: AuthorityCtx,
+  item: SyncOutboxItemV2,
+  payload: Payload | null,
+  previous: Payload | null,
+  tombstoned: boolean,
+  unit: FoundingUnit,
+): Promise<"accept" | Fail | null> {
+  if (unit.accountSyncId === null || item.entity_type !== "user_scope_assignments") return null;
+  if ((item.signatures ?? []).length > 0 || !payload || payload["user_sync_id"] !== unit.accountSyncId) return null;
+  const refuse = (message: string) => fail("founding_refused", message);
+  if (unit.grantApplied) return refuse("the founding administrator receives one Administrator grant only");
+  if (
+    item.operation === "delete" ||
+    item.operation === "archive" ||
+    item.base_row_version !== null ||
+    item.row_version !== 1 ||
+    previous !== null ||
+    tombstoned
+  ) {
+    return refuse("the founding administrator's grant is a new row");
+  }
+  // Unsigned: every "<who>_by_sync_id" attribution may only name the founding account itself.
+  for (const [field, author] of Object.entries(payload)) {
+    if (field.endsWith("_by_sync_id") && !blank(author) && author !== unit.accountSyncId) {
+      return refuse("the founding administrator's grant may only name that administrator as an author");
+    }
+  }
+  const validFrom = payload["valid_from"];
+  if (
+    payload["scope_type"] !== "tenant" ||
+    truthy(payload["is_emergency"]) ||
+    !blank(payload["deleted_at"]) ||
+    !blank(payload["valid_to"]) ||
+    !(blank(validFrom) || (typeof validFrom === "string" && validFrom <= ctx.now)) ||
+    !(await isAdministratorRole(ctx, payload["role_sync_id"]))
+  ) {
+    return refuse("the founding grant must give the Administrator role, plant-wide and permanent, to the founding administrator");
+  }
+  return "accept";
 }
 
 async function closeFoundingSlot(db: Database, tenantId: string, accountSyncId: string): Promise<void> {
@@ -538,6 +651,8 @@ export async function judgeItem(
   item: SyncOutboxItemV2,
   previous: Payload | null,
   recovery: RecoveryUnit,
+  /** The founding account and grant applied so far in this exchange. */
+  founding: FoundingUnit,
   /** The server holds a tombstone of this entity (previous is then null). */
   tombstoned = false,
 ): Promise<ItemJudgement> {
@@ -559,6 +674,9 @@ export async function judgeItem(
     await closeFoundingSlot(ctx.db, act.tenantId, item.entity_sync_id);
     return { ok: true, signaturesJson: null, attestation: "founding" };
   }
+  const foundingGrant = await judgeFoundingGrant(ctx, item, payload, previous, tombstoned, founding);
+  if (foundingGrant === "accept") return { ok: true, signaturesJson: null, attestation: "founding" };
+  if (foundingGrant) return foundingGrant;
 
   const bad = await verifySignatures(ctx.db, act, item, signatures);
   if (bad) return bad;

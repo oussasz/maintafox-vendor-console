@@ -43,6 +43,8 @@ import {
   consumeRecoveryCode,
   judgeItem,
   judgeRecoveryUnit,
+  newFoundingUnit,
+  recordFoundingApplied,
   revocationReason,
 } from "./signing-rules.js";
 import { revokeUserKeys, signatureCutoverSeq } from "./user-keys.js";
@@ -286,6 +288,8 @@ export async function runSyncExchangeV2(
     }
     let recoveryConsumed = false;
     let recoveryApplied = 0;
+    // The founding account and its Administrator grant are accepted together (design §8).
+    const founding = newFoundingUnit();
 
     const reject = async (item: SyncExchangeRequestV2["outbox_batch"][number], code: string, message: string) => {
       rejected_items.push(toRejectedV2(item, code, message));
@@ -413,6 +417,7 @@ export async function runSyncExchangeV2(
         item,
         previousPayload,
         recovery,
+        founding,
         state !== undefined && state.deleted,
       );
       if (!judgement.ok) {
@@ -460,6 +465,7 @@ export async function runSyncExchangeV2(
         }
         await db.run("RELEASE SAVEPOINT mfx_signed_item");
       }
+      if (judgement.attestation === "founding") recordFoundingApplied(founding, item);
       if (judgement.attestation === "recovery" && recovery.kind === "valid") {
         recoveryApplied += 1;
         if (!recoveryConsumed) {
