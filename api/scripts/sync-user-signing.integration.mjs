@@ -1123,6 +1123,7 @@ async function run() {
         item("user_scope_assignments", "usa-f1-ends", 1, null, grantTo("u-f1", { valid_to: "2099-01-01T00:00:00Z" })),
         item("user_scope_assignments", "usa-f1-emerg", 1, null, grantTo("u-f1", { is_emergency: 1 })),
         item("user_scope_assignments", "usa-f1-by", 1, null, grantTo("u-f1", { assigned_by_sync_id: "u-someone" })),
+        item("user_scope_assignments", "usa-f1-self", 1, null, grantTo("u-f1", { assigned_by_sync_id: "u-f1" })),
         item("user_scope_assignments", "usa-f1-v2", 2, 1, grantTo("u-f1")),
         grant1,
         // Exactly one founding grant.
@@ -1134,6 +1135,7 @@ async function run() {
           "signature_required",
           "ack",
           "signature_required",
+          "founding_refused",
           "founding_refused",
           "founding_refused",
           "founding_refused",
@@ -1204,6 +1206,29 @@ async function run() {
         await push(F4, [item("user_accounts", "u-f4", 1, null, founder), item("user_scope_assignments", "usa-f4", 1, null, grantTo("u-f4"))]),
         ["ack", "founding_refused"],
         "a role the server holds under another name is not the Administrator role",
+      );
+
+      // The server holds the Administrator role under its name: accepted. A signed grant naming
+      // the founding account is not part of the unit (ordinary rules: unknown key).
+      const t5 = await makeTenant("founding-unit-5");
+      const F5 = await t5.claim("fp-found-5");
+      assert.deepEqual(await push(F5, [item("equipment", "eq-f5", 1, null, { a: 1 })]), ["ack"]);
+      const named = JSON.stringify({ name: "Administrator", deleted_at: null });
+      await sql(
+        `INSERT INTO sync_entity_state
+           (tenant_id, entity_type, entity_sync_id, row_version, operation, payload_raw, payload_json, payload_hash,
+            deleted, origin_machine_fingerprint, last_ingress_id, updated_at)
+         VALUES ($1, 'roles', $2, 2, 'update', $3, $4::jsonb, $5, false, $6, 0, now())`,
+        [t5.tenant.id, SEEDED_ADMINISTRATOR_ROLE_SYNC_ID, named, named, sha256Hex(named), F5.fp],
+      );
+      assert.deepEqual(
+        await push(F5, [
+          item("user_accounts", "u-f5", 1, null, founder),
+          signed(t5.tenant.id, item("user_scope_assignments", "usa-f5-signed", 1, null, grantTo("u-f5")), newKey("u-f5")),
+          item("user_scope_assignments", "usa-f5", 1, null, grantTo("u-f5")),
+        ]),
+        ["ack", "signing_key_unknown", "ack"],
+        "the server's live Administrator role; a signed grant takes the ordinary path",
       );
     }
 

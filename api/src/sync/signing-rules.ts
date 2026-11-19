@@ -186,7 +186,8 @@ export function recordFoundingApplied(unit: FoundingUnit, item: SyncOutboxItemV2
  * Judges an unsigned grant to the founding account applied earlier in this exchange. Null when the
  * item does not claim the founding exemption (it then goes through the ordinary rules, which refuse
  * an unsigned grant); a refusal when it names the founding account but is not exactly its
- * plant-wide, permanent Administrator grant; "accept" otherwise.
+ * plant-wide, permanent Administrator grant; "accept" otherwise. Only the role named "Administrator"
+ * (the one the first-start screen grants), unlike a recovery unit, which also takes Superadmin.
  */
 async function judgeFoundingGrant(
   ctx: AuthorityCtx,
@@ -210,10 +211,11 @@ async function judgeFoundingGrant(
   ) {
     return refuse("the founding administrator's grant is a new row");
   }
-  // Unsigned: every "<who>_by_sync_id" attribution may only name the founding account itself.
+  // Unsigned, and nobody grants a role to their own account (§5): the grant names no author at
+  // all (the first-start screen writes none; every PC refuses a self-given role on arrival).
   for (const [field, author] of Object.entries(payload)) {
-    if (field.endsWith("_by_sync_id") && !blank(author) && author !== unit.accountSyncId) {
-      return refuse("the founding administrator's grant may only name that administrator as an author");
+    if (field.endsWith("_by_sync_id") && !blank(author)) {
+      return refuse("the founding administrator's grant names no author");
     }
   }
   const validFrom = payload["valid_from"];
